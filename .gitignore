@@ -120,3 +120,6 @@ target/
 
 # Tauri 生成物
 src-tauri/gen/schemas/
+
+
+.workbuddy/
