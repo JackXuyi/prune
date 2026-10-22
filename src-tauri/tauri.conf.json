@@ -5,18 +5,36 @@
   "identifier": "com.xuyi.prune",
   "build": {
     "beforeDevCommand": "pnpm dev",
-    "devUrl": "http://localhost:1420",
+    "devUrl": "http://localhost:1430",
     "beforeBuildCommand": "pnpm build",
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
+        "label": "main",
         "title": "Prune",
         "width": 960,
         "height": 640,
         "minWidth": 720,
-        "minHeight": 480
+        "minHeight": 480,
+        "visible": false
+      },
+      {
+        "label": "panel",
+        "title": "Prune",
+        "url": "index.html",
+        "width": 380,
+        "height": 560,
+        "visible": false,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "hiddenTitle": true
       }
     ],
     "security": {
