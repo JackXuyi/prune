@@ -102,6 +102,7 @@ pnpm tauri build    # 打包 .app / .dmg
 
 - [产品功能方案 v2](./docs/prune-feature-spec-v2.md) —— 定位、模块、安全分级
 - [Tauri 技术方案](./docs/prune-tauri-technical-plan.md) —— 架构、依赖、里程碑
+- [调研档案](./docs/research/) —— Portlivo 拆解 / 竞品实测 / 可回收空间扫描报告 / 内存剖析 / Footprint PRD（决策档案）
 
 ## License
 
