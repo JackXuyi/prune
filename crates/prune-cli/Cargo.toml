@@ -1,0 +1,12 @@
+[package]
+name = "prune-cli"
+version = "0.1.0"
+edition = "2021"
+description = "Prune 命令行入口（README 规划中：scan / reclaim / mem）"
+
+[dependencies]
+prune-core = { path = "../prune-core" }
+
+[[bin]]
+name = "prune"
+path = "src/main.rs"

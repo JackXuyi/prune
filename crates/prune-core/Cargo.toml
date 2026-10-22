@@ -1,0 +1,7 @@
+[package]
+name = "prune-core"
+version = "0.1.0"
+edition = "2021"
+description = "Prune 核心逻辑：磁盘浪费探测 / 内存口径 / 白名单清理 —— GUI 与 CLI 共享"
+
+[dependencies]

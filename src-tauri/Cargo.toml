@@ -1,0 +1,18 @@
+[package]
+name = "prune-app"
+version = "0.1.0"
+edition = "2021"
+description = "Prune 桌面端（Tauri 2 壳）"
+
+[lib]
+name = "prune_app_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+prune-core = { path = "../crates/prune-core" }

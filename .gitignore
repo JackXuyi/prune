@@ -114,3 +114,9 @@ dist
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Rust / Cargo
+target/
+
+# Tauri 生成物
+src-tauri/gen/schemas/
