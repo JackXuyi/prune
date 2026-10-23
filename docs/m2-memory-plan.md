@@ -104,8 +104,8 @@ pub struct ProcMem {
 
 | 频率 | 数据源 | 范围 | 实测/预算成本 |
 |---|---|---|---|
-| 10 s | `sysinfo` refresh | 全量进程（RSS/ppid/exe/name）+ vm_stat + swapusage + swapfile 列表 | < 30 ms，CPU < 1% |
-| 5 min | `footprint -p --swapped -j` | Top N（RSS > 80 MB 或非系统进程，上限 40） | 12 路 0.27 s → 40 进程 8 路并发 ≈ 1.3 s |
+| 10 s | `sysinfo` refresh | 全量进程（RSS/ppid/exe/name）+ vm_stat + swapusage + swapfile 列表 | 实测 **30~140 ms（均值 ~45 ms）**，CPU < 1%（原 30 ms 预算偏乐观，已按实测校准） |
+| 5 min | `footprint -p --swapped -j` | 按家族整组：Top 12 家族 / ≤64 进程 / 单进程 ≥ 8 MB | 12 路并发实测 0.27 s；22 进程单轮 0.7~2.5 s |
 | 用户点开某进程 | 单次 footprint | 1 个 | 0.09 s |
 
 实现要点：
@@ -180,9 +180,10 @@ UI 必须显式标注口径来源：`RSS 口径（不含换出量）` 徽标，�
 | 项 | 预算 | 校验方式 |
 |---|---|---|
 | 后台常驻内存（无 WebView） | < 60 MB | `footprint -p <self>` |
+| 10 s 轮次耗时 | < 200 ms（远低于 10 s 周期，不会堆积） | 实测均值 ~45 ms、峰值 140 ms |
 | 10 s 轮次 CPU | < 1% | 采样耗时日志 + 活动监视器 |
-| footprint 轮次 | < 1.5 s / 40 进程 | 实测 12 路 0.27 s，留 5 倍余量 |
-| SQLite 体积 | < 50 MB / 7 天 | 只存 Top 40 × 5 min × 7 天 |
+| footprint 轮次 | < 2.5 s / ≤64 进程（12 路并发） | 12 路实测 0.27 s；单进程 3 s 超时保护 |
+| SQLite 体积 | < 50 MB / 7 天 | 只存深探行 × 5 min × 7 天 |
 | 前端重渲染 | 10 s 一次全量快照，列表用 memo 分片 | — |
 
 ---
@@ -278,3 +279,17 @@ UI 必须显式标注口径来源：`RSS 口径（不含换出量）` 徽标，�
   保证应用总量口径完整，而不是只有主进程。
 - `FamilyMem` 新增 `deep_covered`：家族总量 = 已深探 footprint 之和 + 未深探子进程 RSS 之和（下界，
   不会虚高）；`is_exact()` 区分精确 / 估算，UI 用 `≈` 前缀标注。
+
+### 15.2 Review 修复（2026-10-23 下午，第二轮）
+
+达成度 review 发现的 4 项问题，逐条修复：
+
+| # | 问题 | 修复 |
+|---|---|---|
+| 1 | 🟠 `mem_refresh` 与定时器深探可并行，两轮 footprint 同时 spawn（并发翻倍、缓存互相覆盖） | 新增单飞闸门 `DeepInFlight`（`compare_exchange` + Drop 自动释放），手动刷新撞上定时器轮时后者直接跳过；异常/超时路径也不会把闸门卡死 |
+| 2 | 🟡 深探轮 `clear()` + 重建窗口期，恰逢 10 s 快照轮会全退 RSS 口径（数字瞬间跳动） | 改为**锁外构建新表 → 整体替换**（`*lock = next`），读侧不再看到中间态；顺带消除 deep→processes 的嵌套加锁 |
+| 3 | 🟡 §5 的 `< 30 ms` 快照预算与实测 ~45 ms 不符 | §5 / §9 预算按实测校准为 < 200 ms（峰值 140 ms），并注明原预算偏乐观 |
+| 4 | 🟡 深探并发 8 路，22 进程时偶超 1.5 s | `DEEP_CONCURRENCY` 8 → **12**（实测 12 路 0.27 s），预算同步为 < 2.5 s / 64 进程 |
+
+新增两个单测：`deep_guard_is_single_flight`（进入 → 二次进入被拒 → 释放后放行，防止守卫退化成永久卡死）、
+`deep_table_rebuilds_wholesale_and_drops_exited`（整体替换且不留退出进程残影）。

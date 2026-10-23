@@ -6,12 +6,16 @@
 //! | 5 min | Top N footprint 深探（并发 8 路） | `/usr/bin/footprint -p --swapped -j` |
 //!
 //! 关键约束：
-//! - 深探是**付费**动作，只对 RSS ≥ 80 MB 的进程做，最多 40 个；
+//! - 深探是**付费**动作：按家族整组入选（Top 12 家族 / 64 进程 / 单进程 ≥ 8 MB），
+//!   保证「应用总量」不是只算了主进程；
+//! - 深探**单飞**：定时器轮与手动刷新共用一把 in-flight 闸门，绝不并行 spawn 两轮；
 //! - 深探结果按 `pid + start_time` 缓存，快照轮次合并时校验 start_time，
 //!   避免 pid 复用导致序列串台；
+//! - 缓存更新是**整体替换**，清扫/重建不在锁内分步进行，读侧永远看到完整表；
 //! - 任何 footprint 失败都只降级该进程到 RSS 口径，绝不伪造数值。
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -34,8 +38,8 @@ pub const DEEP_MAX_PROCS: usize = 64;
 pub const DEEP_MAX_FAMILIES: usize = 12;
 /// 无候选时的兜底条数
 pub const DEEP_FALLBACK_PROCS: usize = 8;
-/// 深探并发上限
-pub const DEEP_CONCURRENCY: usize = 8;
+/// 深探并发上限（实测 12 路 0.27 s；8 路在 22 进程时偶超 1.5 s 预算，故提到 12）
+pub const DEEP_CONCURRENCY: usize = 12;
 /// 序列保留 7 天（D-M4）
 pub const RETENTION_SECS: i64 = 7 * 24 * 3600;
 
@@ -48,6 +52,28 @@ struct DeepRow {
     start_time: u64,
     footprint: u64,
     swapped: u64,
+}
+
+/// 深探单飞闸门：同一时刻只允许一轮 footprint 深探。
+///
+/// 定时器轮与手动刷新共用。否则用户点「刷新」时若正撞上 5 min 轮，
+/// 会有两轮 footprint 并行（并发翻倍、缓存互相覆盖），既浪费也是数据抖动源。
+/// Drop 时自动释放，异常路径（超时/panic）也不会把闸门永久卡住。
+struct DeepInFlight<'a>(&'a AtomicBool);
+
+impl<'a> DeepInFlight<'a> {
+    /// 抢到闸门返回守卫；已有一轮在跑则返回 None（调用方直接跳过本轮）
+    fn acquire(flag: &'a AtomicBool) -> Option<Self> {
+        flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .ok()
+            .map(|_| Self(flag))
+    }
+}
+
+impl Drop for DeepInFlight<'_> {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::Release);
+    }
 }
 
 /// 跨轮次保存的状态
@@ -65,6 +91,8 @@ pub struct MemState {
     scanner: Mutex<Scanner>,
     store: Option<Arc<Store>>,
     deep: Mutex<HashMap<i32, DeepRow>>,
+    /// 深探单飞闸门（定时器轮与手动刷新共用）
+    deep_in_flight: AtomicBool,
     prev: Mutex<Prev>,
     deep_available: Mutex<bool>,
     deep_updated_at: Mutex<Option<i64>>,
@@ -81,6 +109,7 @@ impl MemState {
             scanner: Mutex::new(Scanner::new()),
             store,
             deep: Mutex::new(HashMap::new()),
+            deep_in_flight: AtomicBool::new(false),
             prev: Mutex::new(Prev::default()),
             deep_available: Mutex::new(true),
             deep_updated_at: Mutex::new(None),
@@ -182,6 +211,12 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
     let state = state(app);
     let app = app.clone();
 
+    // 单飞闸门：手动刷新撞上定时器轮时，后到的一轮直接跳过而不是并行 spawn
+    let Some(_gate) = DeepInFlight::acquire(&state.deep_in_flight) else {
+        eprintln!("[m2-mem] 深探轮跳过：上一轮仍在进行");
+        return Ok(());
+    };
+
     let targets = {
         let procs = state.processes.lock().unwrap_or_else(|e| e.into_inner());
         select_deep_targets(&procs)
@@ -205,25 +240,17 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
     *state.last_deep_ms.lock().unwrap_or_else(|e| e.into_inner()) = elapsed;
 
     let success = samples.len();
-    let updated = {
-        let mut deep = probe_state.lock_deep();
-        // 重建缓存：只保留本轮成功的进程，避免进程退出后残影
-        deep.clear();
-        let procs = probe_state.processes.lock().unwrap_or_else(|e| e.into_inner());
-        for (pid, sample) in &samples {
-            if let Some(p) = procs.iter().find(|p| p.pid == *pid) {
-                deep.insert(
-                    *pid,
-                    DeepRow {
-                        start_time: p.start_time,
-                        footprint: sample.footprint,
-                        swapped: sample.swapped,
-                    },
-                );
-            }
-        }
-        deep.len()
+    // 先在锁外构建完整的新表，再整体替换：清扫与重建不在锁内分步进行，
+    // 读侧（10 s 快照轮）不会撞上「表已清空、尚未重建」的中间态而瞬间全退 RSS 口径。
+    let next = {
+        let procs = probe_state
+            .processes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        build_deep_table(&samples, &procs)
     };
+    let updated = next.len();
+    *probe_state.lock_deep() = next;
 
     // 全部失败 → footprint 不可用（命令缺失 / 权限被拦），整表退回 RSS 口径
     let available = success > 0;
@@ -334,6 +361,30 @@ fn select_deep_targets(procs: &[ProcMem]) -> Vec<i32> {
     }
 
     out.into_iter().filter(|pid| *pid > 0).collect()
+}
+
+/// 由本轮深探结果构建完整缓存表：只保留此刻仍存在的进程（丢弃已退出的残影），
+/// 并记下 start_time 供后续 pid 复用校验。
+///
+/// 纯函数，锁外调用；构建完成后整体替换缓存，读侧永远看到一张完整的表。
+fn build_deep_table(
+    samples: &HashMap<i32, mem::footprint::FootprintSample>,
+    procs: &[ProcMem],
+) -> HashMap<i32, DeepRow> {
+    let mut next: HashMap<i32, DeepRow> = HashMap::with_capacity(samples.len());
+    for (pid, sample) in samples {
+        if let Some(p) = procs.iter().find(|p| p.pid == *pid) {
+            next.insert(
+                *pid,
+                DeepRow {
+                    start_time: p.start_time,
+                    footprint: sample.footprint,
+                    swapped: sample.swapped,
+                },
+            );
+        }
+    }
+    next
 }
 
 /// 合并深探缓存：start_time 不一致视为 pid 复用，丢弃该行
@@ -472,6 +523,52 @@ mod tests {
         let procs: Vec<ProcMem> = (1..=20).map(|i| fam_proc(i, &format!("F{i}"), mb(3), 0)).collect();
         let targets = select_deep_targets(&procs);
         assert_eq!(targets.len(), DEEP_FALLBACK_PROCS);
+    }
+
+    #[test]
+    fn deep_guard_is_single_flight() {
+        let flag = AtomicBool::new(false);
+        let gate = DeepInFlight::acquire(&flag);
+        assert!(gate.is_some(), "空闲时应能进入深探");
+        assert!(
+            DeepInFlight::acquire(&flag).is_none(),
+            "上一轮未结束时不得并行开第二轮（刷新撞定时器轮的场景）"
+        );
+        drop(gate);
+        assert!(
+            DeepInFlight::acquire(&flag).is_some(),
+            "上一轮结束后必须放行，否则深探会被永久卡死"
+        );
+    }
+
+    #[test]
+    fn deep_table_rebuilds_wholesale_and_drops_exited() {
+        use prune_core::mem::footprint::FootprintSample;
+
+        let mut samples = HashMap::new();
+        samples.insert(
+            1,
+            FootprintSample {
+                pid: 1,
+                footprint: 1000,
+                swapped: 900,
+            },
+        );
+        samples.insert(
+            2,
+            FootprintSample {
+                pid: 2,
+                footprint: 2000,
+                swapped: 1800,
+            },
+        );
+        // pid 2 已退出（本轮快照里没有它）
+        let procs = vec![proc(1, 100, 111)];
+        let table = build_deep_table(&samples, &procs);
+
+        assert_eq!(table.len(), 1);
+        assert_eq!(table.get(&1).unwrap().start_time, 111);
+        assert!(table.get(&2).is_none(), "已退出进程不能留下残影");
     }
 
     #[test]

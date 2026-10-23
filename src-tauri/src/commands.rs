@@ -42,6 +42,9 @@ pub fn mem_history(
     state.history(pid, since, 2000)
 }
 
+/// 手动刷新：先出一轮快照，再尝试深探。
+/// 深探自带单飞闸门——若定时器轮正在跑，这里的 `deep_round` 会直接跳过并返回，
+/// 不会出现两轮 footprint 并行；本轮结果仍会由定时器轮的 `mem://deep` 事件送达。
 #[tauri::command]
 pub async fn mem_refresh(app: AppHandle) -> Result<(), String> {
     sampler::fast_round(&app).await?;
