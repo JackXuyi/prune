@@ -2,8 +2,8 @@
 //!
 //! 验证点（docs/prune-tauri-technical-plan.md §6 / §10）：
 //! 1. `tray.rect()` 能否取到菜单栏图标坐标（多屏 / 不同 macOS 版本）
-//! 2. 坐标系换算：tray-icon 返回的 rect 疑似 Cocoa 坐标（主屏左下原点，y 向上），
-//!    而 Tauri 窗口定位用主屏左上原点、y 向下 —— 需要翻转验证
+//! 2. 坐标系：实测为**物理像素 + 主屏左上原点**（见 position_panel 注释），与 Tauri
+//!    窗口定位同系，无需 Cocoa 翻转 —— 这是 M0 #2 的核心结论
 //! 3. 取不到 rect 时的降级：屏幕右上角
 //! 4. Accessory 模式（无 Dock 图标）+ 无边框透明面板 + 失焦隐藏
 //!
@@ -31,7 +31,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     )?;
 
     TrayIconBuilder::with_id(TRAY_ID)
-        .icon(app.default_window_icon().expect("内置图标缺失").clone())
+        // 菜单栏用 Lucide scissors 模板图标（纯黑 + 透明，系统自动适配深浅色）
+        .icon(tauri::image::Image::from_bytes(include_bytes!(
+            "../icons/tray.png"
+        ))?)
+        .icon_as_template(true)
         .tooltip("Prune")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -76,11 +80,18 @@ fn toggle_panel(app: &AppHandle) {
 }
 
 /// 将面板定位到 tray 图标正下方（右对齐），失败则降级到屏幕右上角
+///
+/// 实测结论（2026-10-23，macOS + 外接屏 2x）：
+///   tray.rect() = position(2066, 0) size(68, 76)
+///   → y=0 且尺寸为偶数大值，说明是**物理像素 + 主屏左上原点**，
+///     既不是 Cocoa 左下原点，也不是逻辑点。Tauri 窗口定位同为物理像素、
+///     左上原点、全局坐标系，因此可以直接用物理值算，无需翻转。
 fn position_panel(app: &AppHandle, panel: &WebviewWindow) {
-    let panel_size = panel
+    let panel_logical_w = panel
         .outer_size()
         .map(|s| s.to_logical::<f64>(panel.scale_factor().unwrap_or(1.0)))
-        .unwrap_or(tauri::LogicalSize::new(380.0, 560.0));
+        .map(|s| s.width)
+        .unwrap_or(380.0);
 
     let raw_rect: Option<Rect> = app
         .tray_by_id(TRAY_ID)
@@ -88,42 +99,49 @@ fn position_panel(app: &AppHandle, panel: &WebviewWindow) {
 
     let Some(rect) = raw_rect else {
         eprintln!("[m0-tray] ⚠️ tray.rect() 返回 None —— 命中降级路径（屏幕右上角）");
-        fallback_top_right(app, panel, panel_size.width);
+        fallback_top_right(app, panel, panel_logical_w);
         return;
     };
 
     let (rx, ry) = pos_xy(&rect.position);
     let (rw, rh) = size_wh(&rect.size);
-    eprintln!(
-        "[m0-tray] tray.rect() 原始值: position=({rx}, {ry}) size=({rw}, {rh})"
-    );
+    eprintln!("[m0-tray] tray.rect() 原始值: position=({rx}, {ry}) size=({rw}, {rh})");
 
-    // 主屏逻辑高度（Cocoa 坐标翻转基准）
-    let primary = app.primary_monitor().ok().flatten();
-    let Some(primary) = primary else {
-        eprintln!("[m0-tray] ⚠️ 拿不到主屏信息 —— 命中降级路径");
-        fallback_top_right(app, panel, panel_size.width);
-        return;
+    // 找到 tray 图标所在的屏幕（多屏时决定 scale 与边界钳制）
+    let monitors = app.available_monitors().unwrap_or_default();
+    let host = monitors.iter().find(|m| {
+        let p = m.position();
+        let s = m.size();
+        let (mx, my) = (p.x as f64, p.y as f64);
+        rx >= mx && rx <= mx + s.width as f64 && ry >= my && ry <= my + s.height as f64
+    });
+
+    let scale = host
+        .map(|m| m.scale_factor())
+        .unwrap_or_else(|| panel.scale_factor().unwrap_or(1.0));
+
+    // rect 若为逻辑点位（当前 macOS 未出现，保留兜底），先换算成物理像素
+    let (rx, ry, rw, rh) = match rect.position {
+        Position::Logical(_) => (rx * scale, ry * scale, rw * scale, rh * scale),
+        Position::Physical(_) => (rx, ry, rw, rh),
     };
-    let scale = primary.scale_factor();
-    let primary_h_logical = primary.size().height as f64 / scale;
-    eprintln!(
-        "[m0-tray] 主屏: 物理高 {} px · scale {scale} · 逻辑高 {primary_h_logical} pt",
-        primary.size().height
-    );
 
-    // 假设 rect 为 Cocoa 坐标（主屏左下原点、y 向上、逻辑 pt）：
-    //   tray 图标底边（顶左系） = primary_h - ry
-    //   panel 顶边 = tray 底边 + MARGIN
-    //   panel 右对齐 tray 图标右缘
-    let panel_x = rx + rw - panel_size.width - MARGIN;
-    let panel_y = primary_h_logical - ry + MARGIN;
-    eprintln!(
-        "[m0-tray] 换算（假设 Cocoa 左下原点）: panel=({panel_x:.0}, {panel_y:.0}) 尺寸 {:.0}x{:.0}",
-        panel_size.width, panel_size.height
-    );
+    let panel_w = panel_logical_w * scale;
+    let margin = MARGIN * scale;
+    let mut x = rx + rw - panel_w - margin; // 右对齐图标右缘
+    let mut y = ry + rh + margin; // 紧贴图标下方
 
-    let _ = panel.set_position(tauri::LogicalPosition::new(panel_x, panel_y));
+    if let Some(m) = host {
+        let (mx, my) = (m.position().x as f64, m.position().y as f64);
+        let (mw, _mh) = (m.size().width as f64, m.size().height as f64);
+        x = x.max(mx + margin).min(mx + mw - panel_w - margin);
+        y = y.max(my + margin);
+    }
+
+    eprintln!(
+        "[m0-tray] 换算（物理像素/左上原点, scale {scale}）: panel=({x:.0}, {y:.0}) 尺寸 {panel_w:.0}px 宽"
+    );
+    let _ = panel.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
 /// 降级路径：定位到屏幕右上角（主屏，菜单栏下方）
