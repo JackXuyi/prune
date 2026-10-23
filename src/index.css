@@ -1,1 +1,61 @@
 @import "tailwindcss";
+
+/* Prune 视觉 token：深色、低饱和、信息密度优先。
+   语义化命名，避免组件里散落魔法色值。 */
+@theme {
+  --color-surface: #0e1114;
+  --color-surface-raised: #14181d;
+  --color-surface-overlay: #191e24;
+  --color-hairline: #242a32;
+  --color-hairline-soft: #1c2128;
+  --color-ink: #e8ebee;
+  --color-ink-dim: #99a1aa;
+  --color-ink-faint: #656d77;
+  --color-accent: #34d399;
+  --color-accent-soft: #1f6f56;
+  --color-warn: #f5b74a;
+  --color-danger: #f0705f;
+  --color-info: #6aa9ff;
+
+  --font-sans:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC",
+    sans-serif;
+  --font-mono: ui-monospace, "SF Mono", Menlo, "Roboto Mono", monospace;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+/* 面板窗口是 transparent 的：body 必须无底色，卡片自己带背景 */
+body {
+  margin: 0;
+  background: transparent;
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: #2b323a;
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: #3a424c;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}

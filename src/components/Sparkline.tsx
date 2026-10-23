@@ -1,0 +1,75 @@
+import { useId } from "react";
+
+/**
+ * 自绘 SVG sparkline（不引图表库，符合方案 §9 的自耗预算）。
+ * 只负责画线，不带坐标轴——数值由外层以文字给出。
+ */
+export function Sparkline({
+  values,
+  height = 64,
+  tone = "accent",
+}: {
+  values: number[];
+  height?: number;
+  tone?: "accent" | "warn";
+}) {
+  const gradientId = useId().replace(/:/g, "");
+
+  if (values.length < 2) {
+    return (
+      <div
+        className="flex items-center justify-center rounded-lg border border-dashed border-hairline-soft text-[11px] text-ink-faint"
+        style={{ height: 48 }}
+      >
+        {values.length === 0 ? "暂无序列 · 深探轮次开始后每 5 分钟一个点" : "序列积累中"}
+      </div>
+    );
+  }
+
+  const W = 100;
+  const H = 32;
+  const max = Math.max(...values);
+  const min = Math.min(...values);
+  const span = max - min || Math.max(1, max * 0.02);
+
+  const coords = values.map((v, i) => {
+    const x = (i / (values.length - 1)) * W;
+    const y = H - ((v - min) / span) * (H - 4) - 2;
+    return [x, y] as const;
+  });
+
+  const line = coords
+    .map(([x, y], i) => `${i === 0 ? "M" : "L"}${x.toFixed(2)} ${y.toFixed(2)}`)
+    .join(" ");
+  const area = `${line} L${W} ${H} L0 ${H} Z`;
+
+  const stroke = tone === "warn" ? "#f5b74a" : "#34d399";
+
+  return (
+    <svg
+      viewBox={`0 0 ${W} ${H}`}
+      preserveAspectRatio="none"
+      style={{ height }}
+      className="w-full"
+      role="img"
+      aria-label="内存走势"
+    >
+      <defs>
+        <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={stroke} stopOpacity="0.28" />
+          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={area} fill={`url(#${gradientId})`} />
+      <path
+        d={line}
+        fill="none"
+        stroke={stroke}
+        strokeWidth={1.5}
+        strokeLinejoin="round"
+        strokeLinecap="round"
+        vectorEffect="non-scaling-stroke"
+      />
+    </svg>
+  );
+}

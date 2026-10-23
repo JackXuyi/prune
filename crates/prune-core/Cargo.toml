@@ -5,3 +5,8 @@ edition = "2021"
 description = "Prune 核心逻辑：磁盘浪费探测 / 内存口径 / 白名单清理 —— GUI 与 CLI 共享"
 
 [dependencies]
+libc = "0.2.191"
+rusqlite = { version = "0.40.2", features = ["bundled"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.154"
+sysinfo = "0.39.6"

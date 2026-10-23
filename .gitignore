@@ -123,3 +123,6 @@ src-tauri/gen/schemas/
 
 
 .workbuddy/
+
+# playwright-cli 会话产物
+.playwright-cli/

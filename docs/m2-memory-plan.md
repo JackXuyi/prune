@@ -251,3 +251,22 @@ UI 必须显式标注口径来源：`RSS 口径（不含换出量）` 徽标，�
 | 技术方案 §1.3 采样架构 | §5 双频采样，实测校准了并发预算 |
 | 技术方案 §5.1 footprint 调用 | §7 降级链（补充了「退出码不可信」这条实测发现） |
 | 技术方案 §7 WebView 内存 | D-M5 决定本期不做，先保读数正确 |
+
+---
+
+## 15. 实施状态（2026-10-23）
+
+| 任务 | 状态 | 说明 |
+|---|---|---|
+| T-201 数据模型/家族归类 | ✅ | `prune-core/mem/{mod,process}.rs`，规则表 + .app 兜底 |
+| T-202 footprint 调用与降级 | ✅ | `mem/footprint.rs`，以「JSON 产出 + 字段完整」为唯一成功判据 |
+| T-203 swap 采集 | ✅ | `swap.rs`，sysctl + swapfile 枚举 + mtime 当日/差值兜底 |
+| T-204 系统总览 | ✅ | `mem/system.rs`，页大小从 vm_stat 头部读取（本机 16384） |
+| T-205 SQLite 序列 | ✅ | `db.rs`，只落 deep 行，7 天保留，同 ts 幂等 |
+| T-206 sampler | ✅ | `src-tauri/sampler.rs`，tokio select 双定时器 + start_time pid 复用防护 |
+| T-207 IPC 契约 | ✅ | 4 命令 + 2 事件 + `open_main`；`src/types/mem.ts` 镜像 |
+| T-208 面板内存区块 | ✅ | `src/panels/MenuBarPanel.tsx` |
+| T-209 主窗口双栏 | ✅ | `src/windows/MainWindow.tsx` + 自绘 SVG sparkline |
+| T-210 口径验收 | ⬜ | 人工抽检，记录见 `docs/m2-memory-acceptance.md` |
+
+决策点 D-M1~D-M6 全部按默认建议落地。验收详见 `docs/m2-memory-acceptance.md`。
