@@ -101,7 +101,11 @@ impl ProcMem {
 pub struct FamilyMem {
     pub name: String,
     pub process_count: usize,
+    /// 已完成 footprint 深探的子进程数。`< process_count` 时总量为**下界估算**
+    /// （未深探部分按 RSS 计入，RSS ⊆ footprint，所以只会偏低不会偏高）
+    pub deep_covered: usize,
     pub rss: u64,
+    /// footprint 口径合计：已深探子进程用 footprint，未深探用 RSS
     pub footprint: Option<u64>,
     pub swapped: Option<u64>,
 }
@@ -109,6 +113,11 @@ pub struct FamilyMem {
 impl FamilyMem {
     pub fn total(&self) -> u64 {
         self.footprint.unwrap_or(self.rss)
+    }
+
+    /// 是否全部子进程都已深探（总量为精确值）
+    pub fn is_exact(&self) -> bool {
+        self.footprint.is_some() && self.deep_covered == self.process_count
     }
 
     pub fn swapped_ratio(&self) -> Option<f64> {
@@ -155,12 +164,20 @@ pub fn top_swapped(procs: &[ProcMem], n: usize) -> Vec<ProcMem> {
 }
 
 /// B3：按家族聚合，按总量降序
+///
+/// 总量口径：已深探的子进程用 footprint，未深探的用 RSS 补上——
+/// 不能只累加「有 footprint 的那部分」，否则大应用的 helper 未深探时
+/// 会算出一个明显偏低的假数字。
 pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
     #[derive(Default)]
     struct Acc {
         count: usize,
+        deep_covered: usize,
         rss: u64,
-        footprint: u64,
+        /// 已深探子进程的 footprint 之和
+        fp_probed: u64,
+        /// 未深探子进程的 RSS 之和（footprint 的下界补位）
+        rss_unprobed: u64,
         swapped: u64,
         has_footprint: bool,
         has_swapped: bool,
@@ -171,9 +188,13 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
         let a = accs.entry(p.family.as_str()).or_default();
         a.count += 1;
         a.rss = a.rss.saturating_add(p.rss);
-        if let Some(fp) = p.footprint {
-            a.footprint = a.footprint.saturating_add(fp);
-            a.has_footprint = true;
+        match p.footprint {
+            Some(fp) => {
+                a.fp_probed = a.fp_probed.saturating_add(fp);
+                a.deep_covered += 1;
+                a.has_footprint = true;
+            }
+            None => a.rss_unprobed = a.rss_unprobed.saturating_add(p.rss),
         }
         if let Some(sw) = p.swapped {
             a.swapped = a.swapped.saturating_add(sw);
@@ -186,8 +207,11 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
         .map(|(name, a)| FamilyMem {
             name: name.to_string(),
             process_count: a.count,
+            deep_covered: a.deep_covered,
             rss: a.rss,
-            footprint: a.has_footprint.then_some(a.footprint),
+            footprint: a
+                .has_footprint
+                .then_some(a.fp_probed.saturating_add(a.rss_unprobed)),
             swapped: a.has_swapped.then_some(a.swapped),
         })
         .collect();
@@ -277,11 +301,29 @@ mod tests {
         assert_eq!(fams.len(), 2);
         assert_eq!(fams[0].name, "Cursor");
         assert_eq!(fams[0].process_count, 2);
+        assert_eq!(fams[0].deep_covered, 2);
+        assert!(fams[0].is_exact());
         assert_eq!(fams[0].footprint, Some(1500));
         assert_eq!(fams[0].swapped, Some(1300));
         // Chrome 只有 RSS，footprint 保持 None（不允许用 RSS 冒充 footprint）
         assert_eq!(fams[1].footprint, None);
         assert_eq!(fams[1].total(), 300);
+        assert!(!fams[1].is_exact());
+    }
+
+    #[test]
+    fn aggregate_counts_unprobed_children_as_rss() {
+        // 大应用常见形态：主进程已深探，helper 还没探到。
+        // 总量必须是 1000(footprint) + 300(rss) = 1300，不能只报 1000。
+        let procs = vec![
+            proc(1, "Cursor", 100, Some(1000), Some(800)),
+            proc(2, "Cursor", 300, None, None),
+        ];
+        let fams = aggregate(&procs);
+        assert_eq!(fams[0].footprint, Some(1300));
+        assert_eq!(fams[0].deep_covered, 1);
+        assert_eq!(fams[0].process_count, 2);
+        assert!(!fams[0].is_exact(), "部分覆盖不能被当成精确值");
     }
 
     #[test]

@@ -52,7 +52,10 @@ function procs(): ProcMem[] {
     out.push(proc("Node", `vite`, 30e6 * (1 + (i % 4)), 120e6, 44e6));
   }
   for (let i = 0; i < 11; i += 1) {
-    out.push(proc("WeChat", "WeChat", 38e6 * (1 + (i % 3)), 96e6, 31e6));
+    // 前 4 个已深探、其余未探 → 覆盖「下界估算」状态
+    out.push(
+      proc("WeChat", "WeChat", 38e6 * (1 + (i % 3)), i < 4 ? 96e6 : null, i < 4 ? 31e6 : null),
+    );
   }
   out.push(proc("kernel_task", "kernel_task", 612e6, null, null, undefined));
   for (let i = 0; i < 8; i += 1) {
@@ -71,7 +74,7 @@ function procs(): ProcMem[] {
 }
 
 export function devSnapshot(): MemSnapshot {
-  const all = procs();
+  const all = devProcesses();
   const deep = all.filter((p) => p.footprint != null);
   const now = Math.floor(Date.now() / 1000);
   return {
@@ -98,11 +101,19 @@ export function devSnapshot(): MemSnapshot {
 }
 
 function aggregateDev(list: ProcMem[]) {
-  const map = new Map<string, { rss: number; fp: number; sw: number; n: number }>();
+  const map = new Map<
+    string,
+    { rss: number; fp: number; unprobed: number; sw: number; n: number; covered: number }
+  >();
   for (const p of list) {
-    const acc = map.get(p.family) ?? { rss: 0, fp: 0, sw: 0, n: 0 };
+    const acc = map.get(p.family) ?? { rss: 0, fp: 0, unprobed: 0, sw: 0, n: 0, covered: 0 };
     acc.rss += p.rss;
-    acc.fp += p.footprint ?? 0;
+    if (p.footprint == null) {
+      acc.unprobed += p.rss;
+    } else {
+      acc.fp += p.footprint;
+      acc.covered += 1;
+    }
     acc.sw += p.swapped ?? 0;
     acc.n += 1;
     map.set(p.family, acc);
@@ -111,13 +122,18 @@ function aggregateDev(list: ProcMem[]) {
     .map(([name, a]) => ({
       name,
       processCount: a.n,
+      deepCovered: a.covered,
       rss: a.rss,
-      footprint: a.fp > 0 ? a.fp : null,
+      footprint: a.covered > 0 ? a.fp + a.unprobed : null,
       swapped: a.sw > 0 ? a.sw : null,
     }))
     .sort((a, b) => (b.footprint ?? b.rss) - (a.footprint ?? a.rss));
 }
 
+/** 两个视图共用同一份数据，pid 才能对上 */
+let cached: ProcMem[] | null = null;
+
 export function devProcesses(): ProcMem[] {
-  return procs();
+  cached ??= procs();
+  return cached;
 }

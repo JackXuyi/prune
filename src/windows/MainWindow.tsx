@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 
+import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { Sparkline } from "../components/Sparkline";
 import {
   ChevronRightIcon,
@@ -7,12 +8,16 @@ import {
   ScissorsIcon,
 } from "../components/icons";
 import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
+import { Tabs } from "../components/Tabs";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { useMemHistory, useMemStore } from "../stores/memStore";
-import { swappedRatio, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
+import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
 
-/** 主窗口（960×640 双栏）：左家族聚合，右进程检视器 */
+type MainTab = "apps" | "overview";
+
+/** 主窗口（960×640）：应用内存 / 系统概况 两个 tab */
 export function MainWindow() {
+  const [tab, setTab] = useState<MainTab>("apps");
   const snapshot = useMemStore((s) => s.snapshot);
   const processes = useMemStore((s) => s.processes);
   const loading = useMemStore((s) => s.loading);
@@ -62,47 +67,85 @@ export function MainWindow() {
         </button>
       </header>
 
+      <div className="flex h-9 shrink-0 items-center justify-between border-b border-hairline px-4">
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: "apps", label: "应用内存", hint: "每个应用的绝对内存占用" },
+            { id: "overview", label: "系统概况", hint: "内存压力、swap 与换出受害者" },
+          ]}
+        />
+        <span className="text-[10px] text-ink-faint">
+          {tab === "apps" ? "绝对内存 · 含换出" : "系统级读数"}
+        </span>
+      </div>
+
       {error ? (
         <div className="m-4 rounded-lg border border-danger/30 bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
           {error}
         </div>
       ) : null}
 
-      <div className="flex min-h-0 flex-1">
-        <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
-          <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
-            <span className="text-[11px] font-medium tracking-wide text-ink-dim">进程家族</span>
-            <span className="text-[10px] text-ink-faint">
-              {families.length} 个 · 按总量降序
-            </span>
+      {tab === "apps" ? (
+        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+          <div className="flex items-baseline justify-between">
+            <div>
+              <h1 className="text-[15px] font-semibold tracking-tight">每个应用占用的绝对内存</h1>
+              <p className="mt-0.5 text-[11px] text-ink-faint">
+                footprint 口径（含被换出到磁盘的部分）· 按总量降序 · 点击查看进程明细
+              </p>
+            </div>
+            <AppMemorySummary families={families} />
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-            {loading && !snapshot ? (
-              <p className="px-2 py-3 text-[11px] text-ink-faint">正在采样…</p>
-            ) : families.length === 0 ? (
-              <p className="px-2 py-3 text-[11px] text-ink-faint">暂无进程数据</p>
-            ) : (
-              <ul>
-                {families.map((f) => (
-                  <FamilyRow
-                    key={f.name}
-                    family={f}
-                    open={expanded === f.name}
-                    selectedPid={selectedPid}
-                    processes={processes}
-                    onToggle={() => setExpanded(expanded === f.name ? null : f.name)}
-                    onSelect={select}
-                  />
-                ))}
-              </ul>
-            )}
+          <div className="mt-3">
+            <AppMemoryList
+              families={families}
+              processes={processes}
+              onOpen={(pid) => {
+                select(pid);
+                setTab("overview");
+              }}
+            />
           </div>
-        </aside>
+        </div>
+      ) : (
+        <div className="flex min-h-0 flex-1">
+          <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
+            <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
+              <span className="text-[11px] font-medium tracking-wide text-ink-dim">进程家族</span>
+              <span className="text-[10px] text-ink-faint">
+                {families.length} 个 · 按总量降序
+              </span>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+              {loading && !snapshot ? (
+                <p className="px-2 py-3 text-[11px] text-ink-faint">正在采样…</p>
+              ) : families.length === 0 ? (
+                <p className="px-2 py-3 text-[11px] text-ink-faint">暂无进程数据</p>
+              ) : (
+                <ul>
+                  {families.map((f) => (
+                    <FamilyRow
+                      key={f.name}
+                      family={f}
+                      open={expanded === f.name}
+                      selectedPid={selectedPid}
+                      processes={processes}
+                      onToggle={() => setExpanded(expanded === f.name ? null : f.name)}
+                      onSelect={select}
+                    />
+                  ))}
+                </ul>
+              )}
+            </div>
+          </aside>
 
-        <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
-          {selected ? <ProcessInspector proc={selected} /> : <Overview />}
-        </main>
-      </div>
+          <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
+            {selected ? <ProcessInspector proc={selected} /> : <Overview />}
+          </main>
+        </div>
+      )}
     </div>
   );
 }
@@ -124,6 +167,7 @@ function FamilyRow({
 }) {
   const total = totalOf(family);
   const ratio = swappedRatio(family);
+  const exact = isExact(family);
   const children = useMemo(
     () =>
       processes
@@ -150,11 +194,12 @@ function FamilyRow({
           </span>
           <span className="mt-0.5 block text-[10px] text-ink-faint">
             {family.processCount} 个进程
-            {family.footprint == null ? " · RSS" : ""}
+            {family.footprint == null ? " · RSS" : exact ? "" : " · ≈"}
           </span>
         </span>
         <span className="shrink-0 text-right">
           <span className="block font-mono text-[12px] leading-tight tabular-nums text-ink">
+            {exact ? "" : "≈"}
             {formatBytes(total)}
           </span>
           <span className="mt-0.5 block text-[10px] text-ink-faint">

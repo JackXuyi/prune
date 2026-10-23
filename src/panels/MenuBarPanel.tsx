@@ -1,14 +1,22 @@
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 
+import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { openMain } from "../lib/ipc";
 import { useMemStore } from "../stores/memStore";
-import { swappedRatio, type ProcMem } from "../types/mem";
+import { swappedRatio, type FamilyMem, type ProcMem } from "../types/mem";
 import { ChevronRightIcon, DiskIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge, Meter, PressureDot } from "../components/primitives";
+import { Tabs } from "../components/Tabs";
 
-/** 菜单栏面板（380×560）：首屏就是「内存真相」读数，不做任何伪科学动作 */
+type PanelTab = "apps" | "overview";
+
+const EMPTY_FAMILIES: FamilyMem[] = [];
+const EMPTY_PROCESSES: ProcMem[] = [];
+
+/** 菜单栏面板（380×560）：应用内存 / 概况 两个 tab */
 export function MenuBarPanel() {
+  const [tab, setTab] = useState<PanelTab>("apps");
   const snapshot = useMemStore((s) => s.snapshot);
   const loading = useMemStore((s) => s.loading);
   const refreshing = useMemStore((s) => s.refreshing);
@@ -41,6 +49,23 @@ export function MenuBarPanel() {
           </IconButton>
         </header>
 
+        <div className="flex h-8 shrink-0 items-center justify-between border-b border-hairline-soft px-2.5">
+          <Tabs
+            size="sm"
+            value={tab}
+            onChange={setTab}
+            items={[
+              { id: "apps", label: "应用", hint: "每个应用的绝对内存占用" },
+              { id: "overview", label: "概况", hint: "内存压力与 swap" },
+            ]}
+          />
+          {snapshot && tab === "overview" ? (
+            <span className="text-[10px] text-ink-faint">
+              swap {formatPercent(snapshot.swap.total > 0 ? snapshot.swap.used / snapshot.swap.total : 0)}
+            </span>
+          ) : null}
+        </div>
+
         <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
           {error ? (
             <div className="rounded-lg border border-danger/30 bg-danger/[0.08] p-3 text-[11px] leading-relaxed text-danger">
@@ -48,6 +73,8 @@ export function MenuBarPanel() {
             </div>
           ) : !snapshot ? (
             <Skeleton loading={loading} />
+          ) : tab === "apps" ? (
+            <AppsSection />
           ) : (
             <>
               <MemSection />
@@ -62,6 +89,32 @@ export function MenuBarPanel() {
         </footer>
       </div>
     </div>
+  );
+}
+
+/** tab 1：每个应用占用的绝对内存（含换出，按总量降序） */
+function AppsSection() {
+  const families = useMemStore((s) => s.snapshot?.families ?? EMPTY_FAMILIES);
+  const processes = useMemStore((s) => s.processes ?? EMPTY_PROCESSES);
+
+  return (
+    <section>
+      <div className="flex items-baseline justify-between gap-2">
+        <h2 className="shrink-0 text-[11px] font-medium tracking-wide text-ink-dim">
+          每个应用占用
+        </h2>
+        <AppMemorySummary families={families} />
+      </div>
+      <div className="mt-1">
+        <AppMemoryList
+          compact
+          limit={10}
+          families={families}
+          processes={processes}
+          onOpen={(pid) => void openMain(pid)}
+        />
+      </div>
+    </section>
   );
 }
 

@@ -26,10 +26,14 @@ use tauri::{AppHandle, Emitter, Manager};
 pub const FAST_INTERVAL_SECS: u64 = 10;
 /// 5 min：footprint 深探
 pub const DEEP_INTERVAL_SECS: u64 = 300;
-/// 深探候选门槛：RSS ≥ 80 MB
-pub const DEEP_MIN_RSS: u64 = 80 * 1024 * 1024;
-/// 单轮深探进程上限
-pub const DEEP_MAX_PROCS: usize = 40;
+/// 深探候选：单个子进程 RSS 门槛（低于此值的 helper 不单独探测，按 RSS 计入）
+pub const DEEP_MIN_PROC_RSS: u64 = 8 * 1024 * 1024;
+/// 单轮深探进程上限（按家族整组入选，保证应用总量口径完整）
+pub const DEEP_MAX_PROCS: usize = 64;
+/// 单轮深探家族上限
+pub const DEEP_MAX_FAMILIES: usize = 12;
+/// 无候选时的兜底条数
+pub const DEEP_FALLBACK_PROCS: usize = 8;
 /// 深探并发上限
 pub const DEEP_CONCURRENCY: usize = 8;
 /// 序列保留 7 天（D-M4）
@@ -277,24 +281,59 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 深探候选：RSS ≥ 80 MB，按 RSS 降序取前 40 个；候选不足 10 个时放宽到前 10
+/// 深探候选：按**家族整组**入选，而不是挑单个最大的进程。
+///
+/// 原因：应用占用 = 主进程 + 一堆 helper，只探主进程会算出一个严重偏低的
+/// 「应用内存」。这里先把家族按 RSS 总和排序，再整组纳入（组内过滤掉
+/// RSS < 8 MB 的碎片进程），受进程数 / 家族数双上限约束。
 fn select_deep_targets(procs: &[ProcMem]) -> Vec<i32> {
-    let mut candidates: Vec<&ProcMem> = procs.iter().filter(|p| p.rss >= DEEP_MIN_RSS).collect();
-    candidates.sort_by_key(|p| std::cmp::Reverse(p.rss));
-    candidates.truncate(DEEP_MAX_PROCS);
+    use std::collections::HashMap;
 
-    if candidates.is_empty() {
-        let mut top: Vec<&ProcMem> = procs.iter().collect();
-        top.sort_by_key(|p| std::cmp::Reverse(p.rss));
-        top.truncate(10);
-        candidates = top;
+    let mut by_family: HashMap<&str, (u64, Vec<&ProcMem>)> = HashMap::new();
+    for p in procs {
+        let entry = by_family.entry(p.family.as_str()).or_insert((0, Vec::new()));
+        entry.0 = entry.0.saturating_add(p.rss);
+        entry.1.push(p);
     }
 
-    candidates
-        .into_iter()
-        .map(|p| p.pid)
-        .filter(|pid| *pid > 0)
-        .collect()
+    let mut families: Vec<(u64, Vec<&ProcMem>)> = by_family.into_values().collect();
+    families.sort_by_key(|(rss, _)| std::cmp::Reverse(*rss));
+
+    let mut out: Vec<i32> = Vec::new();
+    let mut picked_families = 0usize;
+    for (_, members) in families {
+        if out.len() >= DEEP_MAX_PROCS || picked_families >= DEEP_MAX_FAMILIES {
+            break;
+        }
+        let mut heavy: Vec<&ProcMem> = members
+            .into_iter()
+            .filter(|p| p.rss >= DEEP_MIN_PROC_RSS)
+            .collect();
+        if heavy.is_empty() {
+            continue;
+        }
+        heavy.sort_by_key(|p| std::cmp::Reverse(p.rss));
+        picked_families += 1;
+        for p in heavy {
+            if out.len() >= DEEP_MAX_PROCS {
+                break;
+            }
+            out.push(p.pid);
+        }
+    }
+
+    // 整机都很闲时（没有任何家族过门槛）也要有数据，取最大的几个进程
+    if out.is_empty() {
+        let mut top: Vec<&ProcMem> = procs.iter().collect();
+        top.sort_by_key(|p| std::cmp::Reverse(p.rss));
+        out = top
+            .into_iter()
+            .take(DEEP_FALLBACK_PROCS)
+            .map(|p| p.pid)
+            .collect();
+    }
+
+    out.into_iter().filter(|pid| *pid > 0).collect()
 }
 
 /// 合并深探缓存：start_time 不一致视为 pid 复用，丢弃该行
@@ -368,12 +407,16 @@ mod tests {
     use super::*;
 
     fn proc(pid: i32, rss: u64, start_time: u64) -> ProcMem {
+        fam_proc(pid, "Test", rss, start_time)
+    }
+
+    fn fam_proc(pid: i32, family: &str, rss: u64, start_time: u64) -> ProcMem {
         ProcMem {
             pid,
             ppid: 1,
             name: format!("p{pid}"),
             exe: None,
-            family: "Test".into(),
+            family: family.into(),
             rss,
             footprint: None,
             swapped: None,
@@ -382,25 +425,53 @@ mod tests {
         }
     }
 
-    #[test]
-    fn deep_targets_respect_threshold_and_cap() {
-        let mut procs: Vec<ProcMem> = (1..=60)
-            .map(|i| proc(i, (100 - i) as u64 * 1024 * 1024, 0))
-            .collect();
-        // 加入几个小进程，必须被排除
-        procs.push(proc(999, 10 * 1024 * 1024, 0));
-        let targets = select_deep_targets(&procs);
-        assert!(targets.len() <= DEEP_MAX_PROCS);
-        assert!(!targets.contains(&999));
-        // 取的是 RSS 最大的那批
-        assert!(targets.contains(&1));
+    fn mb(v: u64) -> u64 {
+        v * 1024 * 1024
     }
 
     #[test]
-    fn deep_targets_fall_back_to_top10_when_all_small() {
-        let procs: Vec<ProcMem> = (1..=20).map(|i| proc(i, 5 * 1024 * 1024, 0)).collect();
+    fn deep_targets_probe_whole_family() {
+        // 大应用的 helper 也必须一起探，否则应用总量只有主进程那部分
+        let procs = vec![
+            fam_proc(1, "Cursor", mb(400), 0),
+            fam_proc(2, "Cursor", mb(120), 0),
+            fam_proc(3, "Cursor", mb(30), 0),
+            fam_proc(4, "Slack", mb(90), 0),
+        ];
         let targets = select_deep_targets(&procs);
-        assert_eq!(targets.len(), 10);
+        assert!(targets.contains(&1) && targets.contains(&2));
+        // 碎片进程（< 8 MB）不单独探测
+        let with_frag = {
+            let mut v = procs.clone();
+            v.push(fam_proc(5, "Cursor", mb(3), 0));
+            v
+        };
+        let t2 = select_deep_targets(&with_frag);
+        assert!(!t2.contains(&5));
+    }
+
+    #[test]
+    fn deep_targets_respect_caps() {
+        // 家族数上限
+        let mut procs = Vec::new();
+        for f in 0..30 {
+            for i in 0..3 {
+                procs.push(fam_proc(f * 10 + i + 1, &format!("F{f}"), mb(100 - f as u64), 0));
+            }
+        }
+        let targets = select_deep_targets(&procs);
+        assert!(targets.len() <= DEEP_MAX_PROCS);
+        assert!(targets.len() >= DEEP_MAX_FAMILIES);
+        // 大 RSS 家族优先入选
+        assert!(targets.contains(&1));
+        assert!(!targets.contains(&(29 * 10 + 1)));
+    }
+
+    #[test]
+    fn deep_targets_fall_back_when_all_small() {
+        let procs: Vec<ProcMem> = (1..=20).map(|i| fam_proc(i, &format!("F{i}"), mb(3), 0)).collect();
+        let targets = select_deep_targets(&procs);
+        assert_eq!(targets.len(), DEEP_FALLBACK_PROCS);
     }
 
     #[test]

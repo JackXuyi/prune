@@ -38,6 +38,8 @@ export interface ProcMem {
 export interface FamilyMem {
   name: string;
   processCount: number;
+  /** 已完成 footprint 深探的子进程数；< processCount 表示总量是下界估算 */
+  deepCovered: number;
   rss: number;
   footprint: number | null;
   swapped: number | null;
@@ -76,4 +78,9 @@ export function swappedRatio(p: {
 }): number | null {
   if (p.footprint == null || p.swapped == null || p.footprint <= 0) return null;
   return p.swapped / p.footprint;
+}
+
+/** 全部子进程都已深探 → 绝对内存是精确值；否则只是下界估算 */
+export function isExact(f: FamilyMem): boolean {
+  return f.footprint != null && f.deepCovered === f.processCount;
 }
