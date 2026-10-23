@@ -126,3 +126,6 @@ src-tauri/gen/schemas/
 
 # playwright-cli 会话产物
 .playwright-cli/
+
+# playwright-cli 快照产物
+/snap-*.yaml
