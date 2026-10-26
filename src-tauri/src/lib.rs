@@ -3,7 +3,8 @@
 //! 模块：
 //! - `tray.rs`    菜单栏 tray + 面板定位（M0 spike 结论已固化）
 //! - `sampler.rs` 内存双频采样（M2/T-206）
-//! - `commands.rs` IPC 读写（M2/T-207）
+//! - `scan.rs`    磁盘可回收扫描调度（M1/T-306）
+//! - `commands.rs` IPC 读写（M2/T-207 + M1/T-306）
 
 use std::sync::Arc;
 
@@ -11,6 +12,7 @@ use tauri::Manager;
 
 mod commands;
 mod sampler;
+mod scan;
 mod tray;
 
 /// 占位命令：暴露核心版本，验证前端 ↔ Rust 链路。
@@ -31,7 +33,11 @@ pub fn run() {
             commands::mem_processes,
             commands::mem_history,
             commands::mem_refresh,
-            commands::open_main
+            commands::open_main,
+            commands::disk_report,
+            commands::disk_scan,
+            commands::reclaim_preview,
+            commands::reclaim_execute
         ])
         .setup(|app| {
             // 资源守门员形态：常驻菜单栏，不占 Dock
@@ -53,11 +59,18 @@ pub fn run() {
             });
 
             app.manage(Arc::new(sampler::MemState::new(store)));
+            app.manage(Arc::new(scan::DiskState::new()));
 
             // 后台常采：无 WebView 也运行，前端打开时直接取最新快照
             let handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 sampler::run(handle).await;
+            });
+
+            // 磁盘侧：启动 30 s 后首扫，此后每周静默刷新
+            let disk_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                scan::run_background(disk_handle).await;
             });
 
             // 面板失焦即隐藏（技术方案 §6）

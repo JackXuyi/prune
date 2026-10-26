@@ -1,18 +1,25 @@
-//! IPC 命令（T-207）：只做读取与转发，业务逻辑都在 prune-core / sampler。
+//! IPC 命令（T-207 / T-306）：只做读取与转发，业务逻辑都在 prune-core / sampler / scan。
 //!
-//! 契约见 docs/m2-memory-plan.md §6：
+//! 契约见 docs/m2-memory-plan.md §6 与 docs/m1-disk-plan.md §8：
 //! - `mem_snapshot`   取内存中最新快照（零 IO，前端打开即用）
 //! - `mem_processes`  全量进程明细（家族聚合前）
 //! - `mem_history`    某进程的序列（读 SQLite）
 //! - `mem_refresh`    手动触发一轮快照 + 深探
+//! - `disk_report`    取最新可回收报告
+//! - `disk_scan`      触发一轮扫描（单飞，重复调用忽略）
+//! - `reclaim_preview` dry-run：生成待清理清单
+//! - `reclaim_execute` 执行清理（走废纸篓，护栏在 prune-core）
 
 use std::sync::Arc;
 
 use prune_core::db::Point;
+use prune_core::disk::DiskReport;
 use prune_core::mem::{MemSnapshot, ProcMem};
+use prune_core::reclaim::{self, Limits, ReclaimItem, ReclaimPreview, ReclaimReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::sampler::{self, MemState};
+use crate::scan::{self, DiskState};
 
 #[tauri::command]
 pub fn mem_snapshot(state: State<'_, Arc<MemState>>) -> Option<MemSnapshot> {
@@ -52,9 +59,9 @@ pub async fn mem_refresh(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 面板点击受害者 → 打开主窗口并选中该进程（附带收起面板）
+/// 面板点击 → 打开主窗口并选中目标（可选指定 tab）
 #[tauri::command]
-pub fn open_main(app: AppHandle, pid: Option<i32>) {
+pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>) {
     if let Some(panel) = app.get_webview_window("panel") {
         let _ = panel.hide();
     }
@@ -65,6 +72,9 @@ pub fn open_main(app: AppHandle, pid: Option<i32>) {
     if let Some(pid) = pid {
         let _ = app.emit("mem://select", pid);
     }
+    if let Some(tab) = tab {
+        let _ = app.emit("ui://tab", tab);
+    }
 }
 
 fn now_secs() -> i64 {
@@ -72,4 +82,64 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------- 磁盘（M1）
+
+#[tauri::command]
+pub fn disk_report(state: State<'_, Arc<DiskState>>) -> Option<DiskReport> {
+    state.report()
+}
+
+/// 手动触发扫描。已有扫描在跑时直接返回 Ok（幂等），前端靠 `disk://done` 更新。
+#[tauri::command]
+pub async fn disk_scan(app: AppHandle) -> Result<(), String> {
+    scan::scan_now(&app).await
+}
+
+/// dry-run：只生成清单，不动任何文件。
+#[tauri::command]
+pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> ReclaimPreview {
+    match state.report() {
+        Some(report) => reclaim::preview(&keys, &report),
+        None => ReclaimPreview {
+            items: Vec::new(),
+            total_bytes: 0,
+            needs_confirm: false,
+            notes: vec!["尚未完成扫描，请稍候或手动刷新".into()],
+        },
+    }
+}
+
+/// 执行清理：路径校验 / 级别闸门 / 熔断都在 prune-core，这里只转发。
+/// 成功后自动重扫一轮，前端通过 `disk://done` 收到新报告。
+#[tauri::command]
+pub async fn reclaim_execute(
+    app: AppHandle,
+    items: Vec<ReclaimItem>,
+    confirmed: bool,
+) -> Result<ReclaimReport, String> {
+    let home = scan::home_dir();
+    let result = tauri::async_runtime::spawn_blocking(move || {
+        reclaim::execute(&items, &home, confirmed, Limits::default())
+    })
+    .await
+    .map_err(|e| format!("清理线程失败: {e}"))?
+    .map_err(|e| e.to_string())?;
+
+    eprintln!(
+        "[m1-disk] 已移入废纸篓 {} 项 · {:.2} GB · 失败 {} 项",
+        result.moved,
+        result.bytes as f64 / 1e9,
+        result.failed.len()
+    );
+
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        if let Err(e) = scan::scan_now(&handle).await {
+            eprintln!("[m1-disk] 清理后重扫失败: {e}");
+        }
+    });
+
+    Ok(result)
 }
