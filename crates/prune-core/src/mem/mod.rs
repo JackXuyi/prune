@@ -9,10 +9,12 @@
 pub mod footprint;
 pub mod process;
 pub mod system;
+pub mod workspace;
 
 use serde::{Deserialize, Serialize};
 
 use crate::swap::SwapInfo;
+pub use workspace::{WorkspaceRef, WorkspaceSource};
 
 /// 读数来源。降级链命中时整表退回 `Rss`，由 UI 明确标注。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +80,11 @@ pub struct ProcMem {
     pub source: MemSource,
     /// 进程启动时间（秒），用于 pid 复用校验
     pub start_time: u64,
+    /// argv（仅用于工作区继承推断，不进 IPC，避免 payload 膨胀）
+    #[serde(skip_serializing, default)]
+    pub cmd: Vec<String>,
+    /// 工作区归属（M2.5）；None = 未归属（UI 必须显示「未归属」而不是猜一个）
+    pub workspace: Option<WorkspaceRef>,
 }
 
 impl ProcMem {
@@ -90,6 +97,26 @@ impl ProcMem {
     }
 
     /// 用于排序/展示的总量：有 footprint 用 footprint，否则退回 RSS
+    pub fn total(&self) -> u64 {
+        self.footprint.unwrap_or(self.rss)
+    }
+}
+
+/// 家族内按工作区分组的一行（M2.5：Cursor 拆成「AI 项目 / prune 项目 / 未归属」）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceMem {
+    pub path: String,
+    pub label: String,
+    /// 组内最高置信度（Handle > Label > Inherited）
+    pub source: WorkspaceSource,
+    pub process_count: usize,
+    pub rss: u64,
+    /// 与家族同口径：已深探用 footprint，未深探用 RSS 补位
+    pub footprint: Option<u64>,
+}
+
+impl WorkspaceMem {
     pub fn total(&self) -> u64 {
         self.footprint.unwrap_or(self.rss)
     }
@@ -108,6 +135,12 @@ pub struct FamilyMem {
     /// footprint 口径合计：已深探子进程用 footprint，未深探用 RSS
     pub footprint: Option<u64>,
     pub swapped: Option<u64>,
+    /// 按工作区分组（仅对有工作区概念的家族非空），按总量降序
+    pub workspaces: Vec<WorkspaceMem>,
+    /// 未能归属到任何工作区的子进程数
+    pub ws_unattributed_count: usize,
+    /// 未能归属部分的总量（同口径）
+    pub ws_unattributed_footprint: Option<u64>,
 }
 
 impl FamilyMem {
@@ -169,6 +202,18 @@ pub fn top_swapped(procs: &[ProcMem], n: usize) -> Vec<ProcMem> {
 /// 不能只累加「有 footprint 的那部分」，否则大应用的 helper 未深探时
 /// 会算出一个明显偏低的假数字。
 pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
+    /// 工作区分组累加器
+    #[derive(Default)]
+    struct WsAcc {
+        label: String,
+        source: Option<WorkspaceSource>,
+        count: usize,
+        rss: u64,
+        fp_probed: u64,
+        rss_unprobed: u64,
+        has_footprint: bool,
+    }
+
     #[derive(Default)]
     struct Acc {
         count: usize,
@@ -181,6 +226,18 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
         swapped: u64,
         has_footprint: bool,
         has_swapped: bool,
+        ws: std::collections::BTreeMap<String, WsAcc>,
+        ws_unattributed_count: usize,
+        ws_unattributed_fp: u64,
+        ws_unattributed_rss: u64,
+    }
+
+    fn rank(s: WorkspaceSource) -> u8 {
+        match s {
+            WorkspaceSource::Handle => 0,
+            WorkspaceSource::Label => 1,
+            WorkspaceSource::Inherited => 2,
+        }
     }
 
     let mut accs: std::collections::BTreeMap<&str, Acc> = std::collections::BTreeMap::new();
@@ -200,19 +257,78 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
             a.swapped = a.swapped.saturating_add(sw);
             a.has_swapped = true;
         }
+
+        // 工作区分组（M2.5）：未归属的单独计数，不用历史记录兜底
+        match &p.workspace {
+            Some(ws) => {
+                let w = a.ws.entry(ws.path.clone()).or_default();
+                if w.label.is_empty() {
+                    w.label = ws.label.clone();
+                }
+                w.source = Some(match w.source {
+                    Some(prev) if rank(prev) <= rank(ws.source) => prev,
+                    _ => ws.source,
+                });
+                w.count += 1;
+                w.rss = w.rss.saturating_add(p.rss);
+                match p.footprint {
+                    Some(fp) => {
+                        w.fp_probed = w.fp_probed.saturating_add(fp);
+                        w.has_footprint = true;
+                    }
+                    None => w.rss_unprobed = w.rss_unprobed.saturating_add(p.rss),
+                }
+            }
+            None => {
+                a.ws_unattributed_count += 1;
+                match p.footprint {
+                    Some(fp) => a.ws_unattributed_fp = a.ws_unattributed_fp.saturating_add(fp),
+                    None => a.ws_unattributed_rss = a.ws_unattributed_rss.saturating_add(p.rss),
+                }
+            }
+        }
     }
 
     let mut out: Vec<FamilyMem> = accs
         .into_iter()
-        .map(|(name, a)| FamilyMem {
-            name: name.to_string(),
-            process_count: a.count,
-            deep_covered: a.deep_covered,
-            rss: a.rss,
-            footprint: a
-                .has_footprint
-                .then_some(a.fp_probed.saturating_add(a.rss_unprobed)),
-            swapped: a.has_swapped.then_some(a.swapped),
+        .map(|(name, a)| {
+            let mut workspaces: Vec<WorkspaceMem> = a
+                .ws
+                .into_iter()
+                .map(|(path, w)| WorkspaceMem {
+                    label: if w.label.is_empty() {
+                        path.rsplit('/').next().unwrap_or(&path).to_string()
+                    } else {
+                        w.label
+                    },
+                    path,
+                    source: w.source.unwrap_or(WorkspaceSource::Label),
+                    process_count: w.count,
+                    rss: w.rss,
+                    footprint: w
+                        .has_footprint
+                        .then_some(w.fp_probed.saturating_add(w.rss_unprobed)),
+                })
+                .collect();
+            workspaces.sort_by_key(|w| std::cmp::Reverse(w.total()));
+
+            FamilyMem {
+                name: name.to_string(),
+                process_count: a.count,
+                deep_covered: a.deep_covered,
+                rss: a.rss,
+                footprint: a
+                    .has_footprint
+                    .then_some(a.fp_probed.saturating_add(a.rss_unprobed)),
+                swapped: a.has_swapped.then_some(a.swapped),
+                workspaces,
+                ws_unattributed_count: a.ws_unattributed_count,
+                // 与家族同口径：家族有 footprint 时，未归属部分也应给出下界值
+                // （已探的用 footprint，未探的用 RSS），保证「分组 + 未归属 = 家族总量」
+                ws_unattributed_footprint: a
+                    .has_footprint
+                    .then_some(a.ws_unattributed_fp.saturating_add(a.ws_unattributed_rss)),
+            }
         })
         .collect();
     out.sort_by_key(|f| std::cmp::Reverse(f.total()));
@@ -287,6 +403,8 @@ mod tests {
                 MemSource::Rss
             },
             start_time: 0,
+            cmd: Vec::new(),
+            workspace: None,
         }
     }
 
@@ -324,6 +442,65 @@ mod tests {
         assert_eq!(fams[0].deep_covered, 1);
         assert_eq!(fams[0].process_count, 2);
         assert!(!fams[0].is_exact(), "部分覆盖不能被当成精确值");
+    }
+
+    #[test]
+    fn aggregate_groups_family_by_workspace() {
+        let mut a = proc(1, "Cursor", 100, Some(1000), None);
+        a.workspace = Some(WorkspaceRef::new(
+            "/Users/xuyi/Desktop/git/AI",
+            WorkspaceSource::Label,
+        ));
+        let mut b = proc(2, "Cursor", 200, Some(2000), None);
+        b.workspace = Some(WorkspaceRef::new(
+            "/Users/xuyi/Desktop/git/prune",
+            WorkspaceSource::Handle,
+        ));
+        // 未归属的进程（renderer 常见：既无标签也无句柄）
+        let c = proc(3, "Cursor", 400, None, None);
+        let mut d = proc(4, "Cursor", 50, Some(500), None);
+        d.workspace = Some(WorkspaceRef::new(
+            "/Users/xuyi/Desktop/git/AI",
+            WorkspaceSource::Inherited,
+        ));
+
+        let fams = aggregate(&[a, b, c, d]);
+        let cursor = &fams[0];
+        assert_eq!(cursor.process_count, 4);
+        // 家族总量仍是全量，不因分组而丢进程
+        assert_eq!(cursor.footprint, Some(1000 + 2000 + 400 + 500));
+
+        assert_eq!(cursor.workspaces.len(), 2);
+        // 按总量降序：prune(2000) > AI(1500)
+        assert_eq!(cursor.workspaces[0].path, "/Users/xuyi/Desktop/git/prune");
+        assert_eq!(cursor.workspaces[0].label, "prune");
+        assert_eq!(cursor.workspaces[0].source, WorkspaceSource::Handle);
+        assert_eq!(cursor.workspaces[0].footprint, Some(2000));
+
+        let ai = &cursor.workspaces[1];
+        assert_eq!(ai.process_count, 2);
+        assert_eq!(ai.footprint, Some(1500));
+        // 组内置信度取最高：Label + Inherited → Label
+        assert_eq!(ai.source, WorkspaceSource::Label);
+
+        // 未归属部分单独统计，绝不摊进某个项目
+        assert_eq!(cursor.ws_unattributed_count, 1);
+        assert_eq!(cursor.ws_unattributed_footprint, Some(400));
+        // 分组之和 + 未归属 = 家族总量
+        let grouped: u64 = cursor.workspaces.iter().map(|w| w.total()).sum();
+        assert_eq!(
+            grouped + cursor.ws_unattributed_footprint.unwrap(),
+            cursor.total()
+        );
+    }
+
+    #[test]
+    fn families_without_workspace_have_empty_groups() {
+        let procs = vec![proc(1, "Chrome", 300, Some(900), None)];
+        let fams = aggregate(&procs);
+        assert!(fams[0].workspaces.is_empty());
+        // 无工作区概念时，未归属计数不参与 UI 判断（前端只看 workspaces 是否为空）
+        assert_eq!(fams[0].ws_unattributed_count, 1);
     }
 
     #[test]

@@ -2,6 +2,23 @@
 
 export type MemSource = "footprint" | "rss";
 export type PressureLevel = "normal" | "warning" | "critical";
+/** 工作区归属来源，置信度从高到低 */
+export type WorkspaceSource = "handle" | "label" | "inherited";
+
+export interface WorkspaceRef {
+  path: string;
+  label: string;
+  source: WorkspaceSource;
+}
+
+export interface WorkspaceMem {
+  path: string;
+  label: string;
+  source: WorkspaceSource;
+  processCount: number;
+  rss: number;
+  footprint: number | null;
+}
 
 export interface Pressure {
   level: PressureLevel;
@@ -33,6 +50,8 @@ export interface ProcMem {
   swapped: number | null;
   source: MemSource;
   startTime: number;
+  /** 工作区归属（M2.5）；null = 未归属，UI 必须如实显示 */
+  workspace: WorkspaceRef | null;
 }
 
 export interface FamilyMem {
@@ -43,6 +62,12 @@ export interface FamilyMem {
   rss: number;
   footprint: number | null;
   swapped: number | null;
+  /** 按工作区分组（仅编辑器类家族非空），按总量降序 */
+  workspaces: WorkspaceMem[];
+  /** 未能归属到任何工作区的子进程数 */
+  wsUnattributedCount: number;
+  /** 未归属部分的总量（同 footprint 口径） */
+  wsUnattributedFootprint: number | null;
 }
 
 export interface MemSnapshot {

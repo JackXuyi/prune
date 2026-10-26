@@ -1,7 +1,15 @@
 import { useMemo } from "react";
 
 import { formatBytes, formatPercent } from "../lib/format";
-import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
+import {
+  isExact,
+  swappedRatio,
+  totalOf,
+  type FamilyMem,
+  type ProcMem,
+  type WorkspaceMem,
+  type WorkspaceSource,
+} from "../types/mem";
 import { Meter } from "./primitives";
 
 /** 口径说明：精确 / 部分深探 / 纯 RSS */
@@ -11,12 +19,46 @@ function coverageLabel(f: FamilyMem): string {
   return `深探 ${f.deepCovered}/${f.processCount} · ≈ 下界`;
 }
 
+/** 归属来源的中文说明（鼠标悬停看，不占版面） */
+const SOURCE_HINT: Record<WorkspaceSource, string> = {
+  handle: "依据打开的文件句柄判定（最可靠）",
+  label: "依据编辑器窗口标签 + 本地工作区记录判定",
+  inherited: "子进程继承了所属窗口的工作区",
+};
+
+/** 一行项目：名称 + 绝对占用。面板窄，只显示前几条 */
+function WorkspaceRow({
+  ws,
+  compact,
+}: {
+  ws: WorkspaceMem;
+  compact: boolean;
+}) {
+  return (
+    <div className="flex items-baseline gap-1.5">
+      <span
+        className={`min-w-0 flex-1 truncate ${compact ? "text-[10px]" : "text-[11px]"} text-ink-dim`}
+        title={`${ws.path}\n${SOURCE_HINT[ws.source]}`}
+      >
+        {ws.label}
+      </span>
+      <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-faint">
+        {ws.footprint == null ? "≈" : ""}
+        {formatBytes(totalOf(ws))}
+      </span>
+    </div>
+  );
+}
+
 /**
  * 每个应用的绝对内存排行。
  *
  * 数值口径：`total()` = footprint（含被换出到磁盘的部分）；未深探的子进程按
  * RSS 计入，因此带 `≈` 的行是**下界**，不会虚高。`compact` 供 380px 面板用，
  * 完整版供主窗口用。
+ *
+ * 有工作区概念的家族（Cursor / VS Code 等）会在行下列出各项目的占用，
+ * 以及「未归属」余量——渲染进程这类拿不到项目线索的进程不会被摊进任何项目。
  */
 export function AppMemoryList({
   families,
@@ -111,6 +153,9 @@ export function AppMemoryList({
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] leading-tight text-ink-faint">
                         {f.processCount} 个进程 · {coverageLabel(f)}
+                        {f.workspaces.length > 0
+                          ? ` · ${f.workspaces.length} 个项目`
+                          : ""}
                         {ratio != null ? ` · ${formatPercent(ratio)} 在磁盘` : ""}
                       </span>
                     </span>
@@ -121,6 +166,38 @@ export function AppMemoryList({
                     </span>
                   </div>
                 )}
+
+                {f.workspaces.length > 0 ? (
+                  <div
+                    className={
+                      compact
+                        ? "mt-1 space-y-0.5 pl-1"
+                        : "mt-1.5 space-y-0.5 pl-[36px]"
+                    }
+                  >
+                    {(compact ? f.workspaces.slice(0, 3) : f.workspaces).map((w) => (
+                      <WorkspaceRow key={w.path} ws={w} compact={compact} />
+                    ))}
+                    {compact && f.workspaces.length > 3 ? (
+                      <div className="text-[10px] text-ink-faint">
+                        还有 {f.workspaces.length - 3} 个项目
+                      </div>
+                    ) : null}
+                    {f.wsUnattributedCount > 0 && f.wsUnattributedFootprint != null ? (
+                      <div className="flex items-baseline gap-1.5">
+                        <span
+                          className="min-w-0 flex-1 truncate text-[10px] text-ink-faint"
+                          title="这些进程没有任何可归属的项目线索（如 Electron 渲染进程），不摊进任何项目"
+                        >
+                          未归属 · {f.wsUnattributedCount} 进程
+                        </span>
+                        <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-faint">
+                          {formatBytes(f.wsUnattributedFootprint)}
+                        </span>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
               </button>
             </li>
           );

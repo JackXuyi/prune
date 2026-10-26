@@ -15,14 +15,16 @@
 //! - 任何 footprint 失败都只降级该进程到 RSS 口径，绝不伪造数值。
 
 use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use prune_core::db::Store;
 use prune_core::mem::process::Scanner;
-use prune_core::mem::{self, MemSnapshot, MemSource, ProcMem};
+use prune_core::mem::{self, MemSnapshot, MemSource, ProcMem, WorkspaceRef};
 use prune_core::mem::system::{self, SystemMem};
+use prune_core::mem::workspace;
 use prune_core::swap::{self, SwapInfo};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -52,6 +54,13 @@ struct DeepRow {
     start_time: u64,
     footprint: u64,
     swapped: u64,
+}
+
+/// 工作区归属缓存行（同样按 start_time 校验，防 pid 复用后把新进程算到旧项目上）
+#[derive(Debug, Clone)]
+struct WsRow {
+    start_time: u64,
+    ws: WorkspaceRef,
 }
 
 /// 深探单飞闸门：同一时刻只允许一轮 footprint 深探。
@@ -91,6 +100,9 @@ pub struct MemState {
     scanner: Mutex<Scanner>,
     store: Option<Arc<Store>>,
     deep: Mutex<HashMap<i32, DeepRow>>,
+    /// 工作区归属缓存（M2.5）：只在深探轮刷新，10 s 快照轮复用它，
+    /// 避免每 10 s 跑一遍 lsof
+    workspaces: Mutex<HashMap<i32, WsRow>>,
     /// 深探单飞闸门（定时器轮与手动刷新共用）
     deep_in_flight: AtomicBool,
     prev: Mutex<Prev>,
@@ -109,6 +121,7 @@ impl MemState {
             scanner: Mutex::new(Scanner::new()),
             store,
             deep: Mutex::new(HashMap::new()),
+            workspaces: Mutex::new(HashMap::new()),
             deep_in_flight: AtomicBool::new(false),
             prev: Mutex::new(Prev::default()),
             deep_available: Mutex::new(true),
@@ -120,6 +133,10 @@ impl MemState {
 
     fn lock_deep(&self) -> std::sync::MutexGuard<'_, HashMap<i32, DeepRow>> {
         self.deep.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    fn lock_ws(&self) -> std::sync::MutexGuard<'_, HashMap<i32, WsRow>> {
+        self.workspaces.lock().unwrap_or_else(|e| e.into_inner())
     }
 
     /// 查询序列（无库时返回空表，UI 显示「暂无历史」而不是报错）
@@ -181,7 +198,7 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
             let mut scanner = state.scanner.lock().unwrap_or_else(|e| e.into_inner());
             scanner.scan()
         };
-        let merged = merge_deep(procs, &state.lock_deep());
+        let merged = merge_workspace(merge_deep(procs, &state.lock_deep()), &state.lock_ws());
         let snapshot = assemble(&state, &merged);
 
         let elapsed = started.elapsed().as_millis() as u64;
@@ -252,6 +269,24 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
     let updated = next.len();
     *probe_state.lock_deep() = next;
 
+    // M2.5：工作区归属。lsof 有真实 I/O 成本，只跟 5 min 深探轮走，
+    // 归属结果落缓存供后续 10 s 快照轮复用（进程退出/复用由 start_time 校验处理）。
+    let ws_started = Instant::now();
+    let ws_state = state.clone();
+    let ws_table = tauri::async_runtime::spawn_blocking(move || {
+        let procs = ws_state
+            .processes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone();
+        build_ws_table(&procs, &home_dir())
+    })
+    .await
+    .map_err(|e| format!("工作区扫描线程失败: {e}"))?;
+    let ws_count = ws_table.len();
+    let ws_elapsed = ws_started.elapsed().as_millis() as u64;
+    *probe_state.lock_ws() = ws_table;
+
     // 全部失败 → footprint 不可用（命令缺失 / 权限被拦），整表退回 RSS 口径
     let available = success > 0;
     *probe_state
@@ -273,7 +308,7 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let merged = merge_deep(procs, &probe_state.lock_deep());
+        let merged = merge_workspace(merge_deep(procs, &probe_state.lock_deep()), &probe_state.lock_ws());
         let snapshot = assemble(&probe_state, &merged);
         *probe_state
             .processes
@@ -303,6 +338,7 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
         target_count,
         if available { "footprint" } else { "RSS（降级）" }
     );
+    eprintln!("[m2-ws] 工作区归属 {ws_count} 进程 · {ws_elapsed} ms");
 
     let _ = app.emit(EVENT_DEEP, &snapshot);
     Ok(())
@@ -401,6 +437,42 @@ fn merge_deep(mut procs: Vec<ProcMem>, deep: &HashMap<i32, DeepRow>) -> Vec<Proc
     procs
 }
 
+/// 由本轮归属结果构建缓存表（同样校验 start_time）
+fn build_ws_table(procs: &[ProcMem], home: &Path) -> HashMap<i32, WsRow> {
+    let resolved = workspace::resolve_many(procs, home);
+    let mut next: HashMap<i32, WsRow> = HashMap::with_capacity(resolved.len());
+    for (pid, ws) in resolved {
+        if let Some(p) = procs.iter().find(|p| p.pid == pid) {
+            next.insert(
+                pid,
+                WsRow {
+                    start_time: p.start_time,
+                    ws,
+                },
+            );
+        }
+    }
+    next
+}
+
+/// 合并工作区归属：start_time 不一致（pid 被复用）时不继承旧归属
+fn merge_workspace(mut procs: Vec<ProcMem>, ws: &HashMap<i32, WsRow>) -> Vec<ProcMem> {
+    for p in &mut procs {
+        p.workspace = match ws.get(&p.pid) {
+            Some(row) if row.start_time == p.start_time => Some(row.ws.clone()),
+            _ => None,
+        };
+    }
+    procs
+}
+
+/// 用户主目录（归属解析的基准路径；取不到时退化为 `/`，后续解析会全部判为噪声）
+fn home_dir() -> PathBuf {
+    std::env::var("HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("/"))
+}
+
 /// 读系统侧数据并装配快照（两条轮次共用）
 fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
     let now = now_secs();
@@ -473,6 +545,8 @@ mod tests {
             swapped: None,
             source: MemSource::Rss,
             start_time,
+            cmd: Vec::new(),
+            workspace: None,
         }
     }
 
@@ -569,6 +643,36 @@ mod tests {
         assert_eq!(table.len(), 1);
         assert_eq!(table.get(&1).unwrap().start_time, 111);
         assert!(table.get(&2).is_none(), "已退出进程不能留下残影");
+    }
+
+    #[test]
+    fn merge_workspace_respects_pid_reuse() {
+        use prune_core::mem::{WorkspaceRef, WorkspaceSource};
+
+        let procs = vec![proc(1, 100, 111), proc(2, 100, 222)];
+        let mut table = HashMap::new();
+        table.insert(
+            1,
+            WsRow {
+                start_time: 111,
+                ws: WorkspaceRef::new("/Users/xuyi/Desktop/git/AI", WorkspaceSource::Label),
+            },
+        );
+        // pid 2 的 start_time 不匹配 → 新进程不能继承旧项目的归属
+        table.insert(
+            2,
+            WsRow {
+                start_time: 999,
+                ws: WorkspaceRef::new("/Users/xuyi/Desktop/git/old", WorkspaceSource::Handle),
+            },
+        );
+
+        let merged = merge_workspace(procs, &table);
+        assert_eq!(
+            merged[0].workspace.as_ref().map(|w| w.label.as_str()),
+            Some("AI")
+        );
+        assert!(merged[1].workspace.is_none(), "pid 复用不得继承归属");
     }
 
     #[test]

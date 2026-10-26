@@ -11,9 +11,18 @@ import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
 import { Tabs } from "../components/Tabs";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { useMemHistory, useMemStore } from "../stores/memStore";
-import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
+import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem, type WorkspaceSource } from "../types/mem";
 
 type MainTab = "apps" | "overview";
+
+/** 工作区归属的置信度说明（UI 必须让用户知道这个路径是怎么来的） */
+function sourceLabel(s: WorkspaceSource): string {
+  return s === "handle"
+    ? "依据打开的文件句柄"
+    : s === "label"
+      ? "依据编辑器窗口标签"
+      : "继承所属窗口";
+}
 
 /** 主窗口（960×640）：应用内存 / 系统概况 两个 tab */
 export function MainWindow() {
@@ -194,6 +203,7 @@ function FamilyRow({
           </span>
           <span className="mt-0.5 block text-[10px] text-ink-faint">
             {family.processCount} 个进程
+            {family.workspaces.length > 0 ? ` · ${family.workspaces.length} 个项目` : ""}
             {family.footprint == null ? " · RSS" : exact ? "" : " · ≈"}
           </span>
         </span>
@@ -221,7 +231,17 @@ function FamilyRow({
                     isActive ? "bg-accent/[0.10] text-ink" : "text-ink-dim hover:bg-white/[0.04]"
                   }`}
                 >
-                  <span className="min-w-0 flex-1 truncate text-[11.5px]">{p.name}</span>
+                  <span className="min-w-0 flex-1 truncate text-[11.5px]">
+                    {p.name}
+                    {p.workspace ? (
+                      <span
+                        className="ml-1.5 text-[10px] text-ink-faint"
+                        title={`${p.workspace.path}（${sourceLabel(p.workspace.source)}）`}
+                      >
+                        {p.workspace.label}
+                      </span>
+                    ) : null}
+                  </span>
                   <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-faint">
                     {formatBytes(totalOf(p))}
                   </span>
@@ -431,6 +451,14 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
         <div className="mb-2 text-[11px] font-medium text-ink-dim">进程信息</div>
         <dl className="space-y-1.5 text-[11px]">
           <Row label="可执行文件" value={proc.exe ?? "不可读"} mono />
+          <Row
+            label="工作区"
+            value={proc.workspace ? proc.workspace.path : "未归属（没有可用的项目线索）"}
+            mono={!!proc.workspace}
+          />
+          {proc.workspace ? (
+            <Row label="归属依据" value={sourceLabel(proc.workspace.source)} />
+          ) : null}
           <Row label="启动时间" value={formatClock(proc.startTime)} mono />
           <Row label="家族" value={proc.family} />
           <Row

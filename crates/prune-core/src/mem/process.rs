@@ -114,10 +114,21 @@ impl Scanner {
             .map(|p| {
                 let name = p.name().to_string_lossy().to_string();
                 let exe = p.exe().map(|e| e.to_string_lossy().to_string());
+                let family = classify(&name, exe.as_deref());
+                // argv 只为工作区归属保留（M2.5）：只有编辑器类家族需要，
+                // 其余进程不复制 argv，避免 10 s 轮次做无用的字符串分配
+                let cmd = if super::workspace::workspace_capable(&family) {
+                    p.cmd()
+                        .iter()
+                        .map(|c| c.to_string_lossy().to_string())
+                        .collect()
+                } else {
+                    Vec::new()
+                };
                 ProcMem {
                     pid: p.pid().as_u32() as i32,
                     ppid: p.parent().map(|x: Pid| x.as_u32() as i32).unwrap_or(0),
-                    family: classify(&name, exe.as_deref()),
+                    family,
                     name,
                     exe,
                     rss: p.memory(),
@@ -125,6 +136,8 @@ impl Scanner {
                     swapped: None,
                     source: MemSource::Rss,
                     start_time: p.start_time(),
+                    cmd,
+                    workspace: None,
                 }
             })
             .collect();

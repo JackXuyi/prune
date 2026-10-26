@@ -147,6 +147,8 @@ mod tests {
             swapped: sw,
             source: MemSource::Footprint,
             start_time: 7,
+            cmd: Vec::new(),
+            workspace: None,
         }
     }
 
