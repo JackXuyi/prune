@@ -212,8 +212,9 @@ function devGroup(
   totalBytes: number,
   entryCount: number,
   deadweight: CacheGroup["deadweight"] = null,
+  cleanable = true,
 ): CacheGroup {
-  return { key, label, root: `/Users/xuyi/${key}`, level, totalBytes, entryCount, deadweight };
+  return { key, label, root: `/Users/xuyi/${key}`, level, totalBytes, entryCount, cleanable, deadweight };
 }
 
 export function devDiskReport(): DiskReport {
@@ -262,7 +263,8 @@ export function devDiskReport(): DiskReport {
       devGroup("homebrew", "Homebrew 下载缓存", "l2", 0.176 * GB, 63),
       devGroup("deriveddata", "DerivedData（编译产物）", "l2", 0.071 * GB, 5),
       devGroup("bun", "Bun 安装缓存", "l2", 0.4e6, 3),
-      devGroup("node-modules", "项目依赖（55 个 node_modules）", "l3", 17.02 * GB, 55),
+      // 聚合项：真机上 root 是 home，只统计不可一键清理
+      devGroup("node-modules", "项目依赖（55 个 node_modules）", "l3", 17.02 * GB, 55, null, false),
       devGroup("simulator", "Simulator 设备", "l3", 3.75 * GB, 12),
       devGroup("playwright", "Playwright 浏览器", "l3", 1.29 * GB, 10),
       devGroup("docker-vm", "Docker VM 磁盘", "l4", 3.17 * GB, 1),

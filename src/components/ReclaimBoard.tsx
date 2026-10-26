@@ -240,7 +240,8 @@ function GroupRow({ group }: { group: CacheGroup }) {
   const loadPreview = useDiskStore((s) => s.loadPreview);
   const busy = useDiskStore((s) => s.busy);
   const meta = LEVEL_META[group.level];
-  const cleanable = group.level !== "l4";
+  // L4 只给命令；聚合项（分散在 N 个目录，没有单一可删根）只统计
+  const cleanable = group.cleanable && group.level !== "l4";
 
   return (
     <li className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.03]">
@@ -265,8 +266,11 @@ function GroupRow({ group }: { group: CacheGroup }) {
           预览
         </button>
       ) : (
-        <span className="w-16 shrink-0 text-center text-[10px] text-ink-faint" title="只提供命令，不执行">
-          手动处理
+        <span
+          className="w-16 shrink-0 text-center text-[10px] text-ink-faint"
+          title={group.level === "l4" ? "只提供命令，不执行" : "分散在多个项目目录，只做统计"}
+        >
+          {group.level === "l4" ? "手动处理" : "只统计"}
         </span>
       )}
     </li>

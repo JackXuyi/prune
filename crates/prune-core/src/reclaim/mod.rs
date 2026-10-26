@@ -119,6 +119,20 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
                 ));
                 continue;
             }
+            _ => {}
+        }
+
+        // 聚合分组（如「55 个项目的 node_modules」）没有单一可删根：
+        // 它的 root 是 home，绝不能当成待删项——只说明不提供清理。
+        if !group.cleanable {
+            notes.push(format!(
+                "{} 分散在 {} 个目录，只做统计；请在对应项目内自行删除",
+                group.label, group.entry_count
+            ));
+            continue;
+        }
+
+        match group.level {
             Level::L3 => {
                 needs_confirm = true;
                 if group.total_bytes > 0 {
@@ -131,7 +145,7 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
                 }
                 continue;
             }
-            Level::L1 | Level::L2 => {}
+            Level::L1 | Level::L2 | Level::L4 => {}
         }
 
         match &group.deadweight {
@@ -266,6 +280,7 @@ mod tests {
             level,
             total_bytes: bytes,
             entry_count: 1,
+            cleanable: true,
             deadweight: dw,
         }
     }
@@ -328,15 +343,53 @@ mod tests {
     fn preview_skips_l4_and_flags_l3() {
         let home = temp_home("levels");
         let docker = home.join(".colima");
+        let sim = home.join("Library/Developer/CoreSimulator/Devices");
         std::fs::create_dir_all(&docker).unwrap();
+        std::fs::create_dir_all(&sim).unwrap();
         let report = report_with(vec![
             group("colima", Level::L4, &docker, 900, None),
-            group("node-modules", Level::L3, &home, 500, None),
+            group("simulator", Level::L3, &sim, 500, None),
         ]);
-        let pv = preview(&["colima".into(), "node-modules".into()], &report);
+        let pv = preview(&["colima".into(), "simulator".into()], &report);
         assert_eq!(pv.items.len(), 1, "L4 永不进清理项");
         assert!(pv.needs_confirm, "L3 需要确认");
         assert!(pv.notes.iter().any(|n| n.contains("只提供命令")));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 聚合分组（root = home）绝不能被当成待删项——那是家目录
+    #[test]
+    fn preview_refuses_aggregate_group_with_home_root() {
+        let home = temp_home("aggregate");
+        let mut nm = group("node-modules", Level::L3, &home, 500, None);
+        nm.cleanable = false;
+        nm.entry_count = 55;
+        let report = report_with(vec![nm]);
+
+        let pv = preview(&["node-modules".into()], &report);
+        assert!(pv.items.is_empty(), "聚合项不得生成清理项（root 是 home）");
+        assert_eq!(pv.total_bytes, 0);
+        assert!(
+            pv.notes.iter().any(|n| n.contains("55 个目录")),
+            "要明确告诉用户只做统计，实际 notes={:?}",
+            pv.notes
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 白名单最后一道闸：家目录本体必须被拒（即使前面环节都漏了）
+    #[test]
+    fn execute_rejects_home_itself() {
+        let home = temp_home("homeguard");
+        let items = vec![ReclaimItem {
+            path: home.to_string_lossy().to_string(),
+            label: "家目录".into(),
+            bytes: 1,
+            level: Level::L3,
+        }];
+        let err = execute(&items, &home, true, Limits::default()).unwrap_err();
+        assert!(matches!(err, ReclaimError::NotWhitelisted(_)));
+        assert!(home.exists(), "拒绝时不得动目录");
         let _ = std::fs::remove_dir_all(&home);
     }
 

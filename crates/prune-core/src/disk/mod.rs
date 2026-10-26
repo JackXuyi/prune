@@ -76,7 +76,18 @@ pub struct CacheGroup {
     pub level: Level,
     pub total_bytes: u64,
     pub entry_count: usize,
+    /// 是否能作为一个整体被清理。
+    ///
+    /// 聚合出来的分组（如「55 个项目的 node_modules」）没有单一可删除的根，
+    /// 置 false —— 否则 `preview` 会把 `root`（= home）当成待删项，
+    /// 既误导用户，执行时也必然被白名单拒绝。
+    #[serde(default = "default_true")]
+    pub cleanable: bool,
     pub deadweight: Option<DeadweightStats>,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 /// 三管理器重复（A3）
@@ -534,6 +545,7 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
                 level: entry.level,
                 total_bytes: group_total,
                 entry_count: dir_entry_count(path),
+                cleanable: true,
                 deadweight: Some(dw),
             });
         }
@@ -557,6 +569,7 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
                 level: entry.level,
                 total_bytes: size,
                 entry_count: if size > 0 { dir_entry_count(path) } else { 0 },
+                cleanable: true,
                 deadweight: None,
             });
         }
@@ -575,6 +588,8 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
             level: Level::L3,
             total_bytes: nm_bytes,
             entry_count: nm_count,
+            // 聚合项：没有单一可删根（root 是 home），只统计不提供一键清理
+            cleanable: false,
             deadweight: None,
         });
     }
@@ -695,6 +710,7 @@ mod tests {
             level: Level::L2,
             total_bytes: 1000,
             entry_count: 10,
+            cleanable: true,
             deadweight: Some(DeadweightStats {
                 bytes: 700,
                 native_bytes: 300,
@@ -712,6 +728,7 @@ mod tests {
             level: Level::L2,
             total_bytes: 500,
             entry_count: 1,
+            cleanable: true,
             deadweight: None,
         };
         let docker = CacheGroup {
@@ -721,6 +738,7 @@ mod tests {
             level: Level::L4,
             total_bytes: 900,
             entry_count: 1,
+            cleanable: true,
             deadweight: None,
         };
         let t = totals_of(&[yarn, npm, docker]);
@@ -740,6 +758,7 @@ mod tests {
             level: Level::L2,
             total_bytes: bytes,
             entry_count: 1,
+            cleanable: true,
             deadweight: None,
         };
         assert!(dup_summary(&[g("npm", 10)]).is_none());

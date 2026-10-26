@@ -41,6 +41,8 @@ export interface CacheGroup {
   level: Level;
   totalBytes: number;
   entryCount: number;
+  /** 聚合分组（root 是 home）时为 false：只统计，不提供一键清理 */
+  cleanable: boolean;
   deadweight: DeadweightStats | null;
 }
 

@@ -13,6 +13,7 @@ use std::time::Instant;
 use prune_core::classify::{self, host_arch, has_rosetta};
 use prune_core::disk;
 use prune_core::disk::whitelist::Level;
+use prune_core::reclaim;
 
 fn mb(bytes: u64) -> String {
     if bytes >= 1_000_000_000 {
@@ -138,4 +139,39 @@ fn main() {
         elapsed.as_millis(),
         if elapsed.as_millis() < 20_000 { "✅ 通过" } else { "❌ 超标" }
     );
+
+    // ---------------------------------------------------------------- dry-run
+    // 只生成清单，不动任何文件。验收 T-309 的「预览可读、L4 拒执行」两项。
+    println!("\n== dry-run 预览（不删任何文件）==");
+    for key in ["yarn", "npm", "node-modules", "docker-vm"] {
+        let p = reclaim::preview(&[key.to_string()], &report);
+        let first = p
+            .items
+            .first()
+            .map(|i| i.path.rsplit('/').next().unwrap_or(&i.path).to_string())
+            .unwrap_or_else(|| "—".into());
+        println!(
+            "  {:<13} {:>2} 项 {:>10} · confirm={:<5} · 首项 {}",
+            key,
+            p.items.len(),
+            mb(p.total_bytes),
+            p.needs_confirm,
+            first
+        );
+        for n in &p.notes {
+            println!("      ↳ {n}");
+        }
+    }
+
+    // 白名单外路径必须被拒（真删防护的最后一关）
+    let evil = vec![prune_core::reclaim::ReclaimItem {
+        path: "/etc/hosts".into(),
+        label: "越界测试".into(),
+        bytes: 1,
+        level: Level::L1,
+    }];
+    match prune_core::reclaim::execute(&evil, &home, true, Default::default()) {
+        Err(e) => println!("\n  白名单外路径 → ✅ 已拒绝（{e}）"),
+        Ok(r) => println!("\n  白名单外路径 → ❌ 竟然执行了！moved={}", r.moved),
+    }
 }
