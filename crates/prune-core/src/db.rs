@@ -10,6 +10,7 @@ use std::sync::Mutex;
 use rusqlite::{params, Connection};
 use serde::{Deserialize, Serialize};
 
+use crate::leak::{ProcSeries, Sample};
 use crate::mem::ProcMem;
 
 /// 单进程单个时间点的序列记录
@@ -123,6 +124,48 @@ impl Store {
         conn.execute("DELETE FROM mem_process WHERE ts < ?1", params![cutoff])
     }
 
+    /// 拉取 `since` 之后的全部分程序列，供 B5 泄漏判定消费。
+    ///
+    /// 切分键是 **`pid + start_time`**：同一个 pid 被复用（旧进程退出、新进程拿到同号）
+    /// 时必须拆成两条序列，否则会把两个进程的内存接成一条「暴涨曲线」。
+    /// 只取 `footprint IS NOT NULL` 的行——RSS-only 行不进判定，避免口径混用。
+    pub fn series(&self, since: i64) -> rusqlite::Result<Vec<ProcSeries>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT pid, start_time, family, name, ts, footprint
+             FROM mem_process
+             WHERE ts >= ?1 AND footprint IS NOT NULL
+             ORDER BY pid, start_time, ts",
+        )?;
+        let mut rows = stmt.query(params![since])?;
+
+        let mut out: Vec<ProcSeries> = Vec::new();
+        while let Some(row) = rows.next()? {
+            let pid: i32 = row.get(0)?;
+            let start_time: i64 = row.get(1)?;
+            let family: String = row.get(2)?;
+            let name: String = row.get(3)?;
+            let ts: i64 = row.get(4)?;
+            // 列上可能有历史负值/脏值，一律夹到 0，避免 as 转换出天文数字
+            let footprint = row.get::<_, i64>(5)?.max(0) as u64;
+            let sample = Sample { ts, footprint };
+
+            match out.last_mut() {
+                Some(last) if last.pid == pid && last.start_time as i64 == start_time => {
+                    last.samples.push(sample);
+                }
+                _ => out.push(ProcSeries {
+                    pid,
+                    start_time: start_time.max(0) as u64,
+                    family,
+                    name,
+                    samples: vec![sample],
+                }),
+            }
+        }
+        Ok(out)
+    }
+
     /// 行数（体积预算校验用）
     pub fn row_count(&self) -> rusqlite::Result<i64> {
         let conn = self.lock();
@@ -205,5 +248,54 @@ mod tests {
         store.record(500, &[proc(1, Some(2), None)]).unwrap();
         assert_eq!(store.prune_before(200).unwrap(), 1);
         assert_eq!(store.row_count().unwrap(), 1);
+    }
+
+    fn proc_at(pid: i32, start_time: u64, fp: Option<u64>) -> ProcMem {
+        let mut p = proc(pid, fp, None);
+        p.start_time = start_time;
+        p
+    }
+
+    /// pid 复用必须切成两条序列：否则判定会把旧进程的 1000 MB 和新进程的 50 MB
+    /// 接成一条「暴跌曲线」，或反过来造出假增长。
+    #[test]
+    fn series_splits_on_pid_reuse() {
+        let store = Store::open_in_memory().unwrap();
+        store.record(100, &[proc_at(1, 7, Some(1000))]).unwrap();
+        store.record(200, &[proc_at(1, 7, Some(1100))]).unwrap();
+        // pid 1 被复用（新进程 start_time 不同）
+        store.record(300, &[proc_at(1, 9, Some(50))]).unwrap();
+        store.record(300, &[proc_at(2, 9, Some(60))]).unwrap();
+
+        let s = store.series(0).unwrap();
+        assert_eq!(s.len(), 3, "两条 pid=1 序列 + 一条 pid=2");
+        assert_eq!(s[0].pid, 1);
+        assert_eq!(s[0].start_time, 7);
+        assert_eq!(s[0].samples.len(), 2);
+        assert_eq!(s[0].samples[1].footprint, 1100);
+        assert_eq!(s[1].start_time, 9, "复用的 pid 必须是独立序列");
+        assert_eq!(s[1].samples.len(), 1);
+        assert_eq!(s[2].pid, 2);
+    }
+
+    /// RSS-only 行不进判定（口径混用会让「换成 footprint 口径」那一跳看起来像暴涨）
+    #[test]
+    fn series_skips_rows_without_footprint() {
+        let store = Store::open_in_memory().unwrap();
+        store.record(100, &[proc(1, Some(1000), None), proc(2, None, None)]).unwrap();
+        let s = store.series(0).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].pid, 1);
+    }
+
+    #[test]
+    fn series_filters_by_since() {
+        let store = Store::open_in_memory().unwrap();
+        store.record(100, &[proc(1, Some(1000), None)]).unwrap();
+        store.record(500, &[proc(1, Some(1200), None)]).unwrap();
+        let s = store.series(200).unwrap();
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].samples.len(), 1);
+        assert_eq!(s[0].samples[0].ts, 500);
     }
 }

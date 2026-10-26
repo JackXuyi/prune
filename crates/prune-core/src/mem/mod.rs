@@ -13,6 +13,7 @@ pub mod workspace;
 
 use serde::{Deserialize, Serialize};
 
+use crate::leak::LeakReport;
 use crate::swap::SwapInfo;
 pub use workspace::{WorkspaceRef, WorkspaceSource};
 
@@ -182,6 +183,8 @@ pub struct MemSnapshot {
     pub deep_updated_at: Option<i64>,
     /// footprint 是否可用。false 时全部读数均为 RSS 口径
     pub deep_available: bool,
+    /// B5 泄漏嫌疑判定（M3）。无库/数据不足时是**显式状态**，不是空结果
+    pub leaks: LeakReport,
 }
 
 /// B4：取 swapped 最高的前 N 个进程
@@ -367,6 +370,7 @@ pub fn build_snapshot(
     fast_at: i64,
     deep_updated_at: Option<i64>,
     deep_available: bool,
+    leaks: LeakReport,
 ) -> MemSnapshot {
     MemSnapshot {
         physical_total,
@@ -380,6 +384,7 @@ pub fn build_snapshot(
         fast_at,
         deep_updated_at,
         deep_available,
+        leaks,
     }
 }
 

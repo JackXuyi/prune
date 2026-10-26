@@ -21,6 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use prune_core::db::Store;
+use prune_core::leak::{self, LeakReport};
 use prune_core::mem::process::Scanner;
 use prune_core::mem::{self, MemSnapshot, MemSource, ProcMem, WorkspaceRef};
 use prune_core::mem::system::{self, SystemMem};
@@ -108,6 +109,8 @@ pub struct MemState {
     prev: Mutex<Prev>,
     deep_available: Mutex<bool>,
     deep_updated_at: Mutex<Option<i64>>,
+    /// B5 泄漏嫌疑判定结果（M3）。只在深探落库后重算
+    leaks: Mutex<LeakReport>,
     /// 最近两轮耗时（ms），供性能预算校验
     pub last_fast_ms: Mutex<u64>,
     pub last_deep_ms: Mutex<u64>,
@@ -115,6 +118,13 @@ pub struct MemState {
 
 impl MemState {
     pub fn new(store: Option<Arc<Store>>) -> Self {
+        // 无库时判定永远不可能有结果——必须是「无法判定」的显式状态，
+        // 不能用空 items 冒充「没有泄漏」（方案 §5 / §7.3）。
+        let leaks = if store.is_some() {
+            LeakReport::default()
+        } else {
+            LeakReport::unavailable("序列库不可用，无法做泄漏判定")
+        };
         Self {
             snapshot: Mutex::new(None),
             processes: Mutex::new(Vec::new()),
@@ -126,6 +136,7 @@ impl MemState {
             prev: Mutex::new(Prev::default()),
             deep_available: Mutex::new(true),
             deep_updated_at: Mutex::new(None),
+            leaks: Mutex::new(leaks),
             last_fast_ms: Mutex::new(0),
             last_deep_ms: Mutex::new(0),
         }
@@ -309,17 +320,9 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
             .unwrap_or_else(|e| e.into_inner())
             .clone();
         let merged = merge_workspace(merge_deep(procs, &probe_state.lock_deep()), &probe_state.lock_ws());
-        let snapshot = assemble(&probe_state, &merged);
-        *probe_state
-            .processes
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = merged.clone();
-        *probe_state
-            .snapshot
-            .lock()
-            .unwrap_or_else(|e| e.into_inner()) = Some(snapshot.clone());
 
-        // 落库：只写深探成功的行（方案 §5.4）
+        // 落库 + 泄漏判定都要在装配快照之前：
+        // B5 判定的输入是「刚刚落库的这一批点」，放到后面会让结果永远晚一轮（5 min）。
         if let Some(store) = &probe_state.store {
             match store.record(ts, &merged) {
                 Ok(n) => {
@@ -329,7 +332,33 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
                 }
                 Err(e) => eprintln!("[m2-mem] ⚠️ 序列写入失败: {e}"),
             }
+
+            let report = recompute_leaks(store, &merged, ts);
+            eprintln!(
+                "[m3-leak] 判定 {} 个进程 · 命中 {} · 良性 {} · 数据不足 {} · 未达标 {}{}",
+                report.observed,
+                report.items.len(),
+                report.benign,
+                report.insufficient,
+                report.below,
+                report
+                    .note
+                    .as_ref()
+                    .map(|n| format!(" · ⚠️ {n}"))
+                    .unwrap_or_default()
+            );
+            *probe_state.leaks.lock().unwrap_or_else(|e| e.into_inner()) = report;
         }
+
+        let snapshot = assemble(&probe_state, &merged);
+        *probe_state
+            .processes
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = merged.clone();
+        *probe_state
+            .snapshot
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = Some(snapshot.clone());
         snapshot
     };
 
@@ -511,6 +540,11 @@ fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
         .deep_updated_at
         .lock()
         .unwrap_or_else(|e| e.into_inner());
+    let leaks = state
+        .leaks
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .clone();
 
     mem::build_snapshot(
         physical_total,
@@ -522,7 +556,20 @@ fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
         now,
         deep_updated_at,
         deep_available,
+        leaks,
     )
+}
+
+/// B5：深探落库后重算泄漏嫌疑。
+///
+/// 查询范围 = 最大窗口（GC 60 min）+ 5 min 余量。回归在内存里做，
+/// 相对 footprint 深探（百 ms 级）成本可忽略。
+fn recompute_leaks(store: &Store, procs: &[ProcMem], now: i64) -> LeakReport {
+    let since = now - leak::GC_WINDOW_SECS - 300;
+    match store.series(since) {
+        Ok(series) => leak::detect(&series, procs, now),
+        Err(e) => LeakReport::unavailable(format!("序列查询失败：{e}")),
+    }
 }
 
 #[cfg(test)]
