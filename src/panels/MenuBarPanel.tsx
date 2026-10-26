@@ -1,12 +1,13 @@
 import { useState, type ReactNode } from "react";
 
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
+import { LeakBanner } from "../components/LeakCard";
 import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { openMain } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
 import { LEVEL_META } from "../types/disk";
-import { swappedRatio, type FamilyMem, type ProcMem } from "../types/mem";
+import { swappedRatio, type FamilyMem, type MemSnapshot, type ProcMem } from "../types/mem";
 import { ChevronRightIcon, DiskIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge, Meter, PressureDot } from "../components/primitives";
 import { Tabs } from "../components/Tabs";
@@ -100,9 +101,12 @@ export function MenuBarPanel() {
 function AppsSection() {
   const families = useMemStore((s) => s.snapshot?.families ?? EMPTY_FAMILIES);
   const processes = useMemStore((s) => s.processes ?? EMPTY_PROCESSES);
+  const leaks = useMemStore((s) => s.snapshot?.leaks);
 
   return (
     <section>
+      {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
+      {leaks ? <LeakBanner report={leaks} onOpen={() => void openMain(undefined, "apps")} /> : null}
       <div className="flex items-baseline justify-between gap-2">
         <h2 className="shrink-0 text-[11px] font-medium tracking-wide text-ink-dim">
           每个应用占用
@@ -115,6 +119,7 @@ function AppsSection() {
           limit={10}
           families={families}
           processes={processes}
+          leaks={leaks}
           onOpen={(pid) => void openMain(pid)}
         />
       </div>
@@ -187,8 +192,31 @@ function MemSection() {
           ))}
         </ul>
       )}
+
+      {/* 没有命中时也要区分「检查过没问题」和「数据不够/没在检查」 */}
+      {leakFootnote(snapshot.leaks)}
     </section>
   );
+}
+
+function leakFootnote(leaks: MemSnapshot["leaks"]): ReactNode {
+  if (leaks.items.length > 0) return null;
+  if (leaks.note) {
+    return (
+      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">
+        泄漏判定不可用：{leaks.note}
+      </p>
+    );
+  }
+  if (leaks.insufficient > 0) {
+    return (
+      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">
+        泄漏判定需连续观测 {Math.round(leaks.windowSecs / 60)} min 才能下结论，
+        当前 {leaks.insufficient} 个进程数据不足。
+      </p>
+    );
+  }
+  return null;
 }
 
 function VictimRow({ proc }: { proc: ProcMem }) {

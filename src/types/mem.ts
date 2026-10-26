@@ -82,6 +82,55 @@ export interface MemSnapshot {
   fastAt: number;
   deepUpdatedAt: number | null;
   deepAvailable: boolean;
+  /** B5 泄漏嫌疑判定（M3）。note 非空 = 无法判定，不能当成「没有泄漏」 */
+  leaks: LeakReport;
+}
+
+/** 一个命中进程的证据。只有事实字段，没有结论性形容词 */
+export interface LeakItem {
+  pid: number;
+  startTime: number;
+  family: string;
+  name: string;
+  /** 窗口末值（footprint 口径） */
+  footprint: number;
+  /** 窗口净增长 */
+  growth: number;
+  /** growth / 窗口起点值 */
+  growthRatio: number;
+  windowSecs: number;
+  points: number;
+  slopeMbPerHour: number;
+  r2: number;
+  /** 最大单点跃升 / 净增长；越低越像「持续爬升」 */
+  stepRatio: number;
+  gcRuntime: boolean;
+}
+
+export interface LeakReport {
+  items: LeakItem[];
+  /** 参与判定的进程数 */
+  observed: number;
+  /** 序列不够长（首次运行 / 刚启动的进程） */
+  insufficient: number;
+  /** 良性名单排除（浏览器 / VM / 系统进程 / 自身） */
+  benign: number;
+  /** 数值条件未达标 */
+  below: number;
+  windowSecs: number;
+  updatedAt: number | null;
+  /** 无法判定的原因；null = 判定正常运行 */
+  note: string | null;
+}
+
+/** 某家族里命中的进程（家族行徽标用） */
+export function leaksOfFamily(report: LeakReport | null | undefined, family: string): LeakItem[] {
+  return (report?.items ?? []).filter((i) => i.family === family);
+}
+
+/** 一组命中进程的净增长合计 */
+export function totalGrowth(items: LeakItem[]): number {
+  return items.reduce((sum, i) => sum + i.growth, 0);
 }
 
 export interface Point {

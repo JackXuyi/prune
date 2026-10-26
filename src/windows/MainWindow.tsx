@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
+import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { ReclaimBoard } from "../components/ReclaimBoard";
 import { Sparkline } from "../components/Sparkline";
 import {
@@ -137,10 +138,23 @@ export function MainWindow() {
             </div>
             <AppMemorySummary families={families} />
           </div>
+          {/* 命中或「无法判定」时才出现；没有命中就是沉默即正常 */}
+          {snapshot?.leaks && (snapshot.leaks.items.length > 0 || snapshot.leaks.note) ? (
+            <div className="mt-3">
+              <LeakCard
+                report={snapshot.leaks}
+                onOpen={(pid) => {
+                  select(pid);
+                  setTab("overview");
+                }}
+              />
+            </div>
+          ) : null}
           <div className="mt-3">
             <AppMemoryList
               families={families}
               processes={processes}
+              leaks={snapshot?.leaks}
               onOpen={(pid) => {
                 select(pid);
                 setTab("overview");
@@ -397,6 +411,11 @@ function VictimRow({ proc }: { proc: ProcMem }) {
 function ProcessInspector({ proc }: { proc: ProcMem }) {
   const points = useMemHistory(proc.pid, 240);
   const snapshot = useMemStore((s) => s.snapshot);
+  // B5：该进程被判定为「疑似泄漏」时展示证据（pid 相同即可，startTime 也需一致才对上同一进程）
+  const leak =
+    snapshot?.leaks.items.find(
+      (i) => i.pid === proc.pid && (i.startTime === 0 || i.startTime === proc.startTime),
+    ) ?? null;
   const footprint = proc.footprint;
   const rss = proc.rss;
   const swapped = proc.swapped ?? 0;
@@ -476,6 +495,8 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
           </div>
         ) : null}
       </section>
+
+      {leak ? <LeakEvidence item={leak} /> : null}
 
       <section className="rounded-lg border border-hairline-soft bg-surface-raised/50 p-3.5">
         <div className="mb-2 text-[11px] font-medium text-ink-dim">进程信息</div>

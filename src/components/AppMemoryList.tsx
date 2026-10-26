@@ -3,9 +3,12 @@ import { useMemo } from "react";
 import { formatBytes, formatPercent } from "../lib/format";
 import {
   isExact,
+  leaksOfFamily,
   swappedRatio,
+  totalGrowth,
   totalOf,
   type FamilyMem,
+  type LeakReport,
   type ProcMem,
   type WorkspaceMem,
   type WorkspaceSource,
@@ -63,12 +66,15 @@ function WorkspaceRow({
 export function AppMemoryList({
   families,
   processes,
+  leaks,
   limit,
   compact = false,
   onOpen,
 }: {
   families: FamilyMem[];
   processes: ProcMem[];
+  /** B5 判定结果：命中的家族行加「疑似泄漏」标记（措辞见 LeakCard 顶部注释） */
+  leaks?: LeakReport;
   limit?: number;
   compact?: boolean;
   onOpen?: (pid: number) => void;
@@ -104,6 +110,8 @@ export function AppMemoryList({
           const exact = isExact(f);
           const pid = heaviest.get(f.name)?.pid;
           const ratio = swappedRatio(f);
+          const familyLeaks = leaksOfFamily(leaks, f.name);
+          const leakGrowth = totalGrowth(familyLeaks);
           const tone =
             f.footprint == null ? "neutral" : exact ? "accent" : "warn";
 
@@ -121,8 +129,20 @@ export function AppMemoryList({
                 {compact ? (
                   <>
                     <div className="flex items-baseline justify-between gap-2">
-                      <span className="min-w-0 flex-1 truncate text-[12px] leading-tight text-ink">
-                        {f.name}
+                      <span className="flex min-w-0 flex-1 items-baseline gap-1.5">
+                        <span className="truncate text-[12px] leading-tight text-ink">
+                          {f.name}
+                        </span>
+                        {familyLeaks.length > 0 ? (
+                          <span
+                            className="shrink-0 text-[9px] leading-tight text-warn"
+                            title={`疑似内存泄漏：${familyLeaks.length} 个进程近 ${
+                              familyLeaks[0].windowSecs / 60
+                            } min 合计增长 ${formatBytes(leakGrowth)}（按曲线判断，不是结论）`}
+                          >
+                            疑似泄漏
+                          </span>
+                        ) : null}
                       </span>
                       <span className="shrink-0 font-mono text-[12px] leading-tight tabular-nums text-ink">
                         {exact ? "" : "≈"}
@@ -150,6 +170,16 @@ export function AppMemoryList({
                     <span className="min-w-0">
                       <span className="block truncate text-[13px] leading-tight text-ink">
                         {f.name}
+                        {familyLeaks.length > 0 ? (
+                          <span
+                            className="ml-1.5 align-[1px] text-[10px] text-warn"
+                            title={`疑似内存泄漏：${familyLeaks.length} 个进程近 ${
+                              familyLeaks[0].windowSecs / 60
+                            } min 合计增长 ${formatBytes(leakGrowth)}（按曲线判断，不是结论）`}
+                          >
+                            疑似泄漏 +{formatBytes(leakGrowth)}
+                          </span>
+                        ) : null}
                       </span>
                       <span className="mt-0.5 block truncate text-[10px] leading-tight text-ink-faint">
                         {f.processCount} 个进程 · {coverageLabel(f)}

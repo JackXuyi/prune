@@ -5,7 +5,7 @@ import type {
   PlatformStat,
   ReclaimPreview,
 } from "../types/disk";
-import type { MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
+import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
 
 /**
  * 仅开发态使用（import.meta.env.DEV && 非 Tauri）：让 UI 可以脱离桌面端
@@ -116,6 +116,68 @@ export function devSnapshot(): MemSnapshot {
     deepUpdatedAt: now - 95,
     deepAvailable: true,
     families: aggregateDev(all),
+    leaks: devLeaks(all, now),
+  };
+}
+
+/**
+ * 泄漏判定的浏览器 fixture。
+ *
+ * 数字刻意做成真实形态：Cursor 主进程 30 min 涨 480 MB（占比 51%、R² 0.86、
+ * 最大单点跃升只占 15% → 持续爬升），next-server 走 GC 语言口径（门槛 300 MB / 60 min）。
+ * pid 取自 devProcesses，保证点进去能看到对应进程。
+ */
+function devLeaks(all: ProcMem[], now: number): LeakReport {
+  const pick = (family: string, name: string) =>
+    all.find((p) => p.family === family && p.name === name);
+
+  const items: LeakItem[] = [];
+  const cursor = pick("Cursor", "Cursor");
+  if (cursor?.footprint != null) {
+    items.push({
+      pid: cursor.pid,
+      startTime: cursor.startTime,
+      family: "Cursor",
+      name: cursor.name,
+      footprint: cursor.footprint,
+      growth: 480e6,
+      growthRatio: 0.51,
+      windowSecs: 1800,
+      points: 7,
+      slopeMbPerHour: 960,
+      r2: 0.86,
+      stepRatio: 0.15,
+      gcRuntime: false,
+    });
+  }
+  const server = pick("Node", "next-server");
+  if (server?.footprint != null) {
+    items.push({
+      pid: server.pid,
+      startTime: server.startTime,
+      family: "Node",
+      name: server.name,
+      footprint: server.footprint,
+      growth: 1.4e9,
+      growthRatio: 0.72,
+      windowSecs: 3600,
+      points: 13,
+      slopeMbPerHour: 1400,
+      r2: 0.91,
+      stepRatio: 0.11,
+      gcRuntime: true,
+    });
+  }
+
+  return {
+    items,
+    observed: 95,
+    insufficient: 14,
+    benign: 23,
+    below: 95 - 14 - 23 - items.length,
+    windowSecs: 1800,
+    updatedAt: now - 95,
+    note: null,
   };
 }
 
