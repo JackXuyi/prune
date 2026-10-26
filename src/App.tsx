@@ -4,6 +4,7 @@ import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { isTauri } from "./lib/ipc";
 import { MenuBarPanel } from "./panels/MenuBarPanel";
+import { useDiskStore } from "./stores/diskStore";
 import { useMemStore } from "./stores/memStore";
 import { MainWindow } from "./windows/MainWindow";
 
@@ -24,10 +25,12 @@ function detectWindowLabel(): string {
 export default function App() {
   const [label] = useState(detectWindowLabel);
   const init = useMemStore((s) => s.init);
+  const initDisk = useDiskStore((s) => s.init);
 
   useEffect(() => {
     void init();
-  }, [init]);
+    void initDisk();
+  }, [init, initDisk]);
 
   return label === "panel" ? <MenuBarPanel /> : <MainWindow />;
 }

@@ -3,7 +3,9 @@ import { useState, type ReactNode } from "react";
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { openMain } from "../lib/ipc";
+import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
+import { LEVEL_META } from "../types/disk";
 import { swappedRatio, type FamilyMem, type ProcMem } from "../types/mem";
 import { ChevronRightIcon, DiskIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge, Meter, PressureDot } from "../components/primitives";
@@ -48,6 +50,8 @@ export function MenuBarPanel() {
             <ExpandIcon size={13} />
           </IconButton>
         </header>
+
+        <DiskHero />
 
         <div className="flex h-8 shrink-0 items-center justify-between border-b border-hairline-soft px-2.5">
           <Tabs
@@ -222,16 +226,108 @@ function VictimRow({ proc }: { proc: ProcMem }) {
 }
 
 function DiskSection() {
+  const report = useDiskStore((s) => s.report);
+  const scanning = useDiskStore((s) => s.scanning);
+
+  if (!report) {
+    return (
+      <section className="mt-4 border-t border-hairline-soft pt-3">
+        <div className="flex items-center gap-1.5 text-[11px] text-ink-dim">
+          <DiskIcon size={12} />
+          磁盘可回收
+        </div>
+        <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
+          {scanning ? "正在扫描缓存目录…" : "尚未扫描（启动 30 秒后自动扫，也可在主窗口手动触发）"}
+        </p>
+      </section>
+    );
+  }
+
+  const rows = [
+    { level: "l1" as const, label: "跨平台二进制", bytes: report.totals.deadweight },
+    { level: "l2" as const, label: "包管理器缓存", bytes: report.totals.l2 },
+    { level: "l3" as const, label: "项目依赖 / 模拟器", bytes: report.totals.l3 },
+  ];
+
   return (
     <section className="mt-4 border-t border-hairline-soft pt-3">
-      <div className="flex items-center gap-1.5 text-[11px] text-ink-dim">
-        <DiskIcon size={12} />
-        磁盘浪费
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-1.5 text-[11px] text-ink-dim">
+          <DiskIcon size={12} />
+          可回收分层
+        </div>
+        <button
+          type="button"
+          onClick={() => void openMain(undefined, "disk")}
+          className="text-[10px] text-ink-faint transition-colors hover:text-accent"
+        >
+          查看全部 →
+        </button>
       </div>
-      <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
-        跨平台二进制探测（A1）在 M1 接入。当前只显示内存读数。
-      </p>
+      <ul className="mt-1.5 space-y-1">
+        {rows.map((r) => (
+          <li key={r.level} className="flex items-baseline justify-between text-[11px]">
+            <span className="text-ink-dim">{LEVEL_META[r.level].label} · {r.label}</span>
+            <span className="font-mono tabular-nums text-ink">{formatBytes(r.bytes)}</span>
+          </li>
+        ))}
+      </ul>
+      {report.totals.l4 > 0 ? (
+        <p className="mt-1.5 text-[10px] text-ink-faint">
+          🔴 Docker 等高风险项 {formatBytes(report.totals.l4)} · 只提供命令，不计入主数字
+        </p>
+      ) : null}
     </section>
+  );
+}
+
+/** 首屏主数字：可回收 GB（功能方案 §3.1 —— 主数字是可行动的，不是内存百分比） */
+function DiskHero() {
+  const report = useDiskStore((s) => s.report);
+  const scanning = useDiskStore((s) => s.scanning);
+  const progress = useDiskStore((s) => s.progress);
+  const a1 = report?.groups.find((g) => g.deadweight != null)?.deadweight ?? null;
+
+  return (
+    <button
+      type="button"
+      onClick={() => void openMain(undefined, "disk")}
+      className="group shrink-0 border-b border-hairline-soft px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+    >
+      <div className="flex items-baseline justify-between gap-2">
+        <span className="text-[16px] font-semibold tracking-tight text-ink">
+          <span className="mr-1 text-accent">⚡</span>
+          {report ? formatBytes(report.totals.reclaimable) : scanning ? "扫描中…" : "—"}
+          <span className="ml-1 text-[10px] font-normal text-ink-faint">可回收</span>
+        </span>
+        <ChevronRightIcon
+          size={12}
+          className="shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5"
+        />
+      </div>
+      {a1 ? (
+        <p className="mt-0.5 text-[10px] leading-tight text-ink-faint">
+          🟢 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(a1.bytes)}</span>{" "}
+          跨平台二进制 · 你的 Mac 永远加载不了
+        </p>
+      ) : (
+        <p className="mt-0.5 text-[10px] leading-tight text-ink-faint">
+          {scanning
+            ? progress
+              ? `${progress.done}/${progress.total} 组 · ${progress.phase}`
+              : "正在扫描缓存目录…"
+            : "点击查看可回收空间"}
+        </p>
+      )}
+      {scanning ? (
+        <div className="mt-1.5 h-0.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+          <div
+            className="h-full rounded-full bg-accent transition-[width] duration-300"
+            style={{ width: `${progress ? Math.round((progress.done / Math.max(progress.total, 1)) * 100) : 8}%` }}
+          />
+        </div>
+      ) : null}
+    </button>
   );
 }
 

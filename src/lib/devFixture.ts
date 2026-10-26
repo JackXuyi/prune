@@ -1,3 +1,10 @@
+import type {
+  CacheGroup,
+  DeadweightItem,
+  DiskReport,
+  PlatformStat,
+  ReclaimPreview,
+} from "../types/disk";
 import type { MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
 
 /**
@@ -189,4 +196,112 @@ let cached: ProcMem[] | null = null;
 export function devProcesses(): ProcMem[] {
   cached ??= procs();
   return cached;
+}
+
+// ---------------------------------------------------------------- 磁盘（M1）
+//
+// 数字取自 2026-10-26 真机扫描（release 构建 17.6 s / 主数字 55.26 GB），
+// 让浏览器里能看到与桌面端一致的量级与分层，避免「演示 3 GB、真机 55 GB」的失真。
+
+const GB = 1e9;
+
+function devGroup(
+  key: string,
+  label: string,
+  level: "l1" | "l2" | "l3" | "l4",
+  totalBytes: number,
+  entryCount: number,
+  deadweight: CacheGroup["deadweight"] = null,
+): CacheGroup {
+  return { key, label, root: `/Users/xuyi/${key}`, level, totalBytes, entryCount, deadweight };
+}
+
+export function devDiskReport(): DiskReport {
+  const platformStats: PlatformStat[] = [
+    { platform: "linux", entryCount: 134, bytes: 4.22 * GB },
+    { platform: "win32", entryCount: 76, bytes: 2.24 * GB },
+    { platform: "android", entryCount: 25, bytes: 0.279 * GB },
+    { platform: "freebsd", entryCount: 21, bytes: 0.191 * GB },
+  ];
+
+  const top: DeadweightItem[] = [
+    ["npm-@next-swc-linux-x64-musl-14.2.33", "linux", 0.207],
+    ["npm-@next-swc-win32-x64-msvc-15.5.13", "win32", 0.195],
+    ["npm-@next-swc-win32-x64-msvc-15.5.19", "win32", 0.195],
+    ["npm-@next-swc-linux-x64-gnu-15.5.13", "linux", 0.191],
+    ["npm-@next-swc-linux-x64-gnu-15.5.19", "linux", 0.191],
+    ["npm-@next-swc-linux-x64-musl-15.5.13", "linux", 0.190],
+    ["npm-@next-swc-linux-arm64-musl-14.2.33", "linux", 0.187],
+    ["npm-@next-swc-linux-arm64-musl-15.5.13", "linux", 0.181],
+  ].map(([name, platform, gb]) => ({
+    name: name as string,
+    path: `/Users/xuyi/Library/Caches/Yarn/v6/${name}`,
+    bytes: (gb as number) * GB,
+    platform: platform as string,
+    verdict: "deadweight" as const,
+  }));
+
+  const yarn = devGroup("yarn", "Yarn 缓存", "l2", 15.34 * GB, 6156, {
+    bytes: 6.94 * GB,
+    nativeBytes: 1.0 * GB,
+    otherBytes: 7.4 * GB,
+    entryCount: 256,
+    byPlatform: platformStats,
+    items: top,
+    ratio: 6.91,
+  });
+
+  return {
+    scannedAt: Math.floor(Date.now() / 1000) - 42,
+    scanElapsedMs: 17560,
+    groups: [
+      yarn,
+      devGroup("npm", "npm 缓存", "l2", 8.53 * GB, 3),
+      devGroup("pnpm", "pnpm store", "l2", 7.72 * GB, 3),
+      devGroup("cargo", "Cargo registry", "l2", 1.37 * GB, 4),
+      devGroup("homebrew", "Homebrew 下载缓存", "l2", 0.176 * GB, 63),
+      devGroup("deriveddata", "DerivedData（编译产物）", "l2", 0.071 * GB, 5),
+      devGroup("bun", "Bun 安装缓存", "l2", 0.4e6, 3),
+      devGroup("node-modules", "项目依赖（55 个 node_modules）", "l3", 17.02 * GB, 55),
+      devGroup("simulator", "Simulator 设备", "l3", 3.75 * GB, 12),
+      devGroup("playwright", "Playwright 浏览器", "l3", 1.29 * GB, 10),
+      devGroup("docker-vm", "Docker VM 磁盘", "l4", 3.17 * GB, 1),
+    ],
+    dup: {
+      managers: [
+        ["Yarn 缓存", 15.34 * GB],
+        ["npm 缓存", 8.53 * GB],
+        ["pnpm store", 7.72 * GB],
+        ["Bun 安装缓存", 0.4e6],
+      ],
+      totalBytes: 31.59 * GB,
+      advice:
+        "4 个包管理器并存（Yarn 缓存 / npm 缓存 / pnpm store / Bun 安装缓存），同一批依赖各存一份；保留正在用的一个即可，其余可整体移入废纸篓",
+    },
+    totals: {
+      deadweight: 6.94 * GB,
+      l2: 26.27 * GB,
+      l3: 22.05 * GB,
+      l4: 3.17 * GB,
+      reclaimable: 55.26 * GB,
+      cacheTotal: 58.43 * GB,
+    },
+  };
+}
+
+export function devDiskPreview(): ReclaimPreview {
+  const report = devDiskReport();
+  const yarn = report.groups[0];
+  const items = (yarn.deadweight?.items ?? []).map((it) => ({
+    path: it.path,
+    label: `Yarn 缓存 · ${it.name}`,
+    bytes: it.bytes,
+    level: "l1" as const,
+  }));
+  return {
+    items,
+    totalBytes: items.reduce((sum, i) => sum + i.bytes, 0),
+    needsConfirm: false,
+    notes: ["3 个 darwin-x64 条目依赖 Rosetta，已保留在清单之外"],
+  };
 }

@@ -1,6 +1,9 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+
+import { listen } from "@tauri-apps/api/event";
 
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
+import { ReclaimBoard } from "../components/ReclaimBoard";
 import { Sparkline } from "../components/Sparkline";
 import {
   ChevronRightIcon,
@@ -10,10 +13,12 @@ import {
 import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
 import { Tabs } from "../components/Tabs";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
+import { isTauri } from "../lib/ipc";
+import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
 import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem, type WorkspaceSource } from "../types/mem";
 
-type MainTab = "apps" | "overview";
+type MainTab = "apps" | "overview" | "disk";
 
 /** 工作区归属的置信度说明（UI 必须让用户知道这个路径是怎么来的） */
 function sourceLabel(s: WorkspaceSource): string {
@@ -35,8 +40,23 @@ export function MainWindow() {
   const selectedPid = useMemStore((s) => s.selectedPid);
   const select = useMemStore((s) => s.select);
   const refresh = useMemStore((s) => s.refresh);
+  const diskScanning = useDiskStore((s) => s.scanning);
+  const refreshDisk = useDiskStore((s) => s.refresh);
 
   const [expanded, setExpanded] = useState<string | null>(null);
+
+  // 面板点「可回收」→ 主窗口直接切到对应 tab（open_main 会让 Rust 侧广播 ui://tab）
+  useEffect(() => {
+    if (!isTauri()) return;
+    const un = listen<string>("ui://tab", (e) => {
+      if (e.payload === "apps" || e.payload === "overview" || e.payload === "disk") {
+        setTab(e.payload);
+      }
+    });
+    return () => {
+      void un.then((fn) => fn());
+    };
+  }, []);
 
   const families = snapshot?.families ?? [];
   const selected = useMemo(
@@ -50,7 +70,7 @@ export function MainWindow() {
         <ScissorsIcon size={15} className="text-accent" />
         <span className="text-[13px] font-semibold tracking-tight">Prune</span>
         <span className="text-hairline">/</span>
-        <span className="text-[12px] text-ink-dim">内存真相</span>
+        <span className="text-[12px] text-ink-dim">{tab === "disk" ? "可回收空间" : "内存真相"}</span>
         {snapshot ? (
           snapshot.deepAvailable ? (
             <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
@@ -68,11 +88,18 @@ export function MainWindow() {
         </span>
         <button
           type="button"
-          onClick={() => void refresh()}
-          className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-raised px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:border-hairline hover:bg-surface-overlay hover:text-ink"
+          onClick={() => void (tab === "disk" ? refreshDisk() : refresh())}
+          disabled={tab === "disk" ? diskScanning : refreshing}
+          className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-raised px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:border-hairline hover:bg-surface-overlay hover:text-ink disabled:opacity-50"
         >
-          <RefreshIcon size={12} className={refreshing ? "animate-spin" : ""} />
-          {refreshing ? "采样中" : "刷新"}
+          <RefreshIcon size={12} className={(tab === "disk" ? diskScanning : refreshing) ? "animate-spin" : ""} />
+          {tab === "disk"
+            ? diskScanning
+              ? "扫描中"
+              : "重新扫描"
+            : refreshing
+              ? "采样中"
+              : "刷新"}
         </button>
       </header>
 
@@ -83,10 +110,11 @@ export function MainWindow() {
           items={[
             { id: "apps", label: "应用内存", hint: "每个应用的绝对内存占用" },
             { id: "overview", label: "系统概况", hint: "内存压力、swap 与换出受害者" },
+            { id: "disk", label: "可回收", hint: "磁盘可回收空间与清理" },
           ]}
         />
         <span className="text-[10px] text-ink-faint">
-          {tab === "apps" ? "绝对内存 · 含换出" : "系统级读数"}
+          {tab === "apps" ? "绝对内存 · 含换出" : tab === "overview" ? "系统级读数" : "白名单定点扫描 · 废纸篓可恢复"}
         </span>
       </div>
 
@@ -96,7 +124,9 @@ export function MainWindow() {
         </div>
       ) : null}
 
-      {tab === "apps" ? (
+      {tab === "disk" ? (
+        <ReclaimBoard />
+      ) : tab === "apps" ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           <div className="flex items-baseline justify-between">
             <div>
