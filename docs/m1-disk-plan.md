@@ -275,7 +275,7 @@ pub fn reclaim_execute(items: &[ReclaimItem], confirmed: bool) -> Result<Reclaim
 | **D-K5** | 扫描触发与增量 | 启动后 30 s 一轮 + 每周静默 + 手动；**v1 不做 mtime 增量**（全量 < 20 s，增量不抵复杂度） |
 | **D-K6** | Rosetta 判定方式 | 检测 `/usr/libexec/rosetta/oahd` 进程存在；失败视为「无 Rosetta」（宁可 🟢 误报也不漏报浪费） |
 | **D-K7** | npm cacache 是否解析 index-v5 做条目级 A1 | **不做**。要解析 `make-fetch-happen` key + 映射 content hash + 删两个库，复杂度/收益比差；整库 trash 已覆盖其价值 |
-| **D-K8** | 体积口径 | 用 `metadata.len()`（逻辑大小），不用 `st_blocks` 物理块；与 `du` 有 APFS 快照/压缩差时以本产品口径为准并在 UI 标注 |
+| **D-K8** | 体积口径 | ~~用 `metadata.len()`（逻辑大小）~~ **实测推翻 → 改用 `st_blocks×512`（物理块）**：Docker.raw 是稀疏文件，按 `len()` 报出 1099 GB 的假数字。详见 §16 |
 
 ---
 
@@ -314,3 +314,16 @@ pub fn reclaim_execute(items: &[ReclaimItem], confirmed: bool) -> Result<Reclaim
 | 功能方案 §10 M0 #2/#4 | T-301 / T-303 关闭，验收记录进 m1-disk-acceptance.md |
 | 技术方案 §5.3 并行扫描 / §5.4 分类器 / §5.5 安全删除 | §5 / §6 / §7，依赖 `ignore` `rayon` `trash` 首次引入 |
 | 实测档案 reclaim-scan.sh / reclaim-scan-report.md | §2 基线 + §5.1 白名单清单来源 |
+
+---
+
+## 16. 实施偏差记录（2026-10-26，按实测回扫）
+
+方案确认后实施过程中被实测推翻或调整的点，逐条留痕，避免"文档写的和代码跑的不一样"。
+
+| # | 方案原定 | 实际落地 | 原因 |
+|---|---|---|---|
+| 1 | **D-K8** 体积用 `metadata.len()`（逻辑大小） | **改为 `st_blocks × 512`（物理块）** | Docker.raw 是稀疏文件：按 `len()` 累计出 **1099 GB** 的假数字。物理块口径下同机实测 3.17 GB，与 `du` 一致 |
+| 2 | §5 扫描依赖 `ignore` + `rayon` 并行 | **自建工作队列线程池，未引入这两个 crate**；只新增 `trash` | 定点白名单目录不需要 gitignore 语义；`ignore` 的 walker 在 pnpm store（44 万文件）上不解决单目录退化问题。首版按"首层分叉"并行，遇 pnpm store 只有 3 个顶层目录 → 退化为单线程 30 s；改工作队列后并发 12 → 全量 15.6 s |
+| 3 | §4 数据模型 `CacheGroup` 无「可清理」标记 | **新增 `cleanable: bool`** | `node-modules` 是 55 个目录的聚合项，`root` 记的是 home。原实现把它当成整项交给 `preview`，生成了一条 `path=/Users/xuyi`、17 GB 的待删项——白名单能拦住执行，但预览就先吓到用户。聚合项现在置 `false`，只统计不提供一键清理 |
+| 4 | §14 验收 #2「A1 抽样 100 条人工核对」 | 抽样改为**含平台词 50 条 + 不含 50 条** | 死重只占全库 4%，纯等距抽样 100 条只命中 4 条死重，既查不出误杀也查不出漏判。清单见 `docs/research/m1-a1-sample.md` |
