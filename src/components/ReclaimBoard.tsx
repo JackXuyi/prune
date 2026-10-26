@@ -94,7 +94,16 @@ export function ReclaimBoard() {
         </div>
       ) : null}
 
-      {a1?.deadweight ? <DeadweightCard group={a1} dw={a1.deadweight} /> : null}
+      {a1?.deadweight ? (
+        <DeadweightCard group={a1} dw={a1.deadweight} />
+      ) : (
+        <section className="mt-4 rounded-xl border border-hairline bg-surface-raised/30 p-3.5">
+          <h2 className="text-[12px] font-medium text-ink-dim">跨平台二进制 · 未发现</h2>
+          <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">
+            Yarn v6 缓存不存在，或其中只有本机架构的包——本地单架构安装时这是正常状态。
+          </p>
+        </section>
+      )}
 
       {report.dup ? (
         <section className="mt-4 rounded-xl border border-warn/25 bg-warn/[0.05] p-3.5">

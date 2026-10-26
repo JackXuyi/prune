@@ -131,6 +131,56 @@ fn main() {
             sizes.len(),
             loose.saturating_sub(strict)
         );
+
+        // 验收标准 #2 的人工抽样清单：等距取 100 条，带判定结果供逐行核对。
+        // 死重条目只占全库 4%，纯等距抽样几乎全是「保留」，看不出误判；
+        // 因此按「含平台词的」与「不含平台词的」各抽一半——前者查误杀，后者查漏判。
+        if let Ok(out) = std::env::var("PRUNE_A1_SAMPLE") {
+            let has_token = |n: &str| {
+                let l = n.to_ascii_lowercase();
+                ["linux", "win32", "android", "darwin"].iter().any(|t| l.contains(t))
+            };
+            let (hits, rest): (Vec<_>, Vec<_>) = sizes.iter().partition(|(n, _)| has_token(n));
+            let mut picked: Vec<&(String, u64)> = Vec::new();
+            for bucket in [&hits, &rest] {
+                let step = (bucket.len() / 50).max(1);
+                picked.extend(bucket.iter().step_by(step).take(50));
+            }
+
+            let mut lines = vec![
+                "# A1 判定抽样（100 条，供人工核对）".to_string(),
+                String::new(),
+                "> 由 `PRUNE_A1_SAMPLE=<路径> cargo run --release -p prune-core --example disk-probe` 生成。".to_string(),
+                "> 抽样口径：含平台词的条目抽 50 条（查误杀），不含平台词的抽 50 条（查漏判）。".to_string(),
+                "> 核对方法：目录名里是否真含该平台词、本机（arm64 + Rosetta？）能否加载。判错的行反馈回来改 token 表。".to_string(),
+                String::new(),
+                "| # | 判定 | 平台 | 目录名（截断 72 字） |".to_string(),
+                "|---|---|---|---|".to_string(),
+            ];
+            for (idx, (name, _)) in picked.iter().enumerate() {
+                let p = classify::platform_of(name);
+                let v = classify::classify(p, arch, rosetta);
+                let vtxt = match v {
+                    classify::Verdict::Deadweight => "🟢 死重",
+                    classify::Verdict::NeedsConfirm => "🟡 待确认",
+                    classify::Verdict::Keep => "✅ 保留",
+                };
+                let short: String = name.chars().take(72).collect();
+                lines.push(format!(
+                    "| {} | {} | {} | `{}` |",
+                    idx + 1,
+                    vtxt,
+                    p.map(|x| x.as_str()).unwrap_or("—"),
+                    short
+                ));
+            }
+            std::fs::write(&out, lines.join("\n")).unwrap();
+            println!(
+                "\n抽样清单已写入 {out}（含平台词 {} / 不含 {}）",
+                hits.len(),
+                rest.len()
+            );
+        }
     }
 
     println!("\n== 预算校验 ==");
