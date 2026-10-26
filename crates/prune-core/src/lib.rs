@@ -4,12 +4,16 @@
 //! - `mem/`     ✅ M2：sysinfo 进程枚举 + `/usr/bin/footprint -p <pid> -j` 深探（非特权、含 swapped）
 //! - `swap/`    ✅ M2：`/System/Volumes/VM/` swapfile 监控 + `sysctl vm.swapusage`
 //! - `db/`      ✅ M2：rusqlite footprint 时间序列（供 M3 泄漏嫌疑判定回归计算）
-//! - `disk/`    ⬜ M1：ignore + rayon 并行扫描（6336 个 node_modules 预期 < 15 s）
-//! - `classify/` ⬜ M1：跨平台二进制判定（杀手功能 A1）；进程家族归类已落在 `mem/process.rs`
-//! - `reclaim/` ⬜ M2+：安全删除：路径白名单 + 废纸篓（trash）+ dry-run 前置 + >20GB 熔断
+//! - `disk/`    ✅ M1：白名单定点扫描 + 条目级体积归因 + A2/A3 汇总（自建线程池，
+//!              不用 ignore/rayon：定点目录不需要 gitignore 语义，多一层依赖不划算）
+//! - `classify/` ✅ M1：跨平台二进制判定（杀手功能 A1）；进程家族归类在 `mem/process.rs`
+//! - `reclaim/`  ✅ M1：安全删除：路径白名单 + 废纸篓（trash）+ dry-run 前置 + >20GB 熔断
 
+pub mod classify;
 pub mod db;
+pub mod disk;
 pub mod mem;
+pub mod reclaim;
 pub mod swap;
 
 /// 返回 crate 版本。
