@@ -73,15 +73,20 @@
 - 删除：`trash` crate 走废纸篓
 - 采样：10 s 廉价 RSS 全量 + 5 min 对 Top N 深探 footprint（并发 8 路 ≈ 0.6 s）
 
-## CLI（规划中）
+## CLI 与 MCP
+
+单二进制双形态（`cargo build --release -p prune-cli` → `target/release/prune`）：
 
 ```bash
-prune scan                    # 全盘扫描，输出可回收清单
-prune reclaim --dry-run       # 预览将删除的内容
-prune reclaim --level green   # 只清理零风险项
-prune mem --swapped           # 显示含换出量的真实内存占用
-prune mem --watch             # 持续采样，输出泄漏嫌疑判定
+prune scan [--json]                 # 全盘扫描：主数字 / A1 明细 / A3 重复 / A6 Docker 命令提示
+prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run；--yes 才真删，走废纸篓）
+prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
+prune mem --watch [--interval N]    # 持续采样，每 60s 输出泄漏嫌疑判定（序列不落盘）
+prune mcp                           # MCP stdio server（AI Agent 查询入口）
 ```
+
+MCP 工具：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）。
+安全底线：`reclaim` 不带 `--yes` 绝不删除；白名单 + 20GB 熔断在 prune-core 代码层兜底。
 
 ## 开发
 
@@ -93,10 +98,10 @@ pnpm tauri build    # 打包 .app / .dmg
 
 ## 路线图
 
-- [ ] **M0** 可行性验证：Tauri tray 定位 / footprint 并发耗时 / 扫描性能
-- [ ] **M1** 磁盘浪费探测 MVP：跨平台二进制探测 + 🟢 级清理 + 菜单栏
-- [ ] **M2** 内存真相：footprint 口径 + swap 仪表 + 换出受害者榜
-- [ ] **M3** 泄漏嫌疑判定 + CLI + 原生菜单栏面板
+- [x] **M0** 可行性验证：Tauri tray 定位 / footprint 并发耗时 / 扫描性能
+- [x] **M1** 磁盘浪费探测 MVP：跨平台二进制探测 + 🟢 级清理 + 菜单栏
+- [x] **M2** 内存真相：footprint 口径 + swap 仪表 + 换出受害者榜
+- [x] **M3** 泄漏嫌疑判定（B5）+ CLI + MCP + A6 只读（NSPopover 原生化推迟，tray 方案实测可用）
 
 ## 相关文档
 
