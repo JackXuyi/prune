@@ -272,7 +272,7 @@ pub fn reclaim_execute(items: &[ReclaimItem], confirmed: bool) -> Result<Reclaim
 | **D-K1** | A1 条目级删除的覆盖范围 | **v1 只做 Yarn v6**（目录名即元数据，零解析风险）；npm cacache / pnpm store 条目级不可行也不值得（见 D-K7） |
 | **D-K2** | 整库清理实现 | **直接 trash 目录本体**（`~/.npm/_cacache` 等，下次安装自动重建），不调 `npm cache clean` / `pnpm store prune` 外部命令——可控、可审计、离线、行为一致 |
 | **D-K3** | 首屏主数字口径 | **L1+L2+L3 合计**，分层行展示；L4 Docker 不计入（未运行 daemon 时无法拆明细，不可行动的数字不进主位） |
-| **D-K4** | A4/A5 是否本期做 | **不做**。M1 收口纯 L1/L2；L3 的「N 天未改动」判定与逐项确认 UI 留给 M2+ |
+| **D-K4** | A4/A5 是否本期做 | ~~不做~~ → **A7 落地后追加实现**（2026-10-27，mtime/体积已是扫描副产品，明细几乎零成本）：见 `docs/a4a5-detail-plan.md` 与 `docs/a4a5-detail-acceptance.md` |
 | **D-K5** | 扫描触发与增量 | 启动后 30 s 一轮 + 每周静默 + 手动；**v1 不做 mtime 增量**（全量 < 20 s，增量不抵复杂度） |
 | **D-K6** | Rosetta 判定方式 | 检测 `/usr/libexec/rosetta/oahd` 进程存在；失败视为「无 Rosetta」（宁可 🟢 误报也不漏报浪费） |
 | **D-K7** | npm cacache 是否解析 index-v5 做条目级 A1 | **不做**。要解析 `make-fetch-happen` key + 映射 content hash + 删两个库，复杂度/收益比差；整库 trash 已覆盖其价值 |
