@@ -15,10 +15,15 @@ use tauri::{
     AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent,
 };
 
+use crate::popover;
+
 /// tray 图标唯一 ID
-const TRAY_ID: &str = "prune-tray";
+pub const TRAY_ID: &str = "prune-tray";
 /// 面板窗口 label（与 tauri.conf.json windows 数组一致）
-const PANEL_LABEL: &str = "panel";
+pub const PANEL_LABEL: &str = "panel";
+/// 面板尺寸（与 tauri.conf.json 一致，popover 内容尺寸同源）
+pub const PANEL_W: f64 = 380.0;
+pub const PANEL_H: f64 = 560.0;
 /// 面板与菜单栏图标的间距（逻辑像素）
 const MARGIN: f64 = 8.0;
 
@@ -64,17 +69,32 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     Ok(())
 }
 
-/// 面板可见则隐藏，否则定位并显示
+/// 面板可见则隐藏，否则定位并显示。
+/// M3 起优先走 NSPopover（原生箭头 + Transient 收起），初始化失败降级旧窗口路径。
 fn toggle_panel(app: &AppHandle) {
     let Some(panel) = app.get_webview_window(PANEL_LABEL) else {
         eprintln!("[m0-tray] ❌ 找不到 panel 窗口");
         return;
     };
+    // popover 的 ObjC 调用必须在主线程（tray 事件线程不保证）
+    #[cfg(target_os = "macos")]
+    {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            popover::toggle(&handle, &panel);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    legacy_toggle(app, &panel);
+}
+
+/// 降级路径（M0 spike 原实现）：手动定位无边框窗口
+pub(crate) fn legacy_toggle(app: &AppHandle, panel: &WebviewWindow) {
     if panel.is_visible().unwrap_or(false) {
         let _ = panel.hide();
         return;
     }
-    position_panel(app, &panel);
+    position_panel(app, panel);
     let _ = panel.show();
     let _ = panel.set_focus();
 }

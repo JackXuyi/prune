@@ -15,6 +15,10 @@ mod sampler;
 mod scan;
 mod tray;
 
+// NSPopover 原生菜单栏面板（M3，docs/ns-popover-plan.md）
+#[cfg(target_os = "macos")]
+mod popover;
+
 /// 占位命令：暴露核心版本，验证前端 ↔ Rust 链路。
 #[tauri::command]
 fn app_info() -> serde_json::Value {
