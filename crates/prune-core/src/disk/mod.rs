@@ -69,6 +69,22 @@ pub struct DeadweightStats {
     pub ratio: Option<f64>,
 }
 
+/// A4/A5 明细条目：报告里逐项展示的实体（node_modules 目录 / 模拟器设备 / 浏览器二进制）。
+///
+/// `path` 同时是清理时的「报告派生白名单」成员（见 `reclaim::is_report_detail_path`）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DetailItem {
+    /// 展示名（相对 home 的项目路径 / 设备名 / chromium-1155 等）
+    pub name: String,
+    pub path: String,
+    pub bytes: u64,
+    /// 距上次改动的天数（mtime；UI 对 >180 天标灰）
+    pub age_days: u64,
+    /// 附加信息（Simulator：机型 · 运行时）
+    pub note: Option<String>,
+}
+
 /// 一组缓存
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -86,6 +102,9 @@ pub struct CacheGroup {
     /// 既误导用户，执行时也必然被白名单拒绝。
     #[serde(default = "default_true")]
     pub cleanable: bool,
+    /// A4/A5 明细（serde default：旧报告反序列化为空）
+    #[serde(default)]
+    pub details: Vec<DetailItem>,
     pub deadweight: Option<DeadweightStats>,
 }
 
@@ -304,6 +323,104 @@ fn dir_entry_count(root: &Path) -> usize {
         .unwrap_or(0)
 }
 
+// ---------------------------------------------------------------- A4/A5 明细
+
+/// 生成明细的分组（A5：模拟器 / Playwright / Cypress）
+const DETAIL_KEYS: &[&str] = &["simulator", "playwright", "cypress"];
+/// 活跃度分界（功能方案 A4 口径）：>180 天在前端标灰
+pub const STALE_DAYS: u64 = 180;
+
+fn age_days_of(mtime_nanos: i64, now_nanos: i64) -> u64 {
+    ((now_nanos - mtime_nanos).max(0) / 86_400_000_000_000) as u64
+}
+
+/// A5 组明细：首层指纹 → DetailItem（按体积降序）
+///
+/// 指纹里 mtime/bytes 都是扫描副产品，这里唯一的额外 IO 是 simulator 的
+/// `device.plist` 读取（几十个小文件，忽略不计）。
+fn build_details(entry_key: &str, root: &Path, fps: &[EntryFingerprint], now_nanos: i64) -> Vec<DetailItem> {
+    if !DETAIL_KEYS.contains(&entry_key) {
+        return Vec::new();
+    }
+    let mut items: Vec<DetailItem> = fps
+        .iter()
+        .map(|f| {
+            let note = if entry_key == "simulator" {
+                simulator_note(&root.join(&f.name))
+            } else {
+                None
+            };
+            DetailItem {
+                name: f.name.clone(),
+                path: root.join(&f.name).to_string_lossy().to_string(),
+                bytes: f.bytes,
+                age_days: age_days_of(f.mtime_nanos, now_nanos),
+                note,
+            }
+        })
+        .collect();
+    items.sort_by_key(|d| std::cmp::Reverse(d.bytes));
+    items
+}
+
+/// A4 明细：node_modules 聚合表（path → (mtime, bytes)）→ DetailItem（按体积降序）
+fn node_module_details(
+    map: &BTreeMap<String, (i64, u64)>,
+    home: &Path,
+    now_nanos: i64,
+) -> Vec<DetailItem> {
+    let mut items: Vec<DetailItem> = map
+        .iter()
+        .map(|(path, (mtime, bytes))| {
+            let p = Path::new(path);
+            let name = p
+                .strip_prefix(home)
+                .unwrap_or(p)
+                .to_string_lossy()
+                .to_string();
+            DetailItem {
+                name,
+                path: path.clone(),
+                bytes: *bytes,
+                age_days: age_days_of(*mtime, now_nanos),
+                note: None,
+            }
+        })
+        .collect();
+    items.sort_by_key(|d| std::cmp::Reverse(d.bytes));
+    items
+}
+
+/// 从 device.plist（XML）抽「设备名 · 运行时」；任何失败回退 None（UI 显示 UDID）
+fn simulator_note(device_dir: &Path) -> Option<String> {
+    let text = std::fs::read_to_string(device_dir.join("device.plist")).ok()?;
+    let name = xml_string_after(&text, "name");
+    let runtime = xml_string_after(&text, "runtime").map(pretty_runtime);
+    match (name, runtime) {
+        (Some(n), Some(r)) => Some(format!("{n} · {r}")),
+        (Some(n), None) => Some(n),
+        _ => None,
+    }
+}
+
+/// `<key>name</key>` 后第一个 `<string>…</string>` 的值
+fn xml_string_after(text: &str, key: &str) -> Option<String> {
+    let marker = format!("<key>{key}</key>");
+    let rest = &text[text.find(&marker)? + marker.len()..];
+    let s = rest.find("<string>")? + "<string>".len();
+    let e = rest[s..].find("</string>")? + s;
+    Some(rest[s..e].trim().to_string())
+}
+
+/// `com.apple.CoreSimulator.SimRuntime.iOS-17-5` → `iOS 17.5`
+fn pretty_runtime(runtime: String) -> String {
+    let tail = runtime.rsplit('.').next().unwrap_or(&runtime);
+    match tail.split_once('-') {
+        Some((os, ver)) => format!("{os} {}", ver.replace('-', ".")),
+        None => tail.to_string(),
+    }
+}
+
 /// 由条目体积表构建 A1 统计
 pub fn deadweight_stats(
     sizes: Vec<(String, u64)>,
@@ -441,6 +558,10 @@ pub fn scan_with(
     let started = Instant::now();
     let arch = classify::host_arch();
     let has_rosetta = classify::has_rosetta();
+    let now_nanos = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_nanos() as i64)
+        .unwrap_or(0);
 
     let entries = whitelist::resolve(home);
     let total_steps = entries.len() + 1; // +1 = node_modules
@@ -525,6 +646,8 @@ pub fn scan_with(
                 total_bytes: group_total,
                 entry_count: dir_entry_count(path),
                 cleanable: true,
+                // A1 组的条目视图走 deadweight.items（平台判定），明细表留给 A4/A5
+                details: Vec::new(),
                 deadweight: Some(dw),
             });
         }
@@ -538,6 +661,7 @@ pub fn scan_with(
             let size = pairs.iter().fold(0u64, |acc, (_, b)| acc.saturating_add(*b));
             bytes_done.fetch_add(size, Ordering::Relaxed);
             report(entry.key);
+            let details = build_details(entry.key, path, &fps, now_nanos);
             fingerprints.insert(entry.key.to_string(), fps);
             groups.push(CacheGroup {
                 key: entry.key.to_string(),
@@ -547,6 +671,7 @@ pub fn scan_with(
                 total_bytes: size,
                 entry_count: if size > 0 { dir_entry_count(path) } else { 0 },
                 cleanable: true,
+                details,
                 deadweight: None,
             });
         }
@@ -554,7 +679,7 @@ pub fn scan_with(
         nm.join().expect("node_modules 扫描线程失败")
     });
 
-    // 3) 项目 node_modules（L3：只统计，不逐项清理）
+    // 3) 项目 node_modules（L3：只统计，不逐项清理；明细供 A4 逐项确认）
     bytes_done.fetch_add(nm_bytes, Ordering::Relaxed);
     report("node-modules");
     if nm_count > 0 {
@@ -565,8 +690,9 @@ pub fn scan_with(
             level: Level::L3,
             total_bytes: nm_bytes,
             entry_count: nm_count,
-            // 聚合项：没有单一可删根（root 是 home），只统计不提供一键清理
+            // 聚合项：没有单一可删根（root 是 home），整项不可清；明细逐项走 L3 确认通道
             cleanable: false,
+            details: node_module_details(&nm_map, home, now_nanos),
             deadweight: None,
         });
     }
@@ -695,6 +821,7 @@ mod tests {
             total_bytes: 1000,
             entry_count: 10,
             cleanable: true,
+            details: Vec::new(),
             deadweight: Some(DeadweightStats {
                 bytes: 700,
                 native_bytes: 300,
@@ -713,6 +840,7 @@ mod tests {
             total_bytes: 500,
             entry_count: 1,
             cleanable: true,
+            details: Vec::new(),
             deadweight: None,
         };
         let docker = CacheGroup {
@@ -723,6 +851,7 @@ mod tests {
             total_bytes: 900,
             entry_count: 1,
             cleanable: true,
+            details: Vec::new(),
             deadweight: None,
         };
         let t = totals_of(&[yarn, npm, docker]);
@@ -743,6 +872,7 @@ mod tests {
             total_bytes: bytes,
             entry_count: 1,
             cleanable: true,
+            details: Vec::new(),
             deadweight: None,
         };
         assert!(dup_summary(&[g("npm", 10)]).is_none());
@@ -750,5 +880,95 @@ mod tests {
         assert_eq!(d.managers.len(), 2, "只统计包管理器，Cargo 不算");
         assert_eq!(d.total_bytes, 30);
         assert!(d.advice.contains("保留"));
+    }
+
+    // ------------------------------------------------------------ A4/A5
+
+    const NOW_NANOS: i64 = 1_800_000_000_000_000_000; // 某个固定「现在」
+
+    fn fp(name: &str, age_days: i64, bytes: u64) -> EntryFingerprint {
+        EntryFingerprint {
+            name: name.into(),
+            mtime_nanos: NOW_NANOS - age_days * 86_400_000_000_000,
+            bytes,
+        }
+    }
+
+    #[test]
+    fn details_only_for_a5_keys_and_sorted_by_bytes() {
+        let root = Path::new("/tmp/sim");
+        let fps = vec![fp("small-device", 10, 100), fp("big-device", 400, 900)];
+        assert!(build_details("yarn", root, &fps, NOW_NANOS).is_empty(), "A1 组不出明细");
+        let got = build_details("simulator", root, &fps, NOW_NANOS);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "big-device", "按体积降序");
+        assert_eq!(got[0].age_days, 400, "age 来自指纹 mtime");
+        assert_eq!(got[0].note, None, "plist 不存在 → 无备注（UI 回退 UDID）");
+    }
+
+    #[test]
+    fn simulator_note_parses_device_plist_and_falls_back() {
+        let home = tmp("plist");
+        let dev = home.join("DEV1");
+        std::fs::create_dir_all(&dev).unwrap();
+        std::fs::write(
+            dev.join("device.plist"),
+            r#"<?xml version="1.0" encoding="UTF-8"?>
+<plist version="1.0"><dict>
+	<key>UDID</key>
+	<string>DEV1</string>
+	<key>name</key>
+	<string>iPad mini (6th generation)</string>
+	<key>runtime</key>
+	<string>com.apple.CoreSimulator.SimRuntime.iOS-17-5</string>
+</dict></plist>"#,
+        )
+        .unwrap();
+        assert_eq!(
+            simulator_note(&dev).as_deref(),
+            Some("iPad mini (6th generation) · iOS 17.5")
+        );
+
+        // 损坏 / 缺失 plist → 回退 None，不报错
+        let broken = home.join("DEV2");
+        std::fs::create_dir_all(&broken).unwrap();
+        std::fs::write(broken.join("device.plist"), "not a plist at all").unwrap();
+        assert_eq!(simulator_note(&broken), None);
+        assert_eq!(simulator_note(&home.join("DEV3")), None);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn runtime_is_prettified() {
+        assert_eq!(pretty_runtime("com.apple.CoreSimulator.SimRuntime.iOS-17-5".into()), "iOS 17.5");
+        assert_eq!(pretty_runtime("com.apple.CoreSimulator.SimRuntime.tvOS-18".into()), "tvOS 18");
+        assert_eq!(pretty_runtime("weird".into()), "weird", "不认识的原样返回");
+    }
+
+    #[test]
+    fn node_module_details_names_are_home_relative() {
+        let home = tmp("nm-details");
+        let nm1 = home.join("Desktop/git/prune/node_modules");
+        std::fs::create_dir_all(&nm1).unwrap();
+        let mtime = NOW_NANOS - 200 * 86_400_000_000_000;
+        let mut map = BTreeMap::new();
+        map.insert(nm1.to_string_lossy().to_string(), (mtime, 4096));
+        map.insert("/outside/node_modules".to_string(), (NOW_NANOS, 8192));
+
+        let got = node_module_details(&map, &home, NOW_NANOS);
+        assert_eq!(got.len(), 2);
+        assert_eq!(got[0].name, "/outside/node_modules", "体积降序：8192 在前");
+        assert_eq!(got[1].name, "Desktop/git/prune/node_modules", "home 内路径转相对");
+        assert_eq!(got[1].age_days, 200);
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 旧报告 JSON（无 details 字段）反序列化不炸
+    #[test]
+    fn cache_group_deserializes_without_details() {
+        let json = r#"{"key":"npm","label":"npm 缓存","root":"/tmp","level":"l2","totalBytes":1,"entryCount":1,"cleanable":true,"deadweight":null}"#;
+        let g: CacheGroup = serde_json::from_str(json).unwrap();
+        assert!(g.details.is_empty());
+        assert!(g.cleanable);
     }
 }

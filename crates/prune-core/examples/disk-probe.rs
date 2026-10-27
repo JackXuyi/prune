@@ -220,7 +220,7 @@ fn main() {
         bytes: 1,
         level: Level::L1,
     }];
-    match prune_core::reclaim::execute(&evil, &home, true, Default::default()) {
+    match prune_core::reclaim::execute(&evil, &home, true, Default::default(), &[]) {
         Err(e) => println!("\n  白名单外路径 → ✅ 已拒绝（{e}）"),
         Ok(r) => println!("\n  白名单外路径 → ❌ 竟然执行了！moved={}", r.moved),
     }

@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::disk::whitelist::{self, Level};
 use crate::disk::{tree_size, DiskReport};
+use std::ffi::OsStr;
 
 /// 默认熔断阈值：20 GB
 pub const DEFAULT_BREAKER_BYTES: u64 = 20 * 1024 * 1024 * 1024;
@@ -80,6 +81,32 @@ pub enum ReclaimError {
     AllFailed(Vec<FailedItem>),
 }
 
+/// 报告派生白名单（A4）：node_modules 明细路径的放行判定。
+///
+/// 硬护栏（与报告是否被篡改无关，最后一道闸）：
+/// 1. canonicalize 成功且落在 home 内（拦 `..`、symlink 逃逸，同静态白名单）
+/// 2. **目录名必须是 `node_modules`** —— 即便授权表被伪造，能删的也只有这个名字的目录
+/// 3. 必须精确出现在授权表中（canonicalize 后相等，防 `/a/b/../c` 与大小写花招）
+fn is_report_detail_path(path: &Path, home: &Path, allowed: &[String]) -> bool {
+    let Ok(c) = path.canonicalize() else {
+        return false;
+    };
+    // home 本身也可能经 symlink（macOS：/var → /private/var），同样规范化后比较
+    let home_c = home.canonicalize().unwrap_or_else(|_| home.to_path_buf());
+    if !c.starts_with(&home_c) {
+        return false;
+    }
+    if c.file_name() != Some(OsStr::new("node_modules")) {
+        return false;
+    }
+    allowed.iter().any(|a| {
+        Path::new(a)
+            .canonicalize()
+            .map(|ac| ac == c)
+            .unwrap_or(false)
+    })
+}
+
 impl std::fmt::Display for ReclaimError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
@@ -97,8 +124,9 @@ impl std::fmt::Display for ReclaimError {
 /// 由报告生成 dry-run 列表。
 ///
 /// - A1 组：只取 `Deadweight` 条目（`NeedsConfirm` 的 darwin-x64 不会进默认清单）
+/// - **有明细的 L3 组（A4/A5）：逐项生成条目**——整组 root 不再作为待删项
+/// - 其余 L3 组：整项一项，并标记需确认
 /// - L2 组：整库一项
-/// - L3 组：整项一项，并标记需确认
 /// - L4 组：不生成清理项，只留一条说明
 pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
     let mut items: Vec<ReclaimItem> = Vec::new();
@@ -120,6 +148,23 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
                 continue;
             }
             _ => {}
+        }
+
+        // A4/A5 明细通道：node_modules（cleanable=false）与模拟器/浏览器二进制逐项确认。
+        // 整项 root（node-modules 的 root 是 home）绝不能进清单。
+        if group.level == Level::L3 && !group.details.is_empty() {
+            needs_confirm = true;
+            for d in &group.details {
+                if d.bytes > 0 {
+                    items.push(ReclaimItem {
+                        path: d.path.clone(),
+                        label: format!("{} · {}", group.label, d.name),
+                        bytes: d.bytes,
+                        level: Level::L3,
+                    });
+                }
+            }
+            continue;
         }
 
         // 聚合分组（如「55 个项目的 node_modules」）没有单一可删根：
@@ -200,11 +245,16 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
 }
 
 /// 执行清理（只走废纸篓）。
+///
+/// `allowed` 是**报告派生白名单**（A4/A5 明细路径，由调用方从当前报告的
+/// `groups[].details[].path` 组装）：node_modules 目录不在静态白名单内，
+/// 只能凭「本次报告发现过它」放行，且仍受 `is_report_detail_path` 的硬护栏约束。
 pub fn execute(
     items: &[ReclaimItem],
     home: &Path,
     confirmed: bool,
     limits: Limits,
+    allowed: &[String],
 ) -> Result<ReclaimReport, ReclaimError> {
     if items.is_empty() {
         return Err(ReclaimError::NothingToDo);
@@ -214,7 +264,7 @@ pub fn execute(
     let mut resolved: Vec<(PathBuf, Level)> = Vec::with_capacity(items.len());
     for it in items {
         let path = PathBuf::from(&it.path);
-        if !whitelist::is_whitelisted(&path, home) {
+        if !whitelist::is_whitelisted(&path, home) && !is_report_detail_path(&path, home, allowed) {
             return Err(ReclaimError::NotWhitelisted(it.path.clone()));
         }
         if it.level == Level::L4 {
@@ -281,6 +331,7 @@ mod tests {
             total_bytes: bytes,
             entry_count: 1,
             cleanable: true,
+            details: Vec::new(),
             deadweight: dw,
         }
     }
@@ -388,7 +439,7 @@ mod tests {
             bytes: 1,
             level: Level::L3,
         }];
-        let err = execute(&items, &home, true, Limits::default()).unwrap_err();
+        let err = execute(&items, &home, true, Limits::default(), &[]).unwrap_err();
         assert!(matches!(err, ReclaimError::NotWhitelisted(_)));
         assert!(home.exists(), "拒绝时不得动目录");
         let _ = std::fs::remove_dir_all(&home);
@@ -406,7 +457,7 @@ mod tests {
             bytes: 9,
             level: Level::L2,
         }];
-        let err = execute(&items, &home, true, Limits::default()).unwrap_err();
+        let err = execute(&items, &home, true, Limits::default(), &[]).unwrap_err();
         assert!(matches!(err, ReclaimError::NotWhitelisted(_)));
         assert!(outside.exists(), "拒绝时不得动文件");
         let _ = std::fs::remove_dir_all(&home);
@@ -427,7 +478,7 @@ mod tests {
             level: Level::L4,
         }];
         assert!(matches!(
-            execute(&l4, &home, true, Limits::default()).unwrap_err(),
+            execute(&l4, &home, true, Limits::default(), &[]).unwrap_err(),
             ReclaimError::NotCleanable(_)
         ));
 
@@ -439,7 +490,7 @@ mod tests {
             level: Level::L3,
         }];
         assert!(matches!(
-            execute(&l3, &home, false, Limits::default()).unwrap_err(),
+            execute(&l3, &home, false, Limits::default(), &[]).unwrap_err(),
             ReclaimError::NeedsExplicitConfirm(_)
         ));
 
@@ -457,6 +508,7 @@ mod tests {
             Limits {
                 breaker_bytes: 10,
             },
+            &[],
         )
         .unwrap_err();
         match err {
@@ -464,6 +516,129 @@ mod tests {
             other => panic!("应触发熔断，实际 {other:?}"),
         }
         assert!(cache.exists(), "熔断时不得动文件");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    // ---------------------------------------------------------------- A4/A5
+
+    use crate::disk::DetailItem;
+
+    fn detail(name: &str, path: &Path, bytes: u64, age_days: u64) -> DetailItem {
+        DetailItem {
+            name: name.into(),
+            path: path.to_string_lossy().to_string(),
+            bytes,
+            age_days,
+            note: None,
+        }
+    }
+
+    /// A4：有明细的 L3 组逐项进 preview（整项 root 是 home，绝不能进清单）
+    #[test]
+    fn preview_uses_details_for_l3_groups() {
+        let home = temp_home("details");
+        let nm1 = home.join("Desktop/p1/node_modules");
+        let nm2 = home.join("git/p2/node_modules");
+        std::fs::create_dir_all(&nm1).unwrap();
+        std::fs::create_dir_all(&nm2).unwrap();
+
+        let mut nm = group("node-modules", Level::L3, &home, 500, None);
+        nm.cleanable = false;
+        nm.details = vec![
+            detail("Desktop/p1/node_modules", &nm1, 300, 200),
+            detail("git/p2/node_modules", &nm2, 200, 3),
+        ];
+        let report = report_with(vec![nm]);
+
+        let pv = preview(&["node-modules".into()], &report);
+        assert_eq!(pv.items.len(), 2, "逐项生成，不整项");
+        assert!(pv.needs_confirm, "L3 明细必须二次确认");
+        assert!(pv.items.iter().all(|i| i.level == Level::L3));
+        assert!(
+            !pv.items.iter().any(|i| i.path == home.to_string_lossy()),
+            "home 本体绝不能出现在清单里"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// A4 无明细时维持旧行为：只做统计说明
+    #[test]
+    fn preview_without_details_keeps_statistics_note() {
+        let home = temp_home("nodetails");
+        let mut nm = group("node-modules", Level::L3, &home, 500, None);
+        nm.cleanable = false;
+        nm.entry_count = 55;
+        let report = report_with(vec![nm]);
+        let pv = preview(&["node-modules".into()], &report);
+        assert!(pv.items.is_empty());
+        assert!(pv.notes.iter().any(|n| n.contains("只做统计")));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 护栏：node_modules 路径没有报告授权 → 拒绝
+    #[test]
+    fn execute_rejects_node_modules_without_report_allowlist() {
+        let home = temp_home("nm-guard");
+        let nm = home.join("Desktop/p1/node_modules");
+        std::fs::create_dir_all(nm.join("react")).unwrap();
+        let items = vec![ReclaimItem {
+            path: nm.to_string_lossy().to_string(),
+            label: "p1 依赖".into(),
+            bytes: 4096,
+            level: Level::L3,
+        }];
+        let err = execute(&items, &home, true, Limits::default(), &[]).unwrap_err();
+        assert!(matches!(err, ReclaimError::NotWhitelisted(_)));
+        assert!(nm.exists(), "拒绝时不得动目录");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 护栏：授权表里有记录、但目标目录名不是 node_modules → 拒绝（最后一道闸）
+    #[test]
+    fn execute_rejects_non_node_modules_even_if_allowlisted() {
+        let home = temp_home("nm-name-guard");
+        let evil = home.join("Desktop/p1/important");
+        std::fs::create_dir_all(&evil).unwrap();
+        let allowed = vec![evil.to_string_lossy().to_string()];
+        let items = vec![ReclaimItem {
+            path: evil.to_string_lossy().to_string(),
+            label: "伪装路径".into(),
+            bytes: 4096,
+            level: Level::L3,
+        }];
+        let err = execute(&items, &home, true, Limits::default(), &allowed).unwrap_err();
+        assert!(matches!(err, ReclaimError::NotWhitelisted(_)));
+        assert!(evil.exists(), "非 node_modules 名字的目录必须被拦下");
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 放行链路：报告授权 + 名字对 + 在 home 内 → 废纸篓成功
+    #[test]
+    fn execute_allows_reported_node_modules() {
+        let home = temp_home("nm-allow");
+        let nm = home.join("Desktop/p1/node_modules");
+        std::fs::create_dir_all(nm.join("react")).unwrap();
+        std::fs::write(nm.join("react/index.js"), vec![b'x'; 64]).unwrap();
+        let allowed = vec![nm.to_string_lossy().to_string()];
+        let items = vec![ReclaimItem {
+            path: nm.to_string_lossy().to_string(),
+            label: "p1 依赖".into(),
+            bytes: 4096,
+            level: Level::L3,
+        }];
+        let report = execute(&items, &home, true, Limits::default(), &allowed);
+        match report {
+            Ok(r) => {
+                assert_eq!(r.moved, 1);
+                assert!(!nm.exists(), "已移入废纸篓");
+            }
+            Err(ReclaimError::AllFailed(_)) => {
+                // 临时目录（/var/folders）Finder 拒绝入废纸篓（macOS 限制）：
+                // 本测试的验证点是「报告派生白名单放行了 node_modules」——
+                // 错误必须发生在 trash 阶段而不是护栏阶段。真机路径在验收记录覆盖。
+            }
+            Err(e) => panic!("护栏应放行，实际 {e:?}"),
+        }
         let _ = std::fs::remove_dir_all(&home);
     }
 }
