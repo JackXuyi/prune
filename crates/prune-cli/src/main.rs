@@ -309,7 +309,8 @@ fn cmd_reclaim(yes: bool) -> i32 {
         return 0;
     }
 
-    match reclaim::execute(&pv.items, &home, true, Limits::default()) {
+    // CLI v1 只做 L1（A1 死重条目），静态白名单足够；报告派生白名单留给桌面端 A4/A5
+    match reclaim::execute(&pv.items, &home, true, Limits::default(), &[]) {
         Ok(rep) => {
             println!(
                 "已移入废纸篓 {} 项，{}。",

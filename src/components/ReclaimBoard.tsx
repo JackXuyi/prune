@@ -2,9 +2,19 @@ import { useState } from "react";
 
 import { formatBytes, formatRelative } from "../lib/format";
 import { useDiskStore } from "../stores/diskStore";
-import { LEVEL_META, type CacheGroup, type DeadweightStats, type Level } from "../types/disk";
+import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level } from "../types/disk";
 import { RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
+
+/** A4 活跃度分界（与 prune-core STALE_DAYS 对齐）：超过即标灰 */
+const STALE_DAYS = 180;
+
+function formatAge(days: number): string {
+  if (days <= 0) return "最近有改动";
+  if (days < 30) return `${days} 天未改动`;
+  if (days < 365) return `${Math.round(days / 30)} 个月未改动`;
+  return `${(days / 365).toFixed(1)} 年未改动`;
+}
 
 /** 主窗口「可回收」tab：A1 杀手卡片 + A2 分组 + A3 合并建议 + dry-run → 清理 */
 export function ReclaimBoard() {
@@ -250,40 +260,79 @@ function GroupRow({ group }: { group: CacheGroup }) {
   const loadPreview = useDiskStore((s) => s.loadPreview);
   const busy = useDiskStore((s) => s.busy);
   const meta = LEVEL_META[group.level];
-  // L4 只给命令；聚合项（分散在 N 个目录，没有单一可删根）只统计
+  const details = group.details ?? [];
+  // L4 只给命令；聚合项（root 是 home）整项不可清，但 A4/A5 有明细时逐项确认
   const cleanable = group.cleanable && group.level !== "l4";
+  const perItem = !cleanable && details.length > 0 && group.level !== "l4";
+  const actionable = cleanable || perItem;
 
   return (
-    <li className="flex items-center gap-2 rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.03]">
-      <span className="min-w-0 flex-1">
-        <span className="block truncate text-[11.5px] text-ink">{group.label}</span>
-        <span className="mt-0.5 block truncate text-[10px] text-ink-faint" title={group.root}>
-          {group.entryCount > 0 ? `${group.entryCount} 项 · ` : ""}
-          {group.root}
+    <li className="rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.03]">
+      <div className="flex items-center gap-2">
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[11.5px] text-ink">{group.label}</span>
+          <span className="mt-0.5 block truncate text-[10px] text-ink-faint" title={group.root}>
+            {group.entryCount > 0 ? `${group.entryCount} 项 · ` : ""}
+            {group.root}
+          </span>
         </span>
-      </span>
-      <Badge tone={meta.tone}>{meta.label}</Badge>
-      <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
-        {formatBytes(group.totalBytes)}
-      </span>
-      {cleanable ? (
-        <button
-          type="button"
-          onClick={() => void loadPreview([group.key])}
-          disabled={busy || group.totalBytes === 0}
-          className="w-16 shrink-0 rounded border border-hairline px-1.5 py-1 text-[10px] text-ink-dim transition-colors hover:border-accent/40 hover:text-accent disabled:opacity-40"
-        >
-          预览
-        </button>
-      ) : (
-        <span
-          className="w-16 shrink-0 text-center text-[10px] text-ink-faint"
-          title={group.level === "l4" ? "只提供命令，不执行" : "分散在多个项目目录，只做统计"}
-        >
-          {group.level === "l4" ? "手动处理" : "只统计"}
+        <Badge tone={meta.tone}>{meta.label}</Badge>
+        <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
+          {formatBytes(group.totalBytes)}
         </span>
-      )}
+        {actionable ? (
+          <button
+            type="button"
+            onClick={() => void loadPreview([group.key])}
+            disabled={busy || group.totalBytes === 0}
+            className="w-16 shrink-0 rounded border border-hairline px-1.5 py-1 text-[10px] text-ink-dim transition-colors hover:border-accent/40 hover:text-accent disabled:opacity-40"
+          >
+            预览
+          </button>
+        ) : (
+          <span
+            className="w-16 shrink-0 text-center text-[10px] text-ink-faint"
+            title={group.level === "l4" ? "只提供命令，不执行" : "分散在多个项目目录，只做统计"}
+          >
+            {group.level === "l4" ? "手动处理" : "只统计"}
+          </span>
+        )}
+      </div>
+      {details.length > 0 ? <GroupDetails details={details} /> : null}
     </li>
+  );
+}
+
+/** A4/A5 明细：按体积降序（Rust 侧已排），Top 20 + 「N 天未改动」，>180 天标灰 */
+function GroupDetails({ details }: { details: DetailItem[] }) {
+  const stale = details.filter((d) => d.ageDays > STALE_DAYS).length;
+  const shown = details.slice(0, 20);
+  return (
+    <details className="mt-1 pl-2">
+      <summary className="cursor-pointer text-[10px] text-ink-faint hover:text-ink-dim">
+        {details.length} 项明细（按体积）
+        {stale > 0 ? ` · ${stale} 项超过 ${STALE_DAYS} 天未改动` : ""}
+      </summary>
+      <ul className="mt-1 space-y-0.5">
+        {shown.map((d) => (
+          <li key={d.path} className="flex items-baseline gap-2 text-[10.5px]">
+            <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
+              {formatBytes(d.bytes)}
+            </span>
+            <span className="w-20 shrink-0 text-ink-faint">{formatAge(d.ageDays)}</span>
+            <span
+              className={`min-w-0 flex-1 truncate ${d.ageDays > STALE_DAYS ? "text-ink-faint" : "text-ink-dim"}`}
+              title={d.path}
+            >
+              {d.note ?? d.name}
+            </span>
+          </li>
+        ))}
+        {details.length > shown.length ? (
+          <li className="text-[10px] text-ink-faint">… 另有 {details.length - shown.length} 项</li>
+        ) : null}
+      </ul>
+    </details>
   );
 }
 

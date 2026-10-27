@@ -113,17 +113,29 @@ pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> R
 }
 
 /// 执行清理：路径校验 / 级别闸门 / 熔断都在 prune-core，这里只转发。
-/// 成功后自动重扫一轮（A7：删除 = 首层条目 / 整根消失，增量 100% 捕获），
-/// 前端通过 `disk://done` 收到新报告。
+/// `allowed` 从当前报告的明细表组装（A4：node_modules 逐项清理的报告派生白名单）。
+/// 成功后自动增量重扫一轮，前端通过 `disk://done` 收到新报告。
 #[tauri::command]
 pub async fn reclaim_execute(
     app: AppHandle,
+    state: State<'_, Arc<DiskState>>,
     items: Vec<ReclaimItem>,
     confirmed: bool,
 ) -> Result<ReclaimReport, String> {
     let home = scan::home_dir();
+    // 报告派生白名单：只有当前报告里出现过的明细路径会被放行
+    let allowed: Vec<String> = state
+        .report()
+        .map(|r| {
+            r.groups
+                .iter()
+                .flat_map(|g| g.details.iter().map(|d| d.path.clone()))
+                .collect()
+        })
+        .unwrap_or_default();
+
     let result = tauri::async_runtime::spawn_blocking(move || {
-        reclaim::execute(&items, &home, confirmed, Limits::default())
+        reclaim::execute(&items, &home, confirmed, Limits::default(), &allowed)
     })
     .await
     .map_err(|e| format!("清理线程失败: {e}"))?

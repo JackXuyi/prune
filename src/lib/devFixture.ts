@@ -1,6 +1,7 @@
 import type {
   CacheGroup,
   DeadweightItem,
+  DetailItem,
   DiskReport,
   PlatformStat,
   ReclaimPreview,
@@ -275,8 +276,9 @@ function devGroup(
   entryCount: number,
   deadweight: CacheGroup["deadweight"] = null,
   cleanable = true,
+  details: DetailItem[] = [],
 ): CacheGroup {
-  return { key, label, root: `/Users/xuyi/${key}`, level, totalBytes, entryCount, cleanable, deadweight };
+  return { key, label, root: `/Users/xuyi/${key}`, level, totalBytes, entryCount, cleanable, details, deadweight };
 }
 
 export function devDiskReport(): DiskReport {
@@ -314,6 +316,30 @@ export function devDiskReport(): DiskReport {
     ratio: 6.91,
   });
 
+  // A4/A5 明细：age 天数覆盖 <30 / >180 两档，UI 标灰逻辑在浏览器里可验证
+  const nmDetails: DetailItem[] = [
+    ["Desktop/git/prune/node_modules", 3.1 * GB, 3],
+    ["Desktop/git/wcs-homepage/node_modules", 2.4 * GB, 12],
+    ["Documents/approval/node_modules", 1.8 * GB, 210],
+    ["code/legacy/node_modules", 1.2 * GB, 420],
+    ["work/demo/node_modules", 0.6 * GB, 33],
+  ].map(([p, bytes, days]) => ({
+    name: p as string,
+    path: `/Users/xuyi/${p}`,
+    bytes: bytes as number,
+    ageDays: days as number,
+    note: null,
+  }));
+  const simDetails: DetailItem[] = [
+    { name: "04BD6806-22EE-4BCD-B99C-7E2253408723", path: "/Users/xuyi/Library/Developer/CoreSimulator/Devices/04BD6806", bytes: 2.1 * GB, ageDays: 400, note: "iPad mini (6th generation) · iOS 17.5" },
+    { name: "1A2B3C4D-1111-2222-3333-444455556666", path: "/Users/xuyi/Library/Developer/CoreSimulator/Devices/1A2B3C4D", bytes: 1.0 * GB, ageDays: 8, note: "iPhone 15 Pro · iOS 18.0" },
+  ];
+  const pwDetails: DetailItem[] = [
+    { name: "chromium-1179", path: "/Users/xuyi/Library/Caches/ms-playwright/chromium-1179", bytes: 0.42 * GB, ageDays: 5, note: null },
+    { name: "chromium-1155", path: "/Users/xuyi/Library/Caches/ms-playwright/chromium-1155", bytes: 0.4 * GB, ageDays: 260, note: null },
+    { name: "chromium_headless_shell-1179", path: "/Users/xuyi/Library/Caches/ms-playwright/chromium_headless_shell-1179", bytes: 0.21 * GB, ageDays: 5, note: null },
+  ];
+
   return {
     scannedAt: Math.floor(Date.now() / 1000) - 42,
     scanElapsedMs: 17560,
@@ -325,10 +351,10 @@ export function devDiskReport(): DiskReport {
       devGroup("homebrew", "Homebrew 下载缓存", "l2", 0.176 * GB, 63),
       devGroup("deriveddata", "DerivedData（编译产物）", "l2", 0.071 * GB, 5),
       devGroup("bun", "Bun 安装缓存", "l2", 0.4e6, 3),
-      // 聚合项：真机上 root 是 home，只统计不可一键清理
-      devGroup("node-modules", "项目依赖（55 个 node_modules）", "l3", 17.02 * GB, 55, null, false),
-      devGroup("simulator", "Simulator 设备", "l3", 3.75 * GB, 12),
-      devGroup("playwright", "Playwright 浏览器", "l3", 1.29 * GB, 10),
+      // 聚合项：真机上 root 是 home，整项不可清理；A4 明细逐项确认
+      devGroup("node-modules", "项目依赖（55 个 node_modules）", "l3", 17.02 * GB, 55, null, false, nmDetails),
+      devGroup("simulator", "Simulator 设备", "l3", 3.75 * GB, 12, null, true, simDetails),
+      devGroup("playwright", "Playwright 浏览器", "l3", 1.29 * GB, 10, null, true, pwDetails),
       devGroup("docker-vm", "Docker VM 磁盘", "l4", 3.17 * GB, 1),
     ],
     dup: {

@@ -34,6 +34,18 @@ export interface DeadweightStats {
   ratio: number | null;
 }
 
+/** A4/A5 明细条目（node_modules 目录 / 模拟器设备 / 浏览器二进制） */
+export interface DetailItem {
+  /** 展示名（相对 home 的项目路径 / 设备名 / chromium-1155 等） */
+  name: string;
+  path: string;
+  bytes: number;
+  /** 距上次改动的天数（>180 天 UI 标灰） */
+  ageDays: number;
+  /** 附加信息（Simulator：机型 · 运行时） */
+  note: string | null;
+}
+
 export interface CacheGroup {
   key: string;
   label: string;
@@ -41,8 +53,10 @@ export interface CacheGroup {
   level: Level;
   totalBytes: number;
   entryCount: number;
-  /** 聚合分组（root 是 home）时为 false：只统计，不提供一键清理 */
+  /** 聚合分组（root 是 home）时为 false：整项不提供一键清理（明细可逐项） */
   cleanable: boolean;
+  /** A4/A5 明细（旧报告缺省为空数组） */
+  details?: DetailItem[];
   deadweight: DeadweightStats | null;
 }
 
