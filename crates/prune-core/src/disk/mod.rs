@@ -7,7 +7,10 @@
 //! 不用 `metadata.len()`：Docker VM 的 `Docker.raw` 是稀疏文件，apparent size 会算出
 //! 1099 GB（实测），而真实占用约 3 GB —— 虚高的数字会直接毁掉首屏可信度。
 
+pub mod incremental;
 pub mod whitelist;
+
+pub use incremental::{EntryFingerprint, ScanSnapshot};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -123,6 +126,9 @@ pub struct Totals {
 pub struct DiskReport {
     pub scanned_at: i64,
     pub scan_elapsed_ms: u64,
+    /// A7：本轮是否增量扫描（false = 全量；旧报告反序列化缺省为 false）
+    #[serde(default)]
+    pub incremental: bool,
     /// A1 组在前，随后按级别汇总
     pub groups: Vec<CacheGroup>,
     pub dup: Option<DupSummary>,
@@ -194,83 +200,6 @@ pub fn tree_size(root: &Path) -> u64 {
         }
     }
     total
-}
-
-/// 大目录并行遍历：**工作队列**（不是首层分叉）。
-///
-/// 首版按首层子目录 fork，遇到 `pnpm/store/v3` 这种「顶层只有 3 个目录、底下 44 万文件」的
-/// 结构会退化成单线程（实测 30 s）。改成共享队列后不论树形多扁都能吃满并发。
-pub fn tree_size_fast(root: &Path) -> u64 {
-    let Ok(meta) = std::fs::symlink_metadata(root) else {
-        return 0;
-    };
-    if meta.file_type().is_symlink() {
-        return 0;
-    }
-    if meta.is_file() {
-        return file_bytes(&meta);
-    }
-    if !meta.is_dir() {
-        return 0;
-    }
-
-    // (待处理目录队列, 处理中计数)
-    let mutex = Mutex::new((std::collections::VecDeque::from([root.to_path_buf()]), 0usize));
-    let cv = std::sync::Condvar::new();
-    let total = std::sync::atomic::AtomicU64::new(0);
-
-    std::thread::scope(|scope| {
-        for _ in 0..SCAN_CONCURRENCY {
-            scope.spawn(|| loop {
-                let next = {
-                    let mut g = mutex.lock().unwrap_or_else(|e| e.into_inner());
-                    loop {
-                        if let Some(d) = g.0.pop_front() {
-                            g.1 += 1;
-                            break Some(d);
-                        }
-                        if g.1 == 0 {
-                            break None; // 队列空且无人处理 → 整体结束
-                        }
-                        g = cv.wait(g).unwrap_or_else(|e| e.into_inner());
-                    }
-                };
-                let Some(dir) = next else { return };
-
-                let mut subdirs: Vec<PathBuf> = Vec::new();
-                let mut bytes = 0u64;
-                if let Ok(rd) = std::fs::read_dir(&dir) {
-                    for entry in rd.flatten() {
-                        let Ok(ft) = entry.file_type() else { continue };
-                        if ft.is_symlink() {
-                            continue;
-                        }
-                        if ft.is_dir() {
-                            subdirs.push(entry.path());
-                        } else if ft.is_file() {
-                            if let Ok(m) = entry.metadata() {
-                                bytes = bytes.saturating_add(file_bytes(&m));
-                            }
-                        }
-                    }
-                }
-                total.fetch_add(bytes, Ordering::Relaxed);
-
-                let notify = {
-                    let mut g = mutex.lock().unwrap_or_else(|e| e.into_inner());
-                    g.1 -= 1;
-                    let added = !subdirs.is_empty();
-                    g.0.extend(subdirs);
-                    added || g.1 == 0
-                };
-                if notify {
-                    cv.notify_all();
-                }
-            });
-        }
-    });
-
-    total.load(Ordering::Relaxed)
 }
 
 /// 简单的有界并发 map（保持输入顺序）。用于 6155 个 Yarn 条目的体积归因。
@@ -492,8 +421,23 @@ fn totals_of(groups: &[CacheGroup]) -> Totals {
     }
 }
 
-/// 全量扫描（白名单定点 + 项目 node_modules 计数）
+/// 全量扫描（保留旧签名：CLI / MCP / 探针 / 测试的直接入口）
 pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
+    scan_with(home, None, progress).0
+}
+
+/// 全量 / 增量统一入口（A7）。
+///
+/// `prev = None` → 全量；`Some(&snapshot)` → 与快照按首层条目 mtime（纳秒）diff，
+/// 只重算变化的条目。两条路径共用同一套装配逻辑，增量报告与全量报告结构完全一致；
+/// `DiskReport.incremental` 标记本轮模式。返回值携带新快照供调用方保存。
+///
+/// 已知近似（D-A7-1）：深层新增文件不改变浅层 mtime，增量扫不出来 —— 每周全量校准。
+pub fn scan_with(
+    home: &Path,
+    prev: Option<&ScanSnapshot>,
+    progress: Option<&ProgressFn>,
+) -> (DiskReport, ScanSnapshot) {
     let started = Instant::now();
     let arch = classify::host_arch();
     let has_rosetta = classify::has_rosetta();
@@ -518,26 +462,61 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
     };
 
     let mut groups: Vec<CacheGroup> = Vec::new();
+    let mut fingerprints: BTreeMap<String, Vec<EntryFingerprint>> = BTreeMap::new();
 
     // node_modules 发现与定点目录扫描互相独立 → 并行跑，墙钟取 max 而不是 sum
-    let (nm_count, nm_bytes) = std::thread::scope(|scope| {
-        let nm = scope.spawn(|| {
+    let (nm_count, nm_bytes, nm_map) = std::thread::scope(|scope| {
+        let nm = scope.spawn(|| -> (usize, u64, BTreeMap<String, (i64, u64)>) {
             let dirs = find_dirs_named(&project_roots(home), "node_modules", NODE_MODULES_MAX_DEPTH);
             let count = dirs.len();
-            let sizes = parallel_map(dirs, SCAN_CONCURRENCY, |p| tree_size(p));
-            (count, sizes.iter().sum::<u64>())
+            let cached_nm = prev.map(|p| &p.node_modules);
+            let dir_refs: Vec<&PathBuf> = dirs.iter().collect();
+            let mtimes: Vec<i64> = parallel_map(dir_refs, SCAN_CONCURRENCY, |p| {
+                std::fs::symlink_metadata(*p)
+                    .map(|m| incremental::mtime_nanos(&m))
+                    .unwrap_or(0)
+            });
+
+            // mtime 没变的目录复用快照体积，只重算新增 / 变化的
+            let mut sizes = vec![0u64; dirs.len()];
+            let mut todo: Vec<usize> = Vec::new();
+            for (i, dir) in dirs.iter().enumerate() {
+                let key = dir.to_string_lossy().to_string();
+                let hit = cached_nm
+                    .and_then(|m| m.get(&key))
+                    .filter(|(cm, _)| *cm == mtimes[i])
+                    .map(|(_, b)| *b);
+                match hit {
+                    Some(b) => sizes[i] = b,
+                    None => todo.push(i),
+                }
+            }
+            let recomputed = parallel_map(todo.clone(), SCAN_CONCURRENCY, |&i| tree_size(&dirs[i]));
+            for (k, &i) in todo.iter().enumerate() {
+                sizes[i] = recomputed[k];
+            }
+
+            let mut map = BTreeMap::new();
+            for (i, dir) in dirs.iter().enumerate() {
+                map.insert(dir.to_string_lossy().to_string(), (mtimes[i], sizes[i]));
+            }
+            (count, sizes.iter().sum(), map)
         });
 
         // 1) A1：Yarn 条目级归因（先跑，让首屏杀手数字尽早可用）
         for (entry, path) in entries.iter().filter(|(e, _)| e.a1_scope) {
-            let sizes = first_level_sizes(path);
-            let dw = deadweight_stats(sizes, arch, has_rosetta, path);
+            let cached = prev
+                .and_then(|s| s.groups.get(entry.key))
+                .map(|v| v.as_slice());
+            let (pairs, fps) = incremental::resolve_group(path, true, cached);
+            let dw = deadweight_stats(pairs, arch, has_rosetta, path);
             let group_total = dw
                 .bytes
                 .saturating_add(dw.native_bytes)
                 .saturating_add(dw.other_bytes);
             bytes_done.fetch_add(group_total, Ordering::Relaxed);
             report("yarn");
+            fingerprints.insert(entry.key.to_string(), fps);
             groups.push(CacheGroup {
                 key: entry.key.to_string(),
                 label: entry.label.to_string(),
@@ -550,18 +529,16 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
             });
         }
 
-        // 2) 其余定点目录（逐个处理：`tree_size_fast` 内部已并行，外层再并行会线程爆炸）
-        let simple: Vec<(whitelist::WhitelistEntry, PathBuf)> =
-            entries.iter().filter(|(e, _)| !e.a1_scope).cloned().collect();
-        let mut sizes: Vec<u64> = Vec::with_capacity(simple.len());
-        for (entry, path) in &simple {
-            let s = tree_size_fast(path);
-            bytes_done.fetch_add(s, Ordering::Relaxed);
+        // 2) 其余定点目录（逐个处理：`resolve_group` 内部工作队列已并行，外层再并行会线程爆炸）
+        for (entry, path) in entries.iter().filter(|(e, _)| !e.a1_scope) {
+            let cached = prev
+                .and_then(|s| s.groups.get(entry.key))
+                .map(|v| v.as_slice());
+            let (pairs, fps) = incremental::resolve_group(path, false, cached);
+            let size = pairs.iter().fold(0u64, |acc, (_, b)| acc.saturating_add(*b));
+            bytes_done.fetch_add(size, Ordering::Relaxed);
             report(entry.key);
-            sizes.push(s);
-        }
-
-        for ((entry, path), size) in simple.iter().zip(sizes) {
+            fingerprints.insert(entry.key.to_string(), fps);
             groups.push(CacheGroup {
                 key: entry.key.to_string(),
                 label: entry.label.to_string(),
@@ -607,13 +584,20 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
     let dup = dup_summary(&groups);
     let totals = totals_of(&groups);
 
-    DiskReport {
+    let report = DiskReport {
         scanned_at: now_ts(),
         scan_elapsed_ms: started.elapsed().as_millis() as u64,
+        incremental: prev.is_some(),
         groups,
         dup,
         totals,
-    }
+    };
+    let snapshot = ScanSnapshot {
+        taken_at: now_ts(),
+        groups: fingerprints,
+        node_modules: nm_map,
+    };
+    (report, snapshot)
 }
 
 #[cfg(test)]

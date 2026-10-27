@@ -289,6 +289,7 @@ mod tests {
         DiskReport {
             scanned_at: 0,
             scan_elapsed_ms: 0,
+            incremental: false,
             groups,
             dup: None,
             totals: Totals {
