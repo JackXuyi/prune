@@ -262,6 +262,10 @@ pub fn reclaim(paths: &[PathBuf]) -> Result<ReclaimReport> {
 
 **风险**：`tray.rect()` 在某些 macOS 版本/多屏幕下取不到准确坐标。降级方案：取不到时定位到屏幕右上角、或改用 `NSPopover`（需 objc2 FFI）。**这是 Tauri 方案相对 SwiftUI `MenuBarExtra` 的主要劣势，M0 需验证。**
 
+> **M3 更新（2026-10-27）**：NSPopover 已通过 objc2 0.6 FFI 落地（`src-tauri/src/popover.rs`），
+> WKWebView 搬入 popover、Transient 收起、原生箭头；`tray.rect()` 缺失时自动降级旧窗口路径。
+> 见 `docs/ns-popover-plan.md` / `docs/ns-popover-acceptance.md`。
+
 ---
 
 ## 7. ⚠️ WebView 内存：本方案最大代价与解法
@@ -295,7 +299,7 @@ pub fn reclaim(paths: &[PathBuf]) -> Result<ReclaimReport> {
 | 你的上手速度 | 需学 SwiftUI | **React/TS 已熟 + PLOS 用过 Tauri** | 🟢 **决定性优势** |
 | Mach API 需求 | — | **已被 footprint 命令绕开** | 🟢 意外收获 |
 
-**结论：你的技术栈熟悉度 + Rust 扫描性能 + CLI 复用，三项优势盖过菜单栏原生感的劣势。** 且菜单栏劣势可通过 `NSPopover` FFI 在 M3 补齐。
+**结论：你的技术栈熟悉度 + Rust 扫描性能 + CLI 复用，三项优势盖过菜单栏原生感的劣势。** 且菜单栏劣势可通过 `NSPopover` FFI 在 M3 补齐。（已兑现：M3 NSPopover 落地，见 §6 更新）
 
 ---
 
@@ -306,7 +310,7 @@ pub fn reclaim(paths: &[PathBuf]) -> Result<ReclaimReport> {
 | **M0** | 三项验证（§10） | 可行性结论 |
 | **M1** | `prune-core` 磁盘扫描 + 分类器 + 菜单栏 + 🟢 清理 | 首屏说出「X GB 永远加载不了」，清理后构建无失败 |
 | **M2** | 内存模块（footprint 采样 + swap + 换出榜）+ 主窗口 | footprint 读数与活动监视器偏差 <10% |
-| **M3** | 泄漏判定（R²）+ CLI + `NSPopover` 原生化 | — |
+| **M3** | 泄漏判定（R²）+ CLI + `NSPopover` 原生化（✅ 2026-10-27 落地） | — |
 
 ---
 
@@ -328,7 +332,7 @@ pub fn reclaim(paths: &[PathBuf]) -> Result<ReclaimReport> {
 
 | 风险 | 等级 | 缓解 |
 |---|---|---|
-| tray 面板定位不准 | 🔴 | M0 #2 验证；降级为右上角定位；M3 用 NSPopover |
+| tray 面板定位不准 | 🔴 | M0 #2 验证；降级为右上角定位；~~M3 用 NSPopover~~ ✅ M3 已落地 NSPopover（旧路径保留为降级） |
 | `footprint` 输出格式随系统版本变化 | 🟠 | 只依赖 `footprint` / `swapped` 两个字段；解析失败即降级 RSS |
 | 依赖系统自带命令（未来可能移除） | 🟠 | 降级链常驻；保留 mach2 路径作为长期后备 |
 | 删除事故 | 🔴 | 白名单 + 废纸篓 + 熔断 + 不提权 |
