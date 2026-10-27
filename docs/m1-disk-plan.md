@@ -132,6 +132,7 @@ pub enum Verdict { Deadweight, NeedsConfirm, Keep }   // 🟢 / 🟡 / 保留
 | 清理完成后 | 增量重算受影响组（不重扫全盘） |
 
 v1 不做 mtime 增量：全量预算 < 20 s、每周一次，增量收益不抵复杂度。
+（**A7 追加**：2026-10-27 该决策被推翻——每小时静默增量 + 每周全量校准已落地，见 `docs/a7-incremental-plan.md` 与 `docs/a7-incremental-acceptance.md`；手动刷新与启动首扫保持全量。）
 
 ---
 
