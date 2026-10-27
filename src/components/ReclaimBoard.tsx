@@ -135,6 +135,7 @@ export function ReclaimBoard() {
           <span className="text-[10px] text-ink-faint">
             {report.groups.length} 组 · 扫描 {formatRelative(report.scannedAt)} · 耗时{" "}
             {(report.scanElapsedMs / 1000).toFixed(1)} s
+            {report.incremental ? " · 增量" : ""}
           </span>
         </div>
         <ul className="mt-1.5 space-y-1">

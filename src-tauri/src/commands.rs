@@ -91,10 +91,11 @@ pub fn disk_report(state: State<'_, Arc<DiskState>>) -> Option<DiskReport> {
     state.report()
 }
 
-/// 手动触发扫描。已有扫描在跑时直接返回 Ok（幂等），前端靠 `disk://done` 更新。
+/// 手动触发扫描（A7 D-A7-2：手动 = 全量，用户盯着数字求证，准确性优先）。
+/// 已有扫描在跑时直接返回 Ok（幂等），前端靠 `disk://done` 更新。
 #[tauri::command]
 pub async fn disk_scan(app: AppHandle) -> Result<(), String> {
-    scan::scan_now(&app).await
+    scan::scan_now(&app, true).await
 }
 
 /// dry-run：只生成清单，不动任何文件。
@@ -112,7 +113,8 @@ pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> R
 }
 
 /// 执行清理：路径校验 / 级别闸门 / 熔断都在 prune-core，这里只转发。
-/// 成功后自动重扫一轮，前端通过 `disk://done` 收到新报告。
+/// 成功后自动重扫一轮（A7：删除 = 首层条目 / 整根消失，增量 100% 捕获），
+/// 前端通过 `disk://done` 收到新报告。
 #[tauri::command]
 pub async fn reclaim_execute(
     app: AppHandle,
@@ -136,8 +138,8 @@ pub async fn reclaim_execute(
 
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
-        if let Err(e) = scan::scan_now(&handle).await {
-            eprintln!("[m1-disk] 清理后重扫失败: {e}");
+        if let Err(e) = scan::scan_now(&handle, false).await {
+            eprintln!("[m1-disk] 清理后增量重扫失败: {e}");
         }
     });
 

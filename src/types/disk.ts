@@ -67,6 +67,8 @@ export interface Totals {
 export interface DiskReport {
   scannedAt: number;
   scanElapsedMs: number;
+  /** A7：本轮是否增量扫描（false = 全量；旧报告缺省为 false） */
+  incremental?: boolean;
   groups: CacheGroup[];
   dup: DupSummary | null;
   totals: Totals;
