@@ -81,6 +81,39 @@ pub fn run() {
             if let Some(panel) = app.get_webview_window("panel") {
                 tray::attach_blur_to_hide(&panel);
             }
+
+            // 主窗口：Accessory 模式下程序化 show() 不切 Space（M3 验收发现的
+            // 「打开主窗口没反应」根因）。MoveToActiveSpace 让 show 时窗口跟随
+            // 当前 Space；FullScreenAuxiliary 保证全屏 App 里也能弹出。
+            #[cfg(target_os = "macos")]
+            if let Some(main) = app.get_webview_window("main") {
+                if let Ok(ns_window) = main.ns_window() {
+                    if !ns_window.is_null() {
+                        use objc2::rc::Retained;
+                        use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+                        if let Some(win) =
+                            unsafe { Retained::retain(ns_window as *mut NSWindow) }
+                        {
+                            win.setCollectionBehavior(
+                                NSWindowCollectionBehavior::MoveToActiveSpace
+                                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // 常驻守门员形态：主窗口点红叉只隐藏不销毁，否则 open_main 会因
+            // 窗口已销毁而永久失效（Accessory 模式没有 Dock 图标可再打开）
+            if let Some(main) = app.get_webview_window("main") {
+                let main_handle = main.clone();
+                main.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = main_handle.hide();
+                    }
+                });
+            }
             Ok(())
         })
         .run(tauri::generate_context!())

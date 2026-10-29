@@ -45,12 +45,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
-            "open-main" => {
-                if let Some(w) = app.get_webview_window("main") {
-                    let _ = w.show();
-                    let _ = w.set_focus();
-                }
-            }
+            "open-main" => show_main(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -192,6 +187,73 @@ fn size_wh(s: &tauri::Size) -> (f64, f64) {
         tauri::Size::Physical(v) => (v.width as f64, v.height as f64),
         tauri::Size::Logical(v) => (v.width, v.height),
     }
+}
+
+/// 打开主窗口（唯一入口：面板按钮 / tray 菜单都走这里）。
+///
+/// 关键点：Accessory 应用程序化 `show()` 不会触发 Space 切换，主窗口会停在
+/// 启动时的 Space 上——用户在当前 Space 看到的就是「点了没反应」。
+/// 因此打开前先把窗口居中定位到菜单栏图标所在屏幕，配合 setup 时的
+/// `MoveToActiveSpace` collection behavior，保证出现在用户眼前。
+pub fn show_main(app: &AppHandle) {
+    let Some(main) = app.get_webview_window("main") else {
+        eprintln!("[m0-tray] ❌ 找不到 main 窗口");
+        return;
+    };
+    position_main(app, &main);
+    let _ = main.show();
+    let _ = main.set_focus();
+}
+
+/// 把主窗口定位到菜单栏图标所在屏幕的居中位置（逻辑同 position_panel 的坐标系换算）
+fn position_main(app: &AppHandle, main: &WebviewWindow) {
+    let Some(rect) = app.tray_by_id(TRAY_ID).and_then(|t| t.rect().ok().flatten()) else {
+        eprintln!("[m0-tray] ⚠️ tray.rect() 不可用，主窗口保持原位置");
+        return;
+    };
+    let (rx, ry) = pos_xy(&rect.position);
+    let (rw, _rh) = size_wh(&rect.size);
+
+    let monitors = app.available_monitors().unwrap_or_default();
+    let host = monitors.iter().find(|m| {
+        let p = m.position();
+        let s = m.size();
+        let (mx, my) = (p.x as f64, p.y as f64);
+        rx >= mx && rx <= mx + s.width as f64 && ry >= my && ry <= my + s.height as f64
+    });
+    let Some(host) = host else {
+        eprintln!("[m0-tray] ⚠️ 未找到 tray 图标所在屏幕，主窗口保持原位置");
+        return;
+    };
+
+    let scale = host.scale_factor();
+    let (rx, rw) = match rect.position {
+        Position::Physical(_) => (rx, rw),
+        Position::Logical(_) => (rx * scale, rw * scale),
+    };
+
+    let (mw, mh) = match main.outer_size() {
+        Ok(s) => (s.width as f64, s.height as f64),
+        Err(_) => (960.0 * scale, 640.0 * scale),
+    };
+
+    let (mx, my) = {
+        let p = host.position();
+        (p.x as f64, p.y as f64)
+    };
+    let (sw, sh) = {
+        let s = host.size();
+        (s.width as f64, s.height as f64)
+    };
+
+    // 水平居中于图标所在屏幕，垂直居中，边界钳制不越屏
+    let x = (rx + rw / 2.0 - mw / 2.0).max(mx).min(mx + sw - mw);
+    let y = (my + sh / 2.0 - mh / 2.0).max(my);
+
+    eprintln!(
+        "[m0-tray] 主窗口定位: ({x:.0}, {y:.0}) scale {scale}（tray 所在屏幕）"
+    );
+    let _ = main.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
 /// 在 setup 中挂上「面板失焦 → 隐藏」

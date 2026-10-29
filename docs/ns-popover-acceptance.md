@@ -44,9 +44,22 @@
 - [ ] 外接显示器（不同缩放）→ 弹出位置不错位
 - [ ] 全屏 App 内点击 → 可正常弹出（FullScreenAuxiliary）
 - [ ] 右键菜单「打开主窗口」不受影响
+- [ ] 面板右上角「打开主窗口」按钮 → 主窗口出现在**当前 Space**（见 §6）
 
 ## 5. 已知边界
 
 - 锚点窗口仅是几何参照：点击它不响应（`ignoresMouseEvents`），收起时机完全由 Transient 行为接管。
 - 若某系统版本 `tray.rect()` 返回 None（M0 风险清单），popover 初始化失败 → 自动降级旧窗口路径，功能不丢、只是没有原生箭头。
 - webview 搬家后原 panel 窗口永久空置（Tauri 侧仍持有，退出时统一回收），不做动态重建（方案 §7 不做项）。
+
+## 6. 缺陷修复：打开主窗口「没反应」（2026-10-28）
+
+| 项 | 内容 |
+|---|---|
+| 现象 | 面板右上角展开按钮（openMain）点击后主窗口不出现，tray 菜单「打开主窗口」同样受影响 |
+| 根因 | Accessory 应用程序化 `makeKeyAndOrderFront` **不触发 Space 切换**：主窗口 `show()` 返回 Ok、窗口服务器标记 onscreen，但停在启动时的 Space 上，用户当前 Space 看不到任何变化（CGWindowList onscreen=true + 截图无窗口双证） |
+| 修复 1 | setup 时给 main 窗口设 `MoveToActiveSpace + FullScreenAuxiliary`（lib.rs） |
+| 修复 2 | `show_main` 统一入口（tray.rs）：show 前把主窗口居中定位到 tray 图标所在屏幕；面板按钮与 tray 菜单共用 |
+| 修复 3 | 主窗口 `CloseRequested` → prevent_close + hide：红叉不再销毁窗口，杜绝 open_main 永久失效 |
+| 门禁 | cargo check 零警告 · workspace 单测全绿（15+103）· tsc --noEmit 通过 · pnpm build 通过 |
+| 待验证 | 用户真机点击确认（显示器休眠期间无法目测验收） |
