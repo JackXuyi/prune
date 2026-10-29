@@ -2,9 +2,42 @@ import { useState } from "react";
 
 import { formatBytes, formatRelative } from "../lib/format";
 import { useDiskStore } from "../stores/diskStore";
-import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level } from "../types/disk";
+import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type VolumeInfo } from "../types/disk";
 import { RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
+
+/** M4/S2：存储 tab 顶部的卷容量条（已用/总量 + 可回收相当于剩余空间的比例） */
+function VolumeBar({
+  volume,
+  reclaimable,
+}: {
+  volume: VolumeInfo;
+  reclaimable: number;
+}) {
+  const used = Math.max(0, volume.totalBytes - volume.availableBytes);
+  const usedRatio = volume.totalBytes > 0 ? used / volume.totalBytes : 0;
+  const reclaimOfFree =
+    volume.userAvailableBytes > 0 ? reclaimable / volume.userAvailableBytes : 0;
+
+  return (
+    <section className="mt-3 rounded-lg border border-hairline-soft bg-surface-raised/50 p-3">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[11px] font-medium text-ink-dim">卷容量</span>
+        <span className="font-mono text-[11px] tabular-nums text-ink-dim">
+          已用 {formatBytes(used)} / {formatBytes(volume.totalBytes)}
+          <span className="ml-2 text-ink">剩余 {formatBytes(volume.userAvailableBytes)}</span>
+        </span>
+      </div>
+      <Meter ratio={usedRatio} tone="neutral" height={5} className="mt-2" />
+      <p className="mt-1.5 text-[10px] text-ink-faint">
+        可回收 <span className="font-mono tabular-nums text-accent">{formatBytes(reclaimable)}</span>
+        {reclaimOfFree > 0
+          ? ` · 相当于剩余空间的 ${Math.round(reclaimOfFree * 100)}%`
+          : ""}
+      </p>
+    </section>
+  );
+}
 
 /** A4 活跃度分界（与 prune-core STALE_DAYS 对齐）：超过即标灰 */
 const STALE_DAYS = 180;
@@ -82,6 +115,9 @@ export function ReclaimBoard() {
         </button>
       </div>
 
+      {/* M4/S2 存储域分母：可回收的 GB 从此有上下文 */}
+      {report.volume ? <VolumeBar volume={report.volume} reclaimable={report.totals.reclaimable} /> : null}
+
       <LayerBar totals={report.totals} />
 
       {scanning ? (
@@ -96,6 +132,7 @@ export function ReclaimBoard() {
         <div className="mt-3 flex items-center justify-between rounded-lg border border-accent/30 bg-accent/[0.07] px-3 py-2 text-[11px] text-accent">
           <span>
             已移入废纸篓 {lastReclaimed.moved} 项 · {formatBytes(lastReclaimed.bytes)}
+            {lastReclaimed.skipped > 0 ? ` · 跳过 ${lastReclaimed.skipped} 个已消失条目` : ""}
             {lastReclaimed.failed.length > 0 ? ` · 失败 ${lastReclaimed.failed.length} 项` : ""}
           </span>
           <button type="button" onClick={clearReclaimed} className="text-[10px] text-ink-dim hover:text-ink">

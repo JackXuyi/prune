@@ -118,13 +118,13 @@ export function MainWindow() {
           value={tab}
           onChange={setTab}
           items={[
-            { id: "apps", label: "应用内存", hint: "每个应用的绝对内存占用" },
-            { id: "overview", label: "系统概况", hint: "内存压力、swap 与换出受害者" },
-            { id: "disk", label: "可回收", hint: "磁盘可回收空间与清理" },
+            { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
+            { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
+            { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
           ]}
         />
         <span className="text-[10px] text-ink-faint">
-          {tab === "apps" ? "绝对内存 · 含换出" : tab === "overview" ? "系统级读数" : "白名单定点扫描 · 废纸篓可恢复"}
+          {tab === "apps" ? "绝对内存 · 含换出" : tab === "overview" ? "内存域系统级读数" : "存储域 · 白名单定点扫描 · 废纸篓可恢复"}
         </span>
       </div>
 
@@ -333,9 +333,9 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-[15px] font-semibold tracking-tight">系统总览</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight">内存概况</h1>
         <p className="mt-0.5 text-[11px] text-ink-faint">
-          点击左侧家族展开进程，查看 footprint 与换出明细
+          内存域系统级读数 · 点击左侧家族展开进程 · 磁盘读数见「存储」tab
         </p>
       </div>
 
@@ -351,7 +351,7 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
           label="swap 已用"
           value={formatPercent(swapRatio)}
           tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
-          hint={`${formatBytes(swap.used)} / ${formatBytes(swap.total)} · ${swap.fileCount} 个 swapfile`}
+          hint={`${formatBytes(swap.used)} / ${formatBytes(swap.total)} · ${swap.fileCount} 个 swapfile · 占用存储见「存储」tab`}
         />
       </div>
 

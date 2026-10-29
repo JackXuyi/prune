@@ -14,6 +14,10 @@ pub struct SystemMem {
     pub page_size: u64,
     /// Pages free
     pub pages_free: u64,
+    /// Pages inactive（可回收缓存，不算已用）
+    pub pages_inactive: u64,
+    /// Pages speculative（预取缓存，不算已用）
+    pub pages_speculative: u64,
     /// 压缩内存占用的物理页（"Pages occupied by compressor"，旧系统为 "Pages stored in compressor"）
     pub pages_compressor: u64,
     pub swapins_total: u64,
@@ -29,6 +33,19 @@ impl SystemMem {
 
     pub fn pages_free_bytes(&self) -> u64 {
         self.pages_free.saturating_mul(self.page_size)
+    }
+
+    /// 物理内存「已用」（M4/S1）：总量 − 空闲 − 非活跃缓存 − 预取缓存。
+    ///
+    /// 与活动监视器 Memory Used（App + Wired + Compressed）同类近似：
+    /// inactive / speculative 属于随时可回收的缓存，不应计入「已用」。
+    /// vm_stat 拿不到干净的分桶时（字段缺失）按 0 处理，结果只可能偏高，不会虚低。
+    pub fn used_bytes(&self, physical_total: u64) -> u64 {
+        let cache = self
+            .pages_free_bytes()
+            .saturating_add(self.pages_inactive.saturating_mul(self.page_size))
+            .saturating_add(self.pages_speculative.saturating_mul(self.page_size));
+        physical_total.saturating_sub(cache)
     }
 }
 
@@ -79,6 +96,8 @@ pub fn parse_vm_stat(text: &str) -> Result<SystemMem, String> {
     Ok(SystemMem {
         page_size,
         pages_free: map.get("Pages free").copied().unwrap_or(0),
+        pages_inactive: map.get("Pages inactive").copied().unwrap_or(0),
+        pages_speculative: map.get("Pages speculative").copied().unwrap_or(0),
         pages_compressor: compressor,
         swapins_total: map.get("Swapins").copied().unwrap_or(0),
         swapouts_total: map.get("Swapouts").copied().unwrap_or(0),
@@ -170,12 +189,25 @@ Swapouts:                              50939260.
         let m = parse_vm_stat(FIXTURE_16K).unwrap();
         assert_eq!(m.page_size, 16384);
         assert_eq!(m.pages_free, 3789);
+        assert_eq!(m.pages_inactive, 187659);
+        assert_eq!(m.pages_speculative, 1210);
         // 两个 compressor key 并存时取 occupied
         assert_eq!(m.pages_compressor, 401443);
         assert_eq!(m.compressor_bytes(), 401_443 * 16_384);
         assert_eq!(m.pages_free_bytes(), 3789 * 16_384);
         assert_eq!(m.swapins_total, 43_542_528);
         assert_eq!(m.swapouts_total, 50_939_260);
+    }
+
+    #[test]
+    fn used_bytes_excludes_reclaimable_cache() {
+        let m = parse_vm_stat(FIXTURE_16K).unwrap();
+        // fixture 来自 16 GB 机器：total − free − inactive − speculative
+        let total: u64 = 16 * 1024 * 1024 * 1024;
+        let used = m.used_bytes(total);
+        let cache = (3789 + 187659 + 1210) as u64 * 16_384;
+        assert_eq!(used, total - cache);
+        assert!(used > total * 3 / 4, "正常负载下已用应占大头");
     }
 
     #[test]

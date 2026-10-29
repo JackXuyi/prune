@@ -6,9 +6,8 @@ import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf }
 import { openMain } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
-import { LEVEL_META } from "../types/disk";
 import { swappedRatio, type FamilyMem, type MemSnapshot, type ProcMem } from "../types/mem";
-import { ChevronRightIcon, DiskIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
+import { ChevronRightIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge, Meter, PressureDot } from "../components/primitives";
 import { Tabs } from "../components/Tabs";
 
@@ -52,7 +51,7 @@ export function MenuBarPanel() {
           </IconButton>
         </header>
 
-        <DiskHero />
+        <DomainHero />
 
         <div className="flex h-8 shrink-0 items-center justify-between border-b border-hairline-soft px-2.5">
           <Tabs
@@ -81,10 +80,7 @@ export function MenuBarPanel() {
           ) : tab === "apps" ? (
             <AppsSection />
           ) : (
-            <>
-              <MemSection />
-              <DiskSection />
-            </>
+            <MemSection />
           )}
         </div>
 
@@ -161,7 +157,7 @@ function MemSection() {
         </div>
         <Meter ratio={ratio} tone={tone} className="mt-2" />
         <div className="mt-1.5 flex items-center justify-between text-[10px] text-ink-faint">
-          <span>↳ 正在吃掉磁盘 {formatBytes(swap.used)}</span>
+          <span>↳ swapfile 占用 {formatBytes(swap.used)}（主窗口「存储」可查）</span>
           <span>{swap.newToday > 0 ? `+${swap.newToday} 今日` : "今日 +0"}</span>
         </div>
         <div className="mt-1 flex items-center justify-between text-[10px] text-ink-faint">
@@ -253,109 +249,95 @@ function VictimRow({ proc }: { proc: ProcMem }) {
   );
 }
 
-function DiskSection() {
-  const report = useDiskStore((s) => s.report);
-  const scanning = useDiskStore((s) => s.scanning);
-
-  if (!report) {
-    return (
-      <section className="mt-4 border-t border-hairline-soft pt-3">
-        <div className="flex items-center gap-1.5 text-[11px] text-ink-dim">
-          <DiskIcon size={12} />
-          磁盘可回收
-        </div>
-        <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
-          {scanning ? "正在扫描缓存目录…" : "尚未扫描（启动 30 秒后自动扫，也可在主窗口手动触发）"}
-        </p>
-      </section>
-    );
-  }
-
-  const rows = [
-    { level: "l1" as const, label: "跨平台二进制", bytes: report.totals.deadweight },
-    { level: "l2" as const, label: "包管理器缓存", bytes: report.totals.l2 },
-    { level: "l3" as const, label: "项目依赖 / 模拟器", bytes: report.totals.l3 },
-  ];
-
-  return (
-    <section className="mt-4 border-t border-hairline-soft pt-3">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-1.5 text-[11px] text-ink-dim">
-          <DiskIcon size={12} />
-          可回收分层
-        </div>
-        <button
-          type="button"
-          onClick={() => void openMain(undefined, "disk")}
-          className="text-[10px] text-ink-faint transition-colors hover:text-accent"
-        >
-          查看全部 →
-        </button>
-      </div>
-      <ul className="mt-1.5 space-y-1">
-        {rows.map((r) => (
-          <li key={r.level} className="flex items-baseline justify-between text-[11px]">
-            <span className="text-ink-dim">{LEVEL_META[r.level].label} · {r.label}</span>
-            <span className="font-mono tabular-nums text-ink">{formatBytes(r.bytes)}</span>
-          </li>
-        ))}
-      </ul>
-      {report.totals.l4 > 0 ? (
-        <p className="mt-1.5 text-[10px] text-ink-faint">
-          🔴 Docker 等高风险项 {formatBytes(report.totals.l4)} · 只提供命令，不计入主数字
-        </p>
-      ) : null}
-    </section>
-  );
+/** 压力等级的一句话文案（内存域 hero 行用） */
+function pressureLabel(level: MemSnapshot["pressure"]["level"]): string {
+  return level === "critical" ? "压力紧张" : level === "warning" ? "压力偏高" : "压力正常";
 }
 
-/** 首屏主数字：可回收 GB（功能方案 §3.1 —— 主数字是可行动的，不是内存百分比） */
-function DiskHero() {
+/**
+ * 首屏双行分区（M4/S1）：内存域与存储域各占一行，边界清晰、互不混排。
+ * 内存行读 memStore（压力 + 已用/总量），存储行读 diskStore（可回收 + 卷剩余）；
+ * 交换两个域的展示顺序等于换 tab 入口，各自点击直达主窗口对应 tab。
+ */
+function DomainHero() {
+  const snapshot = useMemStore((s) => s.snapshot);
   const report = useDiskStore((s) => s.report);
   const scanning = useDiskStore((s) => s.scanning);
   const progress = useDiskStore((s) => s.progress);
+  const volume = report?.volume ?? null;
+  const used = snapshot?.physicalUsedBytes ?? 0;
+  const total = snapshot?.physicalTotal ?? 0;
   const a1 = report?.groups.find((g) => g.deadweight != null)?.deadweight ?? null;
 
   return (
-    <button
-      type="button"
-      onClick={() => void openMain(undefined, "disk")}
-      className="group shrink-0 border-b border-hairline-soft px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-    >
-      <div className="flex items-baseline justify-between gap-2">
-        <span className="text-[16px] font-semibold tracking-tight text-ink">
-          <span className="mr-1 text-accent">⚡</span>
-          {report ? formatBytes(report.totals.reclaimable) : scanning ? "扫描中…" : "—"}
-          <span className="ml-1 text-[10px] font-normal text-ink-faint">可回收</span>
+    <section className="shrink-0 border-b border-hairline-soft">
+      {/* 内存域：压力点 + 已用/总量 */}
+      <button
+        type="button"
+        onClick={() => void openMain(undefined, "overview")}
+        className="group flex w-full items-center gap-2 px-3.5 py-2 text-left transition-colors hover:bg-white/[0.03]"
+        title="打开内存概况"
+      >
+        <PressureDot level={snapshot?.pressure.level ?? "normal"} />
+        <span className="text-[11px] font-medium text-ink-dim">内存</span>
+        <span className="text-[10px] text-ink-faint">
+          {snapshot ? pressureLabel(snapshot.pressure.level) : "—"}
+        </span>
+        <span className="flex-1" />
+        <span className="font-mono text-[12px] tabular-nums text-ink">
+          {snapshot && used > 0 ? (
+            <>
+              {numOf(used)}
+              <span className="text-ink-faint">
+                {" "}
+                / {numOf(total)} {unitOf(total)}
+              </span>
+            </>
+          ) : (
+            "—"
+          )}
+        </span>
+        <ChevronRightIcon
+          size={12}
+          className="shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100"
+        />
+      </button>
+
+      {/* 存储域：⚡可回收主数字 + 卷剩余 */}
+      <button
+        type="button"
+        onClick={() => void openMain(undefined, "disk")}
+        className="group flex w-full items-center gap-2 border-t border-hairline-soft px-3.5 py-2 text-left transition-colors hover:bg-white/[0.03]"
+        title="打开存储 / 可回收空间"
+      >
+        <span className="text-[11px] font-medium text-ink-dim">
+          <span className="mr-0.5 text-accent">⚡</span>存储
+        </span>
+        <span className="min-w-0 flex-1 truncate text-right">
+          <span className="font-mono text-[13px] font-semibold tabular-nums text-accent">
+            {report ? formatBytes(report.totals.reclaimable) : scanning ? "扫描中…" : "—"}
+          </span>
+          <span className="ml-1 text-[10px] text-ink-faint">
+            可回收
+            {volume ? ` · 剩余 ${formatBytes(volume.userAvailableBytes)}` : ""}
+            {a1 ? ` · 🟢 ${formatBytes(a1.bytes)} 跨平台二进制` : ""}
+          </span>
         </span>
         <ChevronRightIcon
           size={12}
           className="shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5"
         />
-      </div>
-      {a1 ? (
-        <p className="mt-0.5 text-[10px] leading-tight text-ink-faint">
-          🟢 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(a1.bytes)}</span>{" "}
-          跨平台二进制 · 你的 Mac 永远加载不了
-        </p>
-      ) : (
-        <p className="mt-0.5 text-[10px] leading-tight text-ink-faint">
-          {scanning
-            ? progress
-              ? `${progress.done}/${progress.total} 组 · ${progress.phase}`
-              : "正在扫描缓存目录…"
-            : "点击查看可回收空间"}
-        </p>
-      )}
+      </button>
+
       {scanning ? (
-        <div className="mt-1.5 h-0.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
+        <div className="h-0.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
           <div
             className="h-full rounded-full bg-accent transition-[width] duration-300"
             style={{ width: `${progress ? Math.round((progress.done / Math.max(progress.total, 1)) * 100) : 8}%` }}
           />
         </div>
       ) : null}
-    </button>
+    </section>
   );
 }
 

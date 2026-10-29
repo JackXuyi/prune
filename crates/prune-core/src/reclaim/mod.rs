@@ -370,6 +370,7 @@ mod tests {
                 reclaimable: 0,
                 cache_total: 0,
             },
+            volume: None,
         }
     }
 

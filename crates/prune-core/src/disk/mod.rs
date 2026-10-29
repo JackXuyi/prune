@@ -139,6 +139,43 @@ pub struct Totals {
     pub cache_total: u64,
 }
 
+/// 卷容量（M4/S0）：存储域的分母。展示用 `user_available`——
+/// APFS 的 purgeable 空间会让「内核视角可释放」大于「用户可写」，两者分开留字段。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VolumeInfo {
+    /// 卷总容量
+    pub total_bytes: u64,
+    /// 剩余空间（含系统可回收的 purgeable，偏乐观）
+    pub available_bytes: u64,
+    /// 用户视角剩余（statvfs f_bavail，UI 主读数）
+    pub user_available_bytes: u64,
+}
+
+/// 取 `path` 所在卷的容量；statvfs 失败返回 None（调用方降级为无容量上下文）。
+pub fn volume_info(path: &Path) -> Option<VolumeInfo> {
+    #[cfg(unix)]
+    {
+        let c = std::ffi::CString::new(path.to_string_lossy().as_bytes()).ok()?;
+        let mut st: libc::statvfs = unsafe { std::mem::zeroed() };
+        let rc = unsafe { libc::statvfs(c.as_ptr(), &mut st) };
+        if rc != 0 || st.f_frsize == 0 {
+            return None;
+        }
+        let fr = st.f_frsize as u64;
+        Some(VolumeInfo {
+            total_bytes: (st.f_blocks as u64).saturating_mul(fr),
+            available_bytes: (st.f_bfree as u64).saturating_mul(fr),
+            user_available_bytes: (st.f_bavail as u64).saturating_mul(fr),
+        })
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = path;
+        None
+    }
+}
+
 /// 一次扫描的完整结果
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -152,6 +189,9 @@ pub struct DiskReport {
     pub groups: Vec<CacheGroup>,
     pub dup: Option<DupSummary>,
     pub totals: Totals,
+    /// M4/S0：home 所在卷容量（statvfs 失败为 None；旧报告反序列化缺省为 None）
+    #[serde(default)]
+    pub volume: Option<VolumeInfo>,
 }
 
 /// 扫描进度（前端进度条 + 心跳日志）
@@ -717,6 +757,8 @@ pub fn scan_with(
         groups,
         dup,
         totals,
+        // 扫描入口实时取：容量是「现在」的读数，不跟随报告缓存
+        volume: volume_info(home),
     };
     let snapshot = ScanSnapshot {
         taken_at: now_ts(),
@@ -756,6 +798,34 @@ mod tests {
         #[cfg(not(unix))]
         assert_eq!(total, 16384);
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    #[test]
+    fn volume_info_reports_consistent_capacity() {
+        let info = volume_info(&PathBuf::from("/tmp")).expect("statvfs on /tmp should work");
+        assert!(info.total_bytes > 0, "total 必须 > 0");
+        assert!(
+            info.available_bytes <= info.total_bytes,
+            "available ≤ total，实际 available={} total={}",
+            info.available_bytes,
+            info.total_bytes
+        );
+        assert!(
+            info.user_available_bytes <= info.available_bytes,
+            "user_available ≤ available（bavail ≤ bfree）"
+        );
+    }
+
+    #[test]
+    fn old_report_json_without_volume_deserializes_to_none() {
+        // M3 时代落盘的报告没有 volume 字段，必须照常反序列化（serde default）
+        let json = r#"{
+            "scannedAt": 0, "scanElapsedMs": 1, "groups": [], "dup": null,
+            "totals": { "deadweight": 0, "l2": 0, "l3": 0, "l4": 0, "reclaimable": 0, "cacheTotal": 0 }
+        }"#;
+        let report: DiskReport = serde_json::from_str(json).expect("旧报告应可反序列化");
+        assert!(report.volume.is_none());
+        assert!(!report.incremental);
     }
 
     #[test]

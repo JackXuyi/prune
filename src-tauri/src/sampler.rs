@@ -508,6 +508,8 @@ fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
     let system: SystemMem = system::read().unwrap_or(SystemMem {
         page_size: 4096,
         pages_free: 0,
+        pages_inactive: 0,
+        pages_speculative: 0,
         pages_compressor: 0,
         swapins_total: 0,
         swapouts_total: 0,

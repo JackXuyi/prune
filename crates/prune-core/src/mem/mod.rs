@@ -168,6 +168,10 @@ impl FamilyMem {
 pub struct MemSnapshot {
     /// hw.memsize
     pub physical_total: u64,
+    /// 已用 = 总量 − 空闲 − 非活跃缓存 − 预取缓存（近似活动监视器 Memory Used；
+    /// serde default：旧快照反序列化为 0，UI 按「未知」处理）
+    #[serde(default)]
+    pub physical_used_bytes: u64,
     /// 压缩内存占用（vm_stat 的 compressor pages × page size）
     pub compressor_bytes: u64,
     pub pages_free_bytes: u64,
@@ -374,6 +378,7 @@ pub fn build_snapshot(
 ) -> MemSnapshot {
     MemSnapshot {
         physical_total,
+        physical_used_bytes: system.used_bytes(physical_total),
         compressor_bytes: system.compressor_bytes(),
         pages_free_bytes: system.pages_free_bytes(),
         swap,

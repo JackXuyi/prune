@@ -72,6 +72,8 @@ export interface FamilyMem {
 
 export interface MemSnapshot {
   physicalTotal: number;
+  /** 已用 = 总量 − 空闲 − 非活跃 − 预取（M4）；旧快照缺省 undefined，UI 按「未知」处理 */
+  physicalUsedBytes?: number;
   compressorBytes: number;
   pagesFreeBytes: number;
   swap: SwapInfo;

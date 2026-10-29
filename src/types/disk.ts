@@ -78,6 +78,15 @@ export interface Totals {
   cacheTotal: number;
 }
 
+/** 卷容量（M4/S0，statvfs；statvfs 失败时为 null，UI 隐藏容量读数） */
+export interface VolumeInfo {
+  totalBytes: number;
+  /** 剩余（含 purgeable，偏乐观） */
+  availableBytes: number;
+  /** 用户视角剩余（UI 主读数） */
+  userAvailableBytes: number;
+}
+
 export interface DiskReport {
   scannedAt: number;
   scanElapsedMs: number;
@@ -86,6 +95,8 @@ export interface DiskReport {
   groups: CacheGroup[];
   dup: DupSummary | null;
   totals: Totals;
+  /** home 所在卷容量（M4/S0；旧报告缺省为 null） */
+  volume?: VolumeInfo | null;
 }
 
 export interface ScanProgress {
@@ -115,6 +126,8 @@ export interface ReclaimReport {
   moved: number;
   bytes: number;
   failed: { path: string; reason: string }[];
+  /** 校验阶段发现已不存在的条目数（报告过期，自动跳过） */
+  skipped: number;
 }
 
 export const LEVEL_META: Record<Level, { label: string; tone: "accent" | "warn" | "danger" | "neutral" }> = {

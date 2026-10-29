@@ -99,6 +99,7 @@ export function devSnapshot(): MemSnapshot {
   const now = Math.floor(Date.now() / 1000);
   return {
     physicalTotal: 17_179_869_184,
+    physicalUsedBytes: 13_800_000_000,
     compressorBytes: 6.66e9,
     pagesFreeBytes: 62 * 1e6,
     swap: {
