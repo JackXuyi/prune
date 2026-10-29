@@ -63,6 +63,8 @@ pub struct ReclaimReport {
     pub moved: usize,
     pub bytes: u64,
     pub failed: Vec<FailedItem>,
+    /// 校验阶段发现已不存在的条目数（报告过期，直接跳过而非整批拒绝）
+    pub skipped: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -246,6 +248,10 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
 
 /// 执行清理（只走废纸篓）。
 ///
+/// **已不存在的条目直接跳过**（计入 `ReclaimReport::skipped`）：报告是旧快照，
+/// 条目可能已被上轮清理或用户手动删除，「不存在」≠「不在白名单」，不得整批拒绝。
+/// 全部消失时返回 `NothingToDo`。
+///
 /// `allowed` 是**报告派生白名单**（A4/A5 明细路径，由调用方从当前报告的
 /// `groups[].details[].path` 组装）：node_modules 目录不在静态白名单内，
 /// 只能凭「本次报告发现过它」放行，且仍受 `is_report_detail_path` 的硬护栏约束。
@@ -260,10 +266,17 @@ pub fn execute(
         return Err(ReclaimError::NothingToDo);
     }
 
-    // 护栏 1 + 2：先全量校验，有任何一项不合规则整批拒绝（不做「部分执行」）
+    // 护栏 1 + 2：先全量校验，有任何一项不合规则整批拒绝（不做「部分执行」）。
+    // 「路径已不存在」（报告过期：上轮已清理 / 用户手动删除）不算护栏违规，
+    // 直接跳过——它和「在白名单外」是两回事，混在一起会让旧报告整批清不动。
     let mut resolved: Vec<(PathBuf, Level)> = Vec::with_capacity(items.len());
+    let mut vanished = 0usize;
     for it in items {
         let path = PathBuf::from(&it.path);
+        if !path.exists() {
+            vanished += 1;
+            continue;
+        }
         if !whitelist::is_whitelisted(&path, home) && !is_report_detail_path(&path, home, allowed) {
             return Err(ReclaimError::NotWhitelisted(it.path.clone()));
         }
@@ -274,6 +287,11 @@ pub fn execute(
             return Err(ReclaimError::NeedsExplicitConfirm(0));
         }
         resolved.push((path, it.level));
+    }
+
+    // 全部条目都已消失：等价于没有可清理的内容
+    if resolved.is_empty() {
+        return Err(ReclaimError::NothingToDo);
     }
 
     // 护栏 3：体积执行时重算，不信任报告
@@ -307,6 +325,7 @@ pub fn execute(
         moved,
         bytes,
         failed,
+        skipped: vanished,
     })
 }
 
@@ -426,6 +445,61 @@ mod tests {
             "要明确告诉用户只做统计，实际 notes={:?}",
             pv.notes
         );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 报告过期的条目（已消失）应跳过，不得整批拒绝；其余条目正常清理
+    #[test]
+    fn execute_skips_vanished_items() {
+        let home = temp_home("vanished");
+        let cache = home.join("Library/Caches/Yarn/v6");
+        let alive = cache.join("npm-alive-1-integrity");
+        std::fs::create_dir_all(alive.join("nodejs")).unwrap();
+        std::fs::write(alive.join("nodejs/index.js"), vec![b'x'; 64]).unwrap();
+        let gone = cache.join("npm-gone-2-integrity"); // 不创建，模拟报告过期
+        let items = vec![
+            ReclaimItem {
+                path: gone.to_string_lossy().to_string(),
+                label: "已消失".into(),
+                bytes: 1,
+                level: Level::L1,
+            },
+            ReclaimItem {
+                path: alive.to_string_lossy().to_string(),
+                label: "存活".into(),
+                bytes: 4096,
+                level: Level::L1,
+            },
+        ];
+        match execute(&items, &home, true, Limits::default(), &[]) {
+            Ok(r) => {
+                assert_eq!(r.skipped, 1, "消失的条目应计入 skipped");
+                assert_eq!(r.moved, 1);
+                assert!(!alive.exists(), "存活条目应已入废纸篓");
+            }
+            Err(ReclaimError::AllFailed(_)) => {
+                // 临时目录（/var/folders）Finder 拒绝入废纸篓（macOS 限制）：
+                // 本测试的验证点是幽灵路径没有触发 NotWhitelisted——
+                // 错误必须发生在 trash 阶段而不是护栏阶段。
+            }
+            Err(e) => panic!("消失条目应被跳过而非整批拒绝，实际 {e:?}"),
+        }
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 全部条目都已消失 → NothingToDo，而不是误报
+    #[test]
+    fn execute_all_vanished_is_nothing_to_do() {
+        let home = temp_home("all-vanished");
+        let gone = home.join("Library/Caches/Yarn/v6/npm-gone-integrity");
+        let items = vec![ReclaimItem {
+            path: gone.to_string_lossy().to_string(),
+            label: "幽灵".into(),
+            bytes: 1,
+            level: Level::L1,
+        }];
+        let err = execute(&items, &home, true, Limits::default(), &[]).unwrap_err();
+        assert!(matches!(err, ReclaimError::NothingToDo));
         let _ = std::fs::remove_dir_all(&home);
     }
 

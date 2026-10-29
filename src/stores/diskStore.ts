@@ -104,7 +104,7 @@ export const useDiskStore = create<DiskStore>((set, get) => ({
     const preview = get().preview;
     if (!preview || get().busy) return;
     if (!isTauri()) {
-      set({ lastReclaimed: { moved: preview.items.length, bytes: preview.totalBytes, failed: [] }, preview: null });
+      set({ lastReclaimed: { moved: preview.items.length, bytes: preview.totalBytes, failed: [], skipped: 0 }, preview: null });
       return;
     }
     set({ busy: true, error: null });
