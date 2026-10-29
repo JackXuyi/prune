@@ -30,6 +30,11 @@ export function openMain(pid?: number, tab?: "apps" | "overview" | "disk"): Prom
   return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null });
 }
 
+/** 结束进程：默认 SIGTERM（可优雅退出），force=true 时 SIGKILL */
+export function killProcess(pid: number, force: boolean): Promise<void> {
+  return invoke<void>("kill_process", { pid, force });
+}
+
 // ---------------------------------------------------------------- 磁盘（M1）
 
 export function diskReport(): Promise<DiskReport | null> {

@@ -75,6 +75,30 @@ pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>) {
     }
 }
 
+/// 结束进程：默认 SIGTERM（给应用保存数据、优雅退出的机会），`force` 时 SIGKILL。
+/// 护栏：不杀 1 号进程（launchd）与 Prune 自身——误杀任一都会破坏宿主环境。
+#[tauri::command]
+pub fn kill_process(pid: i32, force: bool) -> Result<(), String> {
+    if pid <= 1 {
+        return Err(format!("pid {pid} 是系统关键进程，不允许结束"));
+    }
+    if pid == std::process::id() as i32 {
+        return Err("不能结束 Prune 自身".into());
+    }
+    let sig = if force { libc::SIGKILL } else { libc::SIGTERM };
+    let rc = unsafe { libc::kill(pid, sig) };
+    if rc != 0 {
+        let e = std::io::Error::last_os_error();
+        return Err(match e.kind() {
+            std::io::ErrorKind::PermissionDenied => "没有权限结束该进程".into(),
+            std::io::ErrorKind::NotFound => "进程已退出".into(),
+            _ => format!("结束进程失败: {e}"),
+        });
+    }
+    eprintln!("[ipc] kill pid={pid} sig={}", if force { "SIGKILL" } else { "SIGTERM" });
+    Ok(())
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)

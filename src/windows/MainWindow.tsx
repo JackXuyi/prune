@@ -14,12 +14,15 @@ import {
 import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
 import { Tabs } from "../components/Tabs";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
-import { isTauri } from "../lib/ipc";
+import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
 import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem, type WorkspaceSource } from "../types/mem";
 
 type MainTab = "apps" | "overview" | "disk";
+
+/** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
+type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
 
 /** 工作区归属的置信度说明（UI 必须让用户知道这个路径是怎么来的） */
 function sourceLabel(s: WorkspaceSource): string {
@@ -45,6 +48,12 @@ export function MainWindow() {
   const refreshDisk = useDiskStore((s) => s.refresh);
 
   const [expanded, setExpanded] = useState<string | null>(null);
+  const [killTarget, setKillTarget] = useState<KillTarget | null>(null);
+
+  /** 右键进程行 → 弹「结束进程」菜单（位置取鼠标点） */
+  const openKillMenu = (proc: ProcMem, x: number, y: number) => {
+    setKillTarget({ pid: proc.pid, name: proc.name, mem: formatBytes(totalOf(proc)), x, y });
+  };
 
   // 面板点「可回收」→ 主窗口直接切到对应 tab（open_main 会让 Rust 侧广播 ui://tab）
   useEffect(() => {
@@ -187,6 +196,7 @@ export function MainWindow() {
                       processes={processes}
                       onToggle={() => setExpanded(expanded === f.name ? null : f.name)}
                       onSelect={select}
+                      onKillMenu={openKillMenu}
                     />
                   ))}
                 </ul>
@@ -195,10 +205,16 @@ export function MainWindow() {
           </aside>
 
           <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
-            {selected ? <ProcessInspector proc={selected} /> : <Overview />}
+            {selected ? (
+              <ProcessInspector proc={selected} />
+            ) : (
+              <Overview onKillMenu={openKillMenu} />
+            )}
           </main>
         </div>
       )}
+
+      {killTarget ? <ProcKillMenu target={killTarget} onClose={() => setKillTarget(null)} /> : null}
     </div>
   );
 }
@@ -210,6 +226,7 @@ function FamilyRow({
   processes,
   onToggle,
   onSelect,
+  onKillMenu,
 }: {
   family: FamilyMem;
   open: boolean;
@@ -217,6 +234,7 @@ function FamilyRow({
   processes: ProcMem[];
   onToggle: () => void;
   onSelect: (pid: number | null) => void;
+  onKillMenu: (proc: ProcMem, x: number, y: number) => void;
 }) {
   const total = totalOf(family);
   const ratio = swappedRatio(family);
@@ -271,6 +289,11 @@ function FamilyRow({
                 <button
                   type="button"
                   onClick={() => onSelect(p.pid)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    onKillMenu(p, e.clientX, e.clientY);
+                  }}
+                  title="点击查看明细 · 右键结束进程"
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
                     isActive ? "bg-accent/[0.10] text-ink" : "text-ink-dim hover:bg-white/[0.04]"
                   }`}
@@ -299,7 +322,7 @@ function FamilyRow({
   );
 }
 
-function Overview() {
+function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: number) => void }) {
   const snapshot = useMemStore((s) => s.snapshot);
   if (!snapshot) return null;
 
@@ -371,7 +394,11 @@ function Overview() {
         ) : (
           <ul className="mt-1.5">
             {topSwapped.map((p) => (
-              <VictimRow key={`${p.pid}-${p.startTime}`} proc={p} />
+              <VictimRow
+                key={`${p.pid}-${p.startTime}`}
+                proc={p}
+                onKillMenu={onKillMenu}
+              />
             ))}
           </ul>
         )}
@@ -386,7 +413,13 @@ function Overview() {
   );
 }
 
-function VictimRow({ proc }: { proc: ProcMem }) {
+function VictimRow({
+  proc,
+  onKillMenu,
+}: {
+  proc: ProcMem;
+  onKillMenu: (proc: ProcMem, x: number, y: number) => void;
+}) {
   const select = useMemStore((s) => s.select);
   const ratio = swappedRatio(proc);
   return (
@@ -394,6 +427,11 @@ function VictimRow({ proc }: { proc: ProcMem }) {
       <button
         type="button"
         onClick={() => select(proc.pid)}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onKillMenu(proc, e.clientX, e.clientY);
+        }}
+        title="点击查看明细 · 右键结束进程"
         className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
       >
         <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink">{proc.name}</span>
@@ -539,5 +577,133 @@ function Row({ label, value, mono }: { label: string; value: string; mono?: bool
         {value}
       </dd>
     </div>
+  );
+}
+
+/**
+ * 进程右键菜单：结束进程（SIGTERM）/ 强制结束（SIGKILL）。
+ * 破坏性操作走两步确认——先选项、再确认，防误杀。SIGTERM 给应用优雅退出的机会，
+ * 卡死的进程才需要 SIGKILL。执行成功后清空选中并刷新一轮采样。
+ */
+function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => void }) {
+  const [phase, setPhase] = useState<"idle" | "confirm" | "confirm-force">("idle");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const refresh = useMemStore((s) => s.refresh);
+  const select = useMemStore((s) => s.select);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // 视口内收口，避免贴边弹出被裁掉
+  const x = Math.min(target.x, window.innerWidth - 210);
+  const y = Math.min(target.y, window.innerHeight - 140);
+
+  const run = async (force: boolean) => {
+    setBusy(true);
+    setErr(null);
+    try {
+      await killProcess(target.pid, force);
+      select(null);
+      await refresh();
+      onClose();
+    } catch (e) {
+      setErr(String(e));
+      setBusy(false);
+    }
+  };
+
+  return (
+    <>
+      {/* 全屏透明层：点任意处关闭，同时挡住下层的点击 */}
+      <div className="fixed inset-0 z-40" onClick={onClose} onContextMenu={(e) => { e.preventDefault(); onClose(); }} />
+      <div
+        className="fixed z-50 w-[196px] rounded-lg border border-hairline bg-surface-raised py-1 shadow-2xl shadow-black/50"
+        style={{ left: x, top: y }}
+      >
+        {phase === "idle" ? (
+          <>
+            <MenuItem
+              label="结束进程"
+              hint="SIGTERM · 可优雅退出"
+              onClick={() => setPhase("confirm")}
+            />
+            <MenuItem
+              label="强制结束"
+              hint="SIGKILL · 立即终止"
+              tone="danger"
+              onClick={() => setPhase("confirm-force")}
+            />
+          </>
+        ) : (
+          <div className="px-3 py-1.5">
+            <p className="text-[11px] leading-snug text-ink-dim">
+              {phase === "confirm" ? "结束" : "强制结束"}
+              <span className="mx-1 font-medium text-ink">「{target.name}」</span>
+              <span className="font-mono text-[10px] tabular-nums text-ink-faint">
+                pid {target.pid} · {target.mem}
+              </span>
+              ？
+            </p>
+            <p className="mt-0.5 text-[10px] leading-snug text-ink-faint">
+              {phase === "confirm"
+                ? "发送 SIGTERM，应用可保存数据后退出"
+                : "立即杀死，未保存的数据会丢失"}
+            </p>
+            {err ? <p className="mt-1 text-[10px] leading-snug text-danger">{err}</p> : null}
+            <div className="mt-2 flex gap-1.5">
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void run(phase === "confirm-force")}
+                className="flex-1 rounded-md bg-danger/90 px-2 py-1 text-[10.5px] text-white transition-colors hover:bg-danger disabled:opacity-50"
+              >
+                {busy ? "执行中…" : "确认"}
+              </button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => (err ? onClose() : setPhase("idle"))}
+                className="flex-1 rounded-md border border-hairline px-2 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] hover:text-ink disabled:opacity-50"
+              >
+                {err ? "关闭" : "取消"}
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+    </>
+  );
+}
+
+function MenuItem({
+  label,
+  hint,
+  tone = "default",
+  onClick,
+}: {
+  label: string;
+  hint: string;
+  tone?: "default" | "danger";
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`flex w-full flex-col items-start px-3 py-1.5 text-left transition-colors ${
+        tone === "danger"
+          ? "text-danger hover:bg-danger/[0.08]"
+          : "text-ink hover:bg-white/[0.05]"
+      }`}
+    >
+      <span className="text-[11.5px] leading-tight">{label}</span>
+      <span className="text-[9.5px] leading-tight text-ink-faint">{hint}</span>
+    </button>
   );
 }

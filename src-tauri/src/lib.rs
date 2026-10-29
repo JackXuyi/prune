@@ -38,6 +38,7 @@ pub fn run() {
             commands::mem_history,
             commands::mem_refresh,
             commands::open_main,
+            commands::kill_process,
             commands::disk_report,
             commands::disk_scan,
             commands::reclaim_preview,
