@@ -24,10 +24,7 @@ export function Tabs<T extends string>({
 }) {
   const pad = size === "sm" ? "px-2 py-[3px] text-[11px]" : "px-2.5 py-1 text-[11.5px]";
   return (
-    <div
-      role="tablist"
-      className={`inline-flex items-center gap-0.5 rounded-md bg-white/[0.03] p-0.5 ring-1 ring-white/[0.04] ${className}`}
-    >
+    <div role="tablist" className={`inline-flex items-center gap-0.5 ${className}`}>
       {items.map((it) => {
         const active = it.id === value;
         return (
@@ -38,10 +35,8 @@ export function Tabs<T extends string>({
             aria-selected={active}
             title={it.hint}
             onClick={() => onChange(it.id)}
-            className={`inline-flex items-center gap-1 rounded-[5px] font-medium transition-colors ${pad} ${
-              active
-                ? "bg-surface-overlay text-ink shadow-[0_1px_2px_rgba(0,0,0,0.4)]"
-                : "text-ink-faint hover:text-ink-dim"
+            className={`inline-flex items-center gap-1 rounded-md font-medium transition-colors ${pad} ${
+              active ? "bg-white/[0.08] text-ink" : "text-ink-faint hover:text-ink-dim"
             }`}
           >
             {it.label}

@@ -28,7 +28,7 @@ export function MenuBarPanel() {
   return (
     <div className="flex h-screen flex-col p-2">
       <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-white/[0.07] bg-[#0f1216]/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
-        <header className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline-soft px-3">
+        <header className="flex h-11 shrink-0 items-center gap-2 px-3.5">
           <ScissorsIcon size={14} className="text-accent" />
           <span className="text-[13px] font-semibold tracking-tight text-ink">Prune</span>
           {snapshot ? (
@@ -53,7 +53,7 @@ export function MenuBarPanel() {
 
         <DomainHero />
 
-        <div className="flex h-8 shrink-0 items-center justify-between border-b border-hairline-soft px-2.5">
+        <div className="flex h-9 shrink-0 items-center justify-between px-3.5">
           <Tabs
             size="sm"
             value={tab}
@@ -70,9 +70,9 @@ export function MenuBarPanel() {
           ) : null}
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-3.5 py-3">
+        <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-3">
           {error ? (
-            <div className="rounded-lg border border-danger/30 bg-danger/[0.08] p-3 text-[11px] leading-relaxed text-danger">
+            <div className="rounded-lg bg-danger/[0.08] p-3 text-[11px] leading-relaxed text-danger">
               {error}
             </div>
           ) : !snapshot ? (
@@ -84,7 +84,7 @@ export function MenuBarPanel() {
           )}
         </div>
 
-        <footer className="flex shrink-0 items-center justify-between border-t border-hairline-soft px-3.5 py-2 text-[10px] text-ink-faint">
+        <footer className="flex shrink-0 items-center justify-between px-3.5 pb-2.5 pt-1 text-[10px] text-ink-faint/80">
           <span>上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}</span>
           <span>每 10 秒刷新</span>
         </footer>
@@ -143,7 +143,7 @@ function MemSection() {
         </div>
       </div>
 
-      <div className="mt-2.5 rounded-lg border border-hairline-soft bg-surface-raised/50 p-2.5">
+      <div className="mt-3.5">
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] text-ink-dim">swap 已用</span>
           <span className="font-mono text-[12px] tabular-nums text-ink">
@@ -156,7 +156,7 @@ function MemSection() {
           </span>
         </div>
         <Meter ratio={ratio} tone={tone} className="mt-2" />
-        <div className="mt-1.5 flex items-center justify-between text-[10px] text-ink-faint">
+        <div className="mt-2 flex items-center justify-between text-[10px] text-ink-faint">
           <span>↳ swapfile 占用 {formatBytes(swap.used)}（主窗口「存储」可查）</span>
           <span>{swap.newToday > 0 ? `+${swap.newToday} 今日` : "今日 +0"}</span>
         </div>
@@ -170,7 +170,7 @@ function MemSection() {
         </div>
       </div>
 
-      <div className="mt-3.5 flex items-baseline justify-between">
+      <div className="mt-4 flex items-baseline justify-between border-t border-hairline-soft pt-3">
         <h2 className="text-[11px] font-medium tracking-wide text-ink-dim">换出受害者</h2>
         <span className="text-[10px] text-ink-faint">
           {snapshot.deepAvailable ? "按已换出量 · 点开检视" : "暂无深探数据"}
@@ -178,7 +178,7 @@ function MemSection() {
       </div>
 
       {topSwapped.length === 0 ? (
-        <p className="mt-1.5 rounded-lg border border-dashed border-hairline px-2.5 py-3 text-[11px] text-ink-faint">
+        <p className="mt-2 py-2 text-[11px] leading-relaxed text-ink-faint">
           当前没有明显被换出的进程。
         </p>
       ) : (
@@ -249,11 +249,6 @@ function VictimRow({ proc }: { proc: ProcMem }) {
   );
 }
 
-/** 压力等级的一句话文案（内存域 hero 行用） */
-function pressureLabel(level: MemSnapshot["pressure"]["level"]): string {
-  return level === "critical" ? "压力紧张" : level === "warning" ? "压力偏高" : "压力正常";
-}
-
 /**
  * 首屏双行分区（M4/S1）：内存域与存储域各占一行，边界清晰、互不混排。
  * 内存行读 memStore（压力 + 已用/总量），存储行读 diskStore（可回收 + 卷剩余）；
@@ -270,25 +265,22 @@ function DomainHero() {
   const a1 = report?.groups.find((g) => g.deadweight != null)?.deadweight ?? null;
 
   return (
-    <section className="shrink-0 border-b border-hairline-soft">
+    <section className="shrink-0 border-y border-hairline-soft">
       {/* 内存域：压力点 + 已用/总量 */}
       <button
         type="button"
         onClick={() => void openMain(undefined, "overview")}
-        className="group flex w-full items-center gap-2 px-3.5 py-2 text-left transition-colors hover:bg-white/[0.03]"
+        className="group flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
         title="打开内存概况"
       >
         <PressureDot level={snapshot?.pressure.level ?? "normal"} />
         <span className="text-[11px] font-medium text-ink-dim">内存</span>
-        <span className="text-[10px] text-ink-faint">
-          {snapshot ? pressureLabel(snapshot.pressure.level) : "—"}
-        </span>
         <span className="flex-1" />
-        <span className="font-mono text-[12px] tabular-nums text-ink">
+        <span className="font-mono text-[15px] font-semibold tracking-tight tabular-nums text-ink">
           {snapshot && used > 0 ? (
             <>
               {numOf(used)}
-              <span className="text-ink-faint">
+              <span className="text-[11px] font-normal text-ink-faint">
                 {" "}
                 / {numOf(total)} {unitOf(total)}
               </span>
@@ -307,25 +299,26 @@ function DomainHero() {
       <button
         type="button"
         onClick={() => void openMain(undefined, "disk")}
-        className="group flex w-full items-center gap-2 border-t border-hairline-soft px-3.5 py-2 text-left transition-colors hover:bg-white/[0.03]"
-        title="打开存储 / 可回收空间"
+        className="group flex w-full items-center gap-2.5 border-t border-hairline-soft px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
+        title={
+          a1
+            ? `🟢 ${formatBytes(a1.bytes)} 跨平台二进制 · 你的 Mac 永远加载不了`
+            : "打开存储 / 可回收空间"
+        }
       >
         <span className="text-[11px] font-medium text-ink-dim">
           <span className="mr-0.5 text-accent">⚡</span>存储
         </span>
-        <span className="min-w-0 flex-1 truncate text-right">
-          <span className="font-mono text-[13px] font-semibold tabular-nums text-accent">
-            {report ? formatBytes(report.totals.reclaimable) : scanning ? "扫描中…" : "—"}
-          </span>
-          <span className="ml-1 text-[10px] text-ink-faint">
-            可回收
-            {volume ? ` · 剩余 ${formatBytes(volume.userAvailableBytes)}` : ""}
-            {a1 ? ` · 🟢 ${formatBytes(a1.bytes)} 跨平台二进制` : ""}
-          </span>
+        <span className="flex-1" />
+        <span className="font-mono text-[15px] font-semibold tracking-tight tabular-nums text-accent">
+          {report ? formatBytes(report.totals.reclaimable) : scanning ? "扫描中…" : "—"}
+        </span>
+        <span className="text-[10px] text-ink-faint">
+          可回收{volume ? ` · 剩余 ${formatBytes(volume.userAvailableBytes)}` : ""}
         </span>
         <ChevronRightIcon
           size={12}
-          className="shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5"
+          className="shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100"
         />
       </button>
 

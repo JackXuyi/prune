@@ -20,7 +20,7 @@ function VolumeBar({
     volume.userAvailableBytes > 0 ? reclaimable / volume.userAvailableBytes : 0;
 
   return (
-    <section className="mt-3 rounded-lg border border-hairline-soft bg-surface-raised/50 p-3">
+    <section className="mt-4 border-b border-hairline-soft pb-4">
       <div className="flex items-baseline justify-between">
         <span className="text-[11px] font-medium text-ink-dim">卷容量</span>
         <span className="font-mono text-[11px] tabular-nums text-ink-dim">
@@ -62,7 +62,7 @@ export function ReclaimBoard() {
 
   if (error) {
     return (
-      <div className="m-4 rounded-lg border border-danger/30 bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
+      <div className="m-4 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
         {error}
       </div>
     );
@@ -81,7 +81,7 @@ export function ReclaimBoard() {
           type="button"
           onClick={() => void refresh()}
           disabled={scanning}
-          className="mt-3 flex items-center gap-1.5 rounded-md border border-hairline bg-surface-raised px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-surface-overlay hover:text-ink disabled:opacity-50"
+          className="mt-3 flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
         >
           <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
           {scanning ? "扫描中" : "立即扫描"}
@@ -96,11 +96,12 @@ export function ReclaimBoard() {
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">
+          <h1 className="text-[22px] font-semibold leading-tight tracking-tight">
             <span className="mr-1 text-accent">⚡</span>
-            {formatBytes(report.totals.reclaimable)} 可回收
+            {formatBytes(report.totals.reclaimable)}
+            <span className="ml-1.5 text-[13px] font-normal text-ink-faint">可回收</span>
           </h1>
-          <p className="mt-0.5 text-[11px] text-ink-faint">
+          <p className="mt-1 text-[11px] text-ink-faint">
             L1 零后悔 + L2 可再生 + L3 需判断 · Docker 等 L4 高风险项不计入
           </p>
         </div>
@@ -108,7 +109,7 @@ export function ReclaimBoard() {
           type="button"
           onClick={() => void refresh()}
           disabled={scanning}
-          className="mt-0.5 flex shrink-0 items-center gap-1.5 rounded-md border border-hairline bg-surface-raised px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-surface-overlay hover:text-ink disabled:opacity-50"
+          className="mt-1 flex shrink-0 items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
         >
           <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
           {scanning ? "扫描中" : "重新扫描"}
@@ -121,7 +122,7 @@ export function ReclaimBoard() {
       <LayerBar totals={report.totals} />
 
       {scanning ? (
-        <div className="mt-3 rounded-lg border border-hairline bg-surface-raised/40 px-3 py-2 text-[10px] text-ink-faint">
+        <div className="mt-3 text-[10px] text-ink-faint">
           {progress
             ? `扫描中 ${progress.done}/${progress.total} · ${progress.phase} · 已统计 ${formatBytes(progress.bytesSoFar)}`
             : "扫描中…"}
@@ -129,7 +130,7 @@ export function ReclaimBoard() {
       ) : null}
 
       {lastReclaimed ? (
-        <div className="mt-3 flex items-center justify-between rounded-lg border border-accent/30 bg-accent/[0.07] px-3 py-2 text-[11px] text-accent">
+        <div className="mt-3 flex items-center justify-between rounded-lg bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
           <span>
             已移入废纸篓 {lastReclaimed.moved} 项 · {formatBytes(lastReclaimed.bytes)}
             {lastReclaimed.skipped > 0 ? ` · 跳过 ${lastReclaimed.skipped} 个已消失条目` : ""}
@@ -144,7 +145,7 @@ export function ReclaimBoard() {
       {a1?.deadweight ? (
         <DeadweightCard group={a1} dw={a1.deadweight} />
       ) : (
-        <section className="mt-4 rounded-xl border border-hairline bg-surface-raised/30 p-3.5">
+        <section className="mt-4">
           <h2 className="text-[12px] font-medium text-ink-dim">跨平台二进制 · 未发现</h2>
           <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">
             Yarn v6 缓存不存在，或其中只有本机架构的包——本地单架构安装时这是正常状态。
@@ -153,7 +154,7 @@ export function ReclaimBoard() {
       )}
 
       {report.dup ? (
-        <section className="mt-4 rounded-xl border border-warn/25 bg-warn/[0.05] p-3.5">
+        <section className="mt-4 rounded-xl bg-warn/[0.06] p-3.5">
           <div className="flex items-baseline justify-between">
             <h2 className="text-[12px] font-medium text-ink">
               同一批依赖存了 {report.dup.managers.length} 份
@@ -167,7 +168,7 @@ export function ReclaimBoard() {
             {report.dup.managers.map(([name, bytes]) => (
               <span
                 key={name}
-                className="rounded border border-hairline bg-surface-raised px-1.5 py-0.5 text-[10px] text-ink-dim"
+                className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-ink-dim"
               >
                 {name} <span className="font-mono tabular-nums">{formatBytes(bytes)}</span>
               </span>
@@ -209,17 +210,18 @@ function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: nu
   const max = Math.max(...rows.map((r) => r.bytes), 1);
 
   return (
-    <div className="mt-3 grid grid-cols-2 gap-2">
+    <div className="mt-4 space-y-2.5 border-b border-hairline-soft pb-4">
       {rows.map((r) => {
         const meta = LEVEL_META[r.level];
         return (
-          <div key={r.level} className="rounded-lg border border-hairline bg-surface-raised/40 px-3 py-2">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[11px] text-ink-dim">{meta.label} · {r.label}</span>
-              <span className="font-mono text-[12px] tabular-nums text-ink">{formatBytes(r.bytes)}</span>
-            </div>
-            <Meter ratio={r.bytes / max} tone={meta.tone} height={4} className="mt-1.5" />
-            <p className="mt-1 text-[10px] text-ink-faint">{r.hint}</p>
+          <div key={r.level} className="flex items-center gap-3" title={r.hint}>
+            <span className="w-28 shrink-0 truncate text-[11px] text-ink-dim">
+              {meta.label} · {r.label}
+            </span>
+            <Meter ratio={r.bytes / max} tone={meta.tone} height={4} className="min-w-0 flex-1" />
+            <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
+              {formatBytes(r.bytes)}
+            </span>
           </div>
         );
       })}
@@ -232,7 +234,7 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
   const busy = useDiskStore((s) => s.busy);
 
   return (
-    <section className="mt-4 rounded-xl border border-accent/30 bg-accent/[0.055] p-3.5">
+    <section className="mt-4 rounded-xl bg-accent/[0.06] p-3.5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-[13px] font-semibold tracking-tight text-ink">
@@ -248,7 +250,7 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
           type="button"
           onClick={() => void loadPreview([group.key])}
           disabled={busy}
-          className="shrink-0 rounded-md border border-accent/40 bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
+          className="shrink-0 rounded-md bg-accent/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
         >
           预览清理
         </button>
@@ -322,7 +324,7 @@ function GroupRow({ group }: { group: CacheGroup }) {
             type="button"
             onClick={() => void loadPreview([group.key])}
             disabled={busy || group.totalBytes === 0}
-            className="w-16 shrink-0 rounded border border-hairline px-1.5 py-1 text-[10px] text-ink-dim transition-colors hover:border-accent/40 hover:text-accent disabled:opacity-40"
+            className="w-16 shrink-0 rounded bg-white/[0.05] px-1.5 py-1 text-[10px] text-ink-dim transition-colors hover:bg-accent/[0.12] hover:text-accent disabled:opacity-40"
           >
             预览
           </button>
@@ -431,7 +433,7 @@ function PreviewPanel() {
             <button
               type="button"
               onClick={clear}
-              className="rounded-md border border-hairline px-2.5 py-1.5 text-[11px] text-ink-dim hover:text-ink"
+              className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
             >
               取消
             </button>
@@ -439,7 +441,7 @@ function PreviewPanel() {
               type="button"
               disabled={busy || blocked || preview.items.length === 0}
               onClick={() => void execute(confirmed)}
-              className="rounded-md border border-accent/40 bg-accent/15 px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
+              className="rounded-md bg-accent/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
             >
               {busy ? "执行中…" : "移入废纸篓"}
             </button>

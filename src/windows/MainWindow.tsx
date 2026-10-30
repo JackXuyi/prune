@@ -76,11 +76,21 @@ export function MainWindow() {
 
   return (
     <div className="flex h-screen flex-col bg-surface text-ink">
-      <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-hairline px-4">
-        <ScissorsIcon size={15} className="text-accent" />
-        <span className="text-[13px] font-semibold tracking-tight">Prune</span>
-        <span className="text-hairline">/</span>
-        <span className="text-[12px] text-ink-dim">{tab === "disk" ? "可回收空间" : "内存真相"}</span>
+      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-hairline px-5">
+        <div className="flex items-center gap-2">
+          <ScissorsIcon size={15} className="text-accent" />
+          <span className="text-[13px] font-semibold tracking-tight">Prune</span>
+        </div>
+        <Tabs
+          value={tab}
+          onChange={setTab}
+          items={[
+            { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
+            { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
+            { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
+          ]}
+        />
+        <div className="flex-1" />
         {snapshot ? (
           snapshot.deepAvailable ? (
             <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
@@ -92,7 +102,6 @@ export function MainWindow() {
             </Badge>
           )
         ) : null}
-        <div className="flex-1" />
         <span className="text-[10px] text-ink-faint">
           上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}
         </span>
@@ -100,7 +109,7 @@ export function MainWindow() {
           type="button"
           onClick={() => void (tab === "disk" ? refreshDisk() : refresh())}
           disabled={tab === "disk" ? diskScanning : refreshing}
-          className="flex items-center gap-1.5 rounded-md border border-hairline bg-surface-raised px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:border-hairline hover:bg-surface-overlay hover:text-ink disabled:opacity-50"
+          className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
         >
           <RefreshIcon size={12} className={(tab === "disk" ? diskScanning : refreshing) ? "animate-spin" : ""} />
           {tab === "disk"
@@ -113,23 +122,8 @@ export function MainWindow() {
         </button>
       </header>
 
-      <div className="flex h-9 shrink-0 items-center justify-between border-b border-hairline px-4">
-        <Tabs
-          value={tab}
-          onChange={setTab}
-          items={[
-            { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
-            { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
-            { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
-          ]}
-        />
-        <span className="text-[10px] text-ink-faint">
-          {tab === "apps" ? "绝对内存 · 含换出" : tab === "overview" ? "内存域系统级读数" : "存储域 · 白名单定点扫描 · 废纸篓可恢复"}
-        </span>
-      </div>
-
       {error ? (
-        <div className="m-4 rounded-lg border border-danger/30 bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
+        <div className="mx-5 mt-3 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
           {error}
         </div>
       ) : null}
@@ -339,7 +333,7 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-2.5">
+      <div className="grid grid-cols-2 gap-x-8 gap-y-5 border-b border-hairline-soft pb-5">
         <Stat label="物理内存" value={numOf(physicalTotal)} unit={unitOf(physicalTotal)} />
         <Stat
           label="压缩内存"
@@ -355,17 +349,20 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
         />
       </div>
 
-      <section className="rounded-lg border border-hairline-soft bg-surface-raised/50 p-3">
+      <section className="border-b border-hairline-soft pb-5">
         <div className="flex items-center justify-between">
           <span className="text-[11px] text-ink-dim">内存压力</span>
           <PressureDot level={pressure.level} />
         </div>
-        <div className="mt-2 flex items-center justify-between text-[10px] text-ink-faint">
+        <div className="mt-2.5 flex items-center justify-between text-[10px] text-ink-faint">
           <span>
             内核原始值 <span className="font-mono text-ink-dim">{pressure.raw}</span>（1 正常 / 2 警告 / 4 紧张）
           </span>
+          <span>
+            今日新增 swapfile <span className="font-mono text-ink-dim">+{swap.newToday}</span>
+          </span>
         </div>
-        <div className="mt-2.5 grid grid-cols-2 gap-2 text-[10px] text-ink-faint">
+        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-ink-faint">
           <span>
             换入速率{" "}
             <span className="font-mono tabular-nums text-ink-dim">
@@ -379,18 +376,15 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
             </span>
           </span>
         </div>
-        <div className="mt-1.5 text-[10px] text-ink-faint">
-          今日新增 swapfile <span className="font-mono text-ink-dim">+{swap.newToday}</span>
-        </div>
       </section>
 
-      <section className="rounded-lg border border-hairline-soft bg-surface-raised/50 p-3">
+      <section>
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] text-ink-dim">换出受害者</span>
           <span className="text-[10px] text-ink-faint">存活但大部分在磁盘上</span>
         </div>
         {topSwapped.length === 0 ? (
-          <p className="mt-2 text-[11px] text-ink-faint">当前没有明显被换出的进程。</p>
+          <p className="mt-2 py-1 text-[11px] text-ink-faint">当前没有明显被换出的进程。</p>
         ) : (
           <ul className="mt-1.5">
             {topSwapped.map((p) => (
@@ -405,7 +399,7 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
       </section>
 
       {!snapshot.deepAvailable ? (
-        <p className="rounded-lg border border-warn/25 bg-warn/[0.06] px-3 py-2 text-[11px] leading-relaxed text-warn">
+        <p className="mt-4 rounded-lg bg-warn/[0.07] px-3 py-2 text-[11px] leading-relaxed text-warn">
           深探不可用：当前全部为 RSS 口径（不含换出量）。请确认 /usr/bin/footprint 可执行。
         </p>
       ) : null}
@@ -481,13 +475,13 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
         )}
       </div>
 
-      <section className="rounded-lg border border-hairline-soft bg-surface-raised/50 p-3.5">
+      <section className="border-b border-hairline-soft pb-4">
         <div className="mb-3 flex items-baseline justify-between">
           <span className="text-[11px] font-medium text-ink-dim">内存构成</span>
           <span className="text-[10px] text-ink-faint">同量纲对照</span>
         </div>
 
-        <div className="space-y-3">
+        <div className="space-y-3.5">
           <CompareBar
             label="footprint（含换出）"
             value={footprint == null ? "未深探" : formatBytes(footprint)}
@@ -511,7 +505,7 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
         </div>
       </section>
 
-      <section className="rounded-lg border border-hairline-soft bg-surface-raised/50 p-3.5">
+      <section className="border-b border-hairline-soft pb-4">
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] font-medium text-ink-dim">
             {seriesKey === "footprint" ? "footprint 走势" : "RSS 走势"}
@@ -536,7 +530,7 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
 
       {leak ? <LeakEvidence item={leak} /> : null}
 
-      <section className="rounded-lg border border-hairline-soft bg-surface-raised/50 p-3.5">
+      <section>
         <div className="mb-2 text-[11px] font-medium text-ink-dim">进程信息</div>
         <dl className="space-y-1.5 text-[11px]">
           <Row label="可执行文件" value={proc.exe ?? "不可读"} mono />
@@ -557,7 +551,7 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
           />
         </dl>
         {snapshot?.deepAvailable === false ? (
-          <p className="mt-2.5 rounded border border-warn/25 bg-warn/[0.06] px-2 py-1.5 text-[10px] leading-relaxed text-warn">
+          <p className="mt-2.5 rounded bg-warn/[0.07] px-2 py-1.5 text-[10px] leading-relaxed text-warn">
             深探不可用，当前为 RSS 口径（不含换出量）。
           </p>
         ) : null}

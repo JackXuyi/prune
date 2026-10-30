@@ -5,11 +5,11 @@ import type { PressureLevel } from "../types/mem";
 export type Tone = "accent" | "warn" | "danger" | "info" | "neutral";
 
 const badgeTone: Record<Tone, string> = {
-  accent: "border-accent/30 bg-accent/10 text-accent",
-  warn: "border-warn/30 bg-warn/10 text-warn",
-  danger: "border-danger/30 bg-danger/10 text-danger",
-  info: "border-info/30 bg-info/10 text-info",
-  neutral: "border-hairline bg-white/[0.03] text-ink-dim",
+  accent: "bg-accent/[0.12] text-accent",
+  warn: "bg-warn/[0.12] text-warn",
+  danger: "bg-danger/[0.12] text-danger",
+  info: "bg-info/[0.12] text-info",
+  neutral: "bg-white/[0.06] text-ink-dim",
 };
 
 const barTone: Record<Tone, string> = {
@@ -20,7 +20,7 @@ const barTone: Record<Tone, string> = {
   neutral: "bg-ink-faint",
 };
 
-/** 小徽标：用于口径标注、占比、状态 */
+/** 小徽标：用于口径标注、占比、状态。无边框，只有一层淡底色 */
 export function Badge({
   tone = "neutral",
   title,
@@ -33,7 +33,7 @@ export function Badge({
   return (
     <span
       title={title}
-      className={`inline-flex shrink-0 items-center gap-1 rounded-[5px] border px-1.5 py-[1px] text-[10px] leading-4 font-medium ${badgeTone[tone]}`}
+      className={`inline-flex shrink-0 items-center gap-1 rounded-full px-2 py-[1.5px] text-[10px] leading-4 font-medium ${badgeTone[tone]}`}
     >
       {children}
     </span>
@@ -55,7 +55,7 @@ export function Meter({
   const pct = Math.max(0, Math.min(1, Number.isFinite(ratio) ? ratio : 0)) * 100;
   return (
     <div
-      className={`w-full overflow-hidden rounded-full bg-white/[0.06] ${className}`}
+      className={`w-full overflow-hidden rounded-full bg-white/[0.05] ${className}`}
       style={{ height }}
     >
       <div
@@ -80,12 +80,12 @@ export function PressureDot({ level }: { level: PressureLevel }) {
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={`size-1.5 rounded-full ${meta.dot}`} />
-      <span className={`text-xs font-medium ${meta.text}`}>{meta.label}</span>
+      <span className={`text-[11px] font-medium ${meta.text}`}>{meta.label}</span>
     </span>
   );
 }
 
-/** 指标块：主数值 + 单位 + 说明 */
+/** 指标块：主数值 + 单位 + 说明。无卡片边框，靠排版与留白分组 */
 export function Stat({
   label,
   value,
@@ -108,15 +108,15 @@ export function Stat({
           ? "text-accent"
           : "text-ink";
   return (
-    <div className="rounded-lg border border-hairline-soft bg-surface-raised/60 px-3 py-2.5">
-      <div className="text-[11px] text-ink-faint">{label}</div>
-      <div className="mt-1 flex items-baseline gap-1">
-        <span className={`font-mono text-lg leading-none tabular-nums ${valueTone}`}>
+    <div>
+      <div className="text-[10px] tracking-wide text-ink-faint">{label}</div>
+      <div className="mt-1.5 flex items-baseline gap-1">
+        <span className={`font-mono text-[19px] leading-none tabular-nums ${valueTone}`}>
           {value}
         </span>
         {unit ? <span className="text-[11px] text-ink-faint">{unit}</span> : null}
       </div>
-      {hint ? <div className="mt-1 text-[10px] text-ink-faint">{hint}</div> : null}
+      {hint ? <div className="mt-1.5 text-[10px] leading-snug text-ink-faint">{hint}</div> : null}
     </div>
   );
 }
@@ -141,7 +141,7 @@ export function CompareBar({
         <span className="text-[11px] text-ink-dim">{label}</span>
         <span className="font-mono text-xs tabular-nums text-ink">{value}</span>
       </div>
-      <Meter ratio={ratio} tone={tone} height={5} className="mt-1.5" />
+      <Meter ratio={ratio} tone={tone} height={4} className="mt-1.5" />
       {sub ? <div className="mt-1 text-[10px] text-ink-faint">{sub}</div> : null}
     </div>
   );
