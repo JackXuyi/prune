@@ -1,0 +1,830 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Prune · 页面样式稿 v2</title>
+<style>
+  :root {
+    /* ---- 应用内 token（对应 src/index.css @theme） ---- */
+    --surface: #0e1114;
+    --surface-raised: #14181d;
+    --surface-overlay: #191e24;
+    --hairline: #242a32;
+    --hairline-soft: #1c2128;
+    --ink: #e8ebee;
+    --ink-dim: #99a1aa;
+    --ink-faint: #656d77;
+    --accent: #34d399;
+    --warn: #f5b74a;
+    --danger: #f0705f;
+    --info: #6aa9ff;
+    --mono: ui-monospace, "SF Mono", Menlo, monospace;
+    /* ---- 样式稿页面壳（浅色，与 IDE 主题一致） ---- */
+    --page-bg: #f5f6f8;
+    --page-ink: #16181d;
+    --page-dim: #5d6470;
+    --page-faint: #8b929c;
+    --page-line: #e4e7ec;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--page-bg);
+    color: var(--page-ink);
+    font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  .page { max-width: 1180px; margin: 0 auto; padding: 48px 40px 96px; }
+
+  /* ---------- 页头 ---------- */
+  .doc-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap; }
+  .doc-eyebrow { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--page-faint); }
+  .doc-title { margin: 10px 0 0; font-size: 30px; font-weight: 650; letter-spacing: -.02em; }
+  .doc-sub { margin: 10px 0 0; max-width: 620px; font-size: 13.5px; line-height: 1.7; color: var(--page-dim); }
+  .doc-meta { font-size: 11.5px; color: var(--page-faint); text-align: right; line-height: 1.9; }
+  .rule { height: 1px; background: var(--page-line); margin: 32px 0; }
+
+  /* ---------- 章节 ---------- */
+  section.block { margin-top: 44px; }
+  .sec-head { display: flex; align-items: baseline; gap: 12px; margin-bottom: 6px; }
+  .sec-no { font-size: 11px; font-family: var(--mono); color: var(--page-faint); }
+  .sec-title { font-size: 15px; font-weight: 620; letter-spacing: -.01em; }
+  .sec-note { font-size: 12px; color: var(--page-dim); line-height: 1.75; max-width: 760px; margin: 6px 0 0; }
+
+  /* ---------- tokens ---------- */
+  .token-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr)); gap: 10px; margin-top: 18px; }
+  .token { border: 1px solid var(--page-line); background: #fff; border-radius: 10px; overflow: hidden; }
+  .token .chip { height: 44px; }
+  .token .meta { padding: 8px 10px 9px; }
+  .token .name { font-size: 11px; font-weight: 560; }
+  .token .val { font-family: var(--mono); font-size: 10px; color: var(--page-faint); margin-top: 2px; }
+  .scale { display: flex; flex-wrap: wrap; align-items: baseline; gap: 18px; margin-top: 16px; padding: 16px 18px; background: #fff; border: 1px solid var(--page-line); border-radius: 10px; }
+  .scale span { color: var(--page-dim); font-family: var(--mono); }
+  .scale b { color: var(--page-ink); font-weight: 600; }
+
+  /* ---------- mock 外框 ---------- */
+  .mock-row { display: flex; gap: 40px; align-items: flex-start; flex-wrap: wrap; margin-top: 20px; }
+  .mock-col { display: flex; flex-direction: column; gap: 12px; }
+  .mock-cap { font-size: 11px; color: var(--page-faint); letter-spacing: .02em; }
+  .mock-cap b { color: var(--page-dim); font-weight: 560; }
+
+  /* ================= 应用通用 ================= */
+  .app {
+    color: var(--ink);
+    background: var(--surface);
+    position: relative;
+    font-feature-settings: "tnum";
+  }
+  .num { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .dim { color: var(--ink-dim); }
+  .faint { color: var(--ink-faint); }
+
+  /* ---------- 面板 380×560 ---------- */
+  .panel-shell {
+    width: 380px; height: 560px;
+    padding: 8px;
+    background: transparent;
+    border-radius: 18px;
+  }
+  .panel {
+    width: 364px; height: 544px;
+    border-radius: 14px;
+    border: 1px solid rgba(255, 255, 255, .07);
+    background: rgba(15, 18, 22, .97);
+    box-shadow: 0 18px 50px -12px rgba(0, 0, 0, .8);
+    display: flex; flex-direction: column; overflow: hidden;
+  }
+  .panel header { height: 44px; display: flex; align-items: center; gap: 8px; padding: 0 14px; flex: none; }
+  .brand { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+  .scissors { color: var(--accent); font-size: 13px; line-height: 1; }
+  .badge {
+    font-size: 10px; font-weight: 500; line-height: 16px;
+    padding: 1px 8px; border-radius: 999px;
+    background: rgba(52, 211, 153, .12); color: var(--accent);
+  }
+  .badge.warn { background: rgba(245, 183, 74, .12); color: var(--warn); }
+  .spacer { flex: 1; }
+  .icon-btn {
+    width: 24px; height: 24px; display: grid; place-items: center;
+    border-radius: 6px; color: var(--ink-faint); font-size: 12px;
+  }
+  .icon-btn:hover { background: rgba(255, 255, 255, .06); color: var(--ink); }
+
+  /* hero 双行 */
+  .hero { border-top: 1px solid var(--hairline-soft); border-bottom: 1px solid var(--hairline-soft); flex: none; }
+  .hero-row { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+  .hero-row + .hero-row { border-top: 1px solid var(--hairline-soft); }
+  .hero-label { font-size: 11px; font-weight: 500; color: var(--ink-dim); }
+  .hero-value { font-family: var(--mono); font-size: 15px; font-weight: 600; letter-spacing: -.01em; color: var(--ink); }
+  .hero-value small { font-size: 11px; font-weight: 400; color: var(--ink-faint); }
+  .hero-value.accent { color: var(--accent); }
+  .hero-side { font-size: 10px; color: var(--ink-faint); }
+  .dot { width: 6px; height: 6px; border-radius: 99px; display: inline-block; }
+  .dot.ok { background: var(--accent); }
+  .dot.warn { background: var(--warn); }
+  .chev { color: var(--ink-faint); font-size: 11px; opacity: 0; }
+  .hero-row:hover .chev { opacity: 1; }
+
+  /* tabs */
+  .tabs { height: 36px; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; flex: none; }
+  .tab-list { display: inline-flex; gap: 2px; }
+  .tab {
+    font-size: 11px; font-weight: 500; padding: 3px 8px; border-radius: 6px;
+    color: var(--ink-faint); cursor: pointer; user-select: none;
+  }
+  .tab:hover { color: var(--ink-dim); }
+  .tab.on { background: rgba(255, 255, 255, .08); color: var(--ink); }
+  .tab-side { font-size: 10px; color: var(--ink-faint); }
+
+  .panel-body { flex: 1; overflow: hidden; padding: 0 14px 12px; }
+
+  /* 应用列表（compact） */
+  .app-row { padding: 6px; border-radius: 6px; cursor: pointer; }
+  .app-row:hover { background: rgba(255, 255, 255, .045); }
+  .app-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+  .app-name { font-size: 12px; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .app-val { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .app-meter-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+  .meter { height: 3px; border-radius: 99px; background: rgba(255, 255, 255, .05); flex: 1; overflow: hidden; }
+  .meter > i { display: block; height: 100%; border-radius: 99px; background: var(--accent); }
+  .meter.neutral > i { background: var(--ink-faint); }
+  .meter.warn > i { background: var(--warn); }
+  .app-meta { font-size: 10px; color: var(--ink-faint); flex: none; }
+  .leak { font-size: 10px; color: var(--warn); margin-left: 6px; }
+
+  /* 概况（面板） */
+  .kv { display: flex; align-items: baseline; justify-content: space-between; }
+  .kv .k { font-size: 11px; color: var(--ink-dim); }
+  .kv .v { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+  .kv .v small { font-size: 11px; color: var(--ink-faint); }
+  .tiny { font-size: 10px; color: var(--ink-faint); }
+  .hair-top { border-top: 1px solid var(--hairline-soft); margin-top: 16px; padding-top: 12px; }
+  .panel-sub { font-size: 11px; font-weight: 500; color: var(--ink-dim); }
+  .victim { display: flex; align-items: center; gap: 8px; padding: 5px 0; }
+  .victim .n { flex: 1; font-size: 11.5px; color: var(--ink); }
+  .victim .s { font-family: var(--mono); font-size: 11px; color: var(--warn); }
+  .victim .p { width: 44px; text-align: right; font-size: 10px; color: var(--ink-faint); }
+
+  .panel footer {
+    flex: none; display: flex; justify-content: space-between;
+    padding: 4px 14px 10px; font-size: 10px; color: rgba(101, 109, 119, .8);
+  }
+
+  /* ---------- 主窗口 960×640 ---------- */
+  .main {
+    width: 960px; height: 640px;
+    border-radius: 10px; overflow: hidden;
+    border: 1px solid var(--hairline);
+    box-shadow: 0 24px 60px -20px rgba(0, 0, 0, .55);
+    display: flex; flex-direction: column;
+  }
+  .main header {
+    height: 48px; flex: none; display: flex; align-items: center; gap: 16px;
+    padding: 0 20px; border-bottom: 1px solid var(--hairline);
+  }
+  .main header .brand { font-size: 13px; }
+  .main .tabs { height: auto; padding: 0; flex: 1; justify-content: flex-start; }
+  .main .tab { font-size: 11.5px; padding: 4px 10px; }
+  .ghost-btn {
+    font-size: 11px; color: var(--ink-dim);
+    background: rgba(255, 255, 255, .05); padding: 6px 10px; border-radius: 6px;
+    display: inline-flex; align-items: center; gap: 6px;
+  }
+  .ghost-btn:hover { background: rgba(255, 255, 255, .09); color: var(--ink); }
+  .main-body { flex: 1; overflow: hidden; display: flex; }
+
+  /* apps tab */
+  .apps-view { flex: 1; padding: 18px 20px; overflow: hidden; }
+  .view-head { display: flex; align-items: flex-end; justify-content: space-between; gap: 16px; }
+  .h1 { margin: 0; font-size: 15px; font-weight: 600; letter-spacing: -.01em; }
+  .lede { margin: 4px 0 0; font-size: 11px; color: var(--ink-faint); }
+  .cols { display: grid; grid-template-columns: 26px minmax(0, 1fr) 112px 86px; gap: 10px; align-items: center; }
+  .list-head {
+    display: grid; grid-template-columns: 26px minmax(0, 1fr) 112px 86px; gap: 10px;
+    padding: 6px 8px 8px; font-size: 10px; color: var(--ink-faint);
+    border-bottom: 1px solid var(--hairline-soft); margin-top: 16px;
+  }
+  .big-row { padding: 8px; border-radius: 6px; }
+  .big-row:hover { background: rgba(255, 255, 255, .04); }
+  .rank { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+  .big-name { font-size: 13px; color: var(--ink); }
+  .big-meta { margin-top: 2px; font-size: 10px; color: var(--ink-faint); }
+  .big-val { text-align: right; font-family: var(--mono); font-size: 13px; color: var(--ink); }
+  .row-meter { height: 4px; }
+
+  /* overview tab */
+  .ov { flex: 1; display: flex; overflow: hidden; }
+  .aside {
+    width: 350px; flex: none; border-right: 1px solid var(--hairline);
+    background: #0c0f12; display: flex; flex-direction: column; overflow: hidden;
+  }
+  .aside-head { height: 40px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 14px; }
+  .aside-list { flex: 1; overflow: hidden; padding: 6px; }
+  .fam { padding: 8px; border-radius: 6px; }
+  .fam:hover { background: rgba(255, 255, 255, .04); }
+  .fam-line { display: flex; align-items: center; gap: 6px; }
+  .fam-name { flex: 1; font-size: 12.5px; color: var(--ink); }
+  .fam-val { font-family: var(--mono); font-size: 12px; color: var(--ink); text-align: right; }
+  .fam-meta { font-size: 10px; color: var(--ink-faint); margin-top: 2px; }
+  .sub-list { margin: 4px 0 4px 14px; border-left: 1px solid var(--hairline-soft); padding-left: 6px; }
+  .sub-row { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; }
+  .sub-row.on { background: rgba(52, 211, 153, .10); }
+  .sub-row .t { flex: 1; font-size: 11.5px; color: var(--ink-dim); }
+  .sub-row .m { font-family: var(--mono); font-size: 10px; color: var(--ink-faint); }
+  .inspector { flex: 1; padding: 18px 20px; overflow: hidden; }
+  .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px 32px; padding-bottom: 20px; border-bottom: 1px solid var(--hairline-soft); }
+  .stat-k { font-size: 10px; color: var(--ink-faint); }
+  .stat-v { margin-top: 6px; font-family: var(--mono); font-size: 19px; color: var(--ink); line-height: 1; }
+  .stat-v small { font-size: 11px; color: var(--ink-faint); }
+  .stat-h { margin-top: 6px; font-size: 10px; color: var(--ink-faint); line-height: 1.5; }
+  .sect { padding: 18px 0; border-bottom: 1px solid var(--hairline-soft); }
+  .sect:last-child { border-bottom: 0; }
+  .sect-head { display: flex; align-items: baseline; justify-content: space-between; }
+  .sect-title { font-size: 11px; color: var(--ink-dim); }
+  .sect-note { font-size: 10px; color: var(--ink-faint); }
+  .cmp { margin-top: 12px; }
+  .cmp-line { display: flex; align-items: baseline; justify-content: space-between; }
+  .cmp-label { font-size: 11px; color: var(--ink-dim); }
+  .cmp-val { font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+  .cmp-sub { margin-top: 4px; font-size: 10px; color: var(--ink-faint); }
+
+  /* disk tab */
+  .disk { flex: 1; padding: 18px 20px; overflow: hidden; }
+  .disk-h1 { margin: 0; font-size: 22px; font-weight: 600; letter-spacing: -.02em; line-height: 1.25; }
+  .disk-h1 small { font-size: 13px; font-weight: 400; color: var(--ink-faint); margin-left: 6px; }
+  .vol { margin-top: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--hairline-soft); }
+  .layer { margin-top: 16px; padding-bottom: 16px; border-bottom: 1px solid var(--hairline-soft); display: grid; gap: 10px; }
+  .layer-row { display: flex; align-items: center; gap: 12px; }
+  .layer-label { width: 128px; flex: none; font-size: 11px; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .layer-meter { flex: 1; height: 4px; }
+  .layer-val { width: 64px; flex: none; text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+  .dw { margin-top: 16px; border-radius: 12px; background: rgba(52, 211, 153, .06); padding: 14px; }
+  .dw-h { font-size: 13px; font-weight: 600; letter-spacing: -.01em; }
+  .dw-p { margin: 3px 0 0; font-size: 10.5px; color: var(--ink-faint); }
+  .dw-platforms { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 24px; margin-top: 10px; }
+  .dw-platforms div { display: flex; justify-content: space-between; font-size: 10.5px; color: var(--ink-dim); }
+  .primary-btn {
+    font-size: 11px; font-weight: 500; color: var(--accent);
+    background: rgba(52, 211, 153, .14); padding: 6px 10px; border-radius: 6px; white-space: nowrap;
+  }
+  .primary-btn:hover { background: rgba(52, 211, 153, .25); }
+  .group-row { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-radius: 6px; }
+  .group-row:hover { background: rgba(255, 255, 255, .03); }
+  .group-name { font-size: 11.5px; color: var(--ink); }
+  .group-root { font-size: 10px; color: var(--ink-faint); margin-top: 2px; }
+  .pill { font-size: 10px; padding: 1px 7px; border-radius: 999px; }
+  .pill.l1 { background: rgba(52, 211, 153, .12); color: var(--accent); }
+  .pill.l2 { background: rgba(106, 169, 255, .12); color: var(--info); }
+  .pill.l3 { background: rgba(245, 183, 74, .12); color: var(--warn); }
+  .pill.l4 { background: rgba(240, 112, 95, .12); color: var(--danger); }
+  .group-val { width: 64px; text-align: right; font-family: var(--mono); font-size: 11.5px; color: var(--ink); }
+  .mini-btn { font-size: 10px; color: var(--ink-dim); background: rgba(255, 255, 255, .05); padding: 4px 8px; border-radius: 5px; }
+
+  /* ---------- 规范说明表 ---------- */
+  .spec-table { width: 100%; border-collapse: collapse; margin-top: 16px; background: #fff; border: 1px solid var(--page-line); border-radius: 10px; overflow: hidden; }
+  .spec-table th, .spec-table td { text-align: left; padding: 10px 14px; font-size: 12px; border-bottom: 1px solid var(--page-line); vertical-align: top; }
+  .spec-table th { font-size: 11px; font-weight: 600; color: var(--page-faint); letter-spacing: .04em; text-transform: uppercase; background: #fafbfc; }
+  .spec-table tr:last-child td { border-bottom: 0; }
+  .spec-table td:first-child { font-weight: 560; white-space: nowrap; }
+  .spec-table code { font-family: var(--mono); font-size: 11px; background: #f2f4f7; padding: 1px 5px; border-radius: 4px; }
+  .swap-list { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+  .swap-item { display: flex; gap: 12px; align-items: flex-start; }
+  .swap-no { font-family: var(--mono); font-size: 11px; color: var(--page-faint); padding-top: 2px; }
+  .swap-txt { font-size: 12.5px; color: var(--page-dim); line-height: 1.7; }
+  .swap-txt b { color: var(--page-ink); font-weight: 560; }
+</style>
+</head>
+<body>
+<div class="page">
+
+  <!-- ================= 页头 ================= -->
+  <div class="doc-head">
+    <div>
+      <div class="doc-eyebrow">Prune · Interface Style</div>
+      <h1 class="doc-title">页面样式稿 v2 · 深色精修</h1>
+      <p class="doc-sub">
+        目标：在保持信息密度的前提下做减法。用留白与 hairline 分组替代边框卡片，
+        把每屏唯一的主数字放大，chrome 收敛到一行，颜色只保留 ink 三阶 + 一个功能色。
+      </p>
+    </div>
+    <div class="doc-meta">
+      面板 380 × 560<br />
+      主窗口 960 × 640<br />
+      2026-10-30
+    </div>
+  </div>
+
+  <div class="rule"></div>
+
+  <!-- ================= 1. 设计原则 ================= -->
+  <section class="block">
+    <div class="sec-head"><span class="sec-no">01</span><span class="sec-title">三条原则</span></div>
+    <div class="swap-list">
+      <div class="swap-item"><span class="swap-no">A</span><div class="swap-txt"><b>一屏一个主数字。</b>面板首屏是「内存已用 / 总量」与「可回收 GB」两行；存储页是 22px 的可回收总量。其余读数一律降级为副行，不与之争抢。</div></div>
+      <div class="swap-item"><span class="swap-no">B</span><div class="swap-txt"><b>线只画一条，卡片不再套卡片。</b>分组用 <code style="font-family:var(--mono);font-size:11px;color:var(--page-dim)">1px hairline</code> 与 16–20px 留白表达；只有「需要临时高亮的结果条」（清理完成、泄漏命中）才允许一层次淡底色。</div></div>
+      <div class="swap-item"><span class="swap-no">C</span><div class="swap-txt"><b>颜色是状态，不是装饰。</b>正文只用 ink / ink-dim / ink-faint；accent 只给可行动的数值；warn 与 danger 只在异常时出现，正常态全屏看不到暖色。</div></div>
+    </div>
+  </section>
+
+  <!-- ================= 2. Token ================= -->
+  <section class="block">
+    <div class="sec-head"><span class="sec-no">02</span><span class="sec-title">颜色与字阶</span></div>
+    <p class="sec-note">与 <code>src/index.css</code> 中的 <code>@theme</code> 一一对应，组件里不写魔法色值。</p>
+
+    <div class="token-grid">
+      <div class="token"><div class="chip" style="background:#0e1114"></div><div class="meta"><div class="name">surface</div><div class="val">#0e1114</div></div></div>
+      <div class="token"><div class="chip" style="background:#14181d"></div><div class="meta"><div class="name">surface-raised</div><div class="val">#14181d</div></div></div>
+      <div class="token"><div class="chip" style="background:#242a32"></div><div class="meta"><div class="name">hairline</div><div class="val">#242a32</div></div></div>
+      <div class="token"><div class="chip" style="background:#1c2128"></div><div class="meta"><div class="name">hairline-soft</div><div class="val">#1c2128</div></div></div>
+      <div class="token"><div class="chip" style="background:#e8ebee"></div><div class="meta"><div class="name">ink</div><div class="val">#e8ebee</div></div></div>
+      <div class="token"><div class="chip" style="background:#99a1aa"></div><div class="meta"><div class="name">ink-dim</div><div class="val">#99a1aa</div></div></div>
+      <div class="token"><div class="chip" style="background:#656d77"></div><div class="meta"><div class="name">ink-faint</div><div class="val">#656d77</div></div></div>
+      <div class="token"><div class="chip" style="background:#34d399"></div><div class="meta"><div class="name">accent</div><div class="val">#34d399</div></div></div>
+      <div class="token"><div class="chip" style="background:#f5b74a"></div><div class="meta"><div class="name">warn</div><div class="val">#f5b74a</div></div></div>
+      <div class="token"><div class="chip" style="background:#f0705f"></div><div class="meta"><div class="name">danger</div><div class="val">#f0705f</div></div></div>
+    </div>
+
+    <div class="scale">
+      <span><b style="font-size:22px">45.0 GB</b>&nbsp; 22</span>
+      <span><b style="font-size:19px">16.0 GB</b>&nbsp; 19</span>
+      <span><b style="font-size:15px">Prune 主数字</b>&nbsp; 15</span>
+      <span><b style="font-size:13px">区块标题</b>&nbsp; 13</span>
+      <span><b style="font-size:11.5px">正文 / 行标题</b>&nbsp; 11.5</span>
+      <span><b style="font-size:11px">次级说明</b>&nbsp; 11</span>
+      <span><b style="font-size:10px">注释 / 口径</b>&nbsp; 10</span>
+      <span style="color:var(--page-faint)">数字一律 <code style="font-family:var(--mono);background:#f2f4f7;padding:1px 5px;border-radius:4px;font-size:10.5px">font-mono + tabular-nums</code></span>
+    </div>
+  </section>
+
+  <!-- ================= 3. 菜单栏面板 ================= -->
+  <section class="block">
+    <div class="sec-head"><span class="sec-no">03</span><span class="sec-title">菜单栏面板 · 双行 hero</span></div>
+    <p class="sec-note">
+      内存域与存储域各占一行，行本身即入口（点击直达主窗口对应 tab）。
+      行内只留「标签 + 主数字 + 一句归因」，其余口径说明全部退到 tooltip。
+    </p>
+
+    <div class="mock-row">
+      <!-- 应用 tab -->
+      <div class="mock-col">
+        <div class="panel-shell">
+          <div class="panel app">
+            <header>
+              <span class="scissors">✂</span>
+              <span class="brand">Prune</span>
+              <span class="badge">footprint</span>
+              <span class="spacer"></span>
+              <span class="icon-btn">⟳</span>
+              <span class="icon-btn">⤢</span>
+            </header>
+
+            <div class="hero">
+              <div class="hero-row">
+                <span class="dot ok"></span>
+                <span class="hero-label">内存</span>
+                <span class="spacer"></span>
+                <span class="hero-value">12.4 <small>/ 16 GB</small></span>
+                <span class="chev">›</span>
+              </div>
+              <div class="hero-row">
+                <span class="hero-label">⚡ 存储</span>
+                <span class="spacer"></span>
+                <span class="hero-value accent">45.0 GB</span>
+                <span class="hero-side">可回收 · 剩余 78 GB</span>
+                <span class="chev">›</span>
+              </div>
+            </div>
+
+            <div class="tabs">
+              <div class="tab-list">
+                <span class="tab on">应用</span>
+                <span class="tab">概况</span>
+              </div>
+              <span class="tab-side">10 个应用 · 9 个已深探</span>
+            </div>
+
+            <div class="panel-body">
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Cursor</span><span class="app-val">8.42 GB</span></div>
+                <div class="app-meter-row"><span class="meter"><i style="width:100%"></i></span><span class="app-meta">14 进程</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Google Chrome<span class="leak">疑似泄漏</span></span><span class="app-val">5.18 GB</span></div>
+                <div class="app-meter-row"><span class="meter warn"><i style="width:62%"></i></span><span class="app-meta">22 进程 · ≈</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Docker</span><span class="app-val">3.04 GB</span></div>
+                <div class="app-meter-row"><span class="meter neutral"><i style="width:36%"></i></span><span class="app-meta">7 进程 · RSS</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">微信</span><span class="app-val">2.31 GB</span></div>
+                <div class="app-meter-row"><span class="meter"><i style="width:27%"></i></span><span class="app-meta">5 进程</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Xcode</span><span class="app-val">1.42 GB</span></div>
+                <div class="app-meter-row"><span class="meter"><i style="width:17%"></i></span><span class="app-meta">9 进程</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Figma</span><span class="app-val">902 MB</span></div>
+                <div class="app-meter-row"><span class="meter neutral"><i style="width:10%"></i></span><span class="app-meta">4 进程 · RSS</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Slack</span><span class="app-val">764 MB</span></div>
+                <div class="app-meter-row"><span class="meter neutral"><i style="width:9%"></i></span><span class="app-meta">6 进程 · RSS</span></div>
+              </div>
+              <div class="app-row">
+                <div class="app-line"><span class="app-name">Notion</span><span class="app-val">512 MB</span></div>
+                <div class="app-meter-row"><span class="meter neutral"><i style="width:6%"></i></span><span class="app-meta">3 进程 · RSS</span></div>
+              </div>
+            </div>
+
+            <footer><span>上次深探 2 min 前</span><span>每 10 秒刷新</span></footer>
+          </div>
+        </div>
+        <div class="mock-cap"><b>应用 tab</b> — 每行「名称 + 主数字」一行，占用条退成 3px 细线</div>
+      </div>
+
+      <!-- 概况 tab -->
+      <div class="mock-col">
+        <div class="panel-shell">
+          <div class="panel app">
+            <header>
+              <span class="scissors">✂</span>
+              <span class="brand">Prune</span>
+              <span class="badge">footprint</span>
+              <span class="spacer"></span>
+              <span class="icon-btn">⟳</span>
+              <span class="icon-btn">⤢</span>
+            </header>
+
+            <div class="hero">
+              <div class="hero-row">
+                <span class="dot warn"></span>
+                <span class="hero-label">内存</span>
+                <span class="spacer"></span>
+                <span class="hero-value">13.8 <small>/ 16 GB</small></span>
+                <span class="chev">›</span>
+              </div>
+              <div class="hero-row">
+                <span class="hero-label">⚡ 存储</span>
+                <span class="spacer"></span>
+                <span class="hero-value accent">45.0 GB</span>
+                <span class="hero-side">可回收 · 剩余 78 GB</span>
+                <span class="chev">›</span>
+              </div>
+            </div>
+
+            <div class="tabs">
+              <div class="tab-list">
+                <span class="tab">应用</span>
+                <span class="tab on">概况</span>
+              </div>
+              <span class="tab-side">swap 40%</span>
+            </div>
+
+            <div class="panel-body">
+              <div class="kv">
+                <span class="k">内存压力 <span class="dot warn" style="margin:0 4px 0 6px"></span><span style="color:var(--warn);font-size:11px">警告</span></span>
+                <span class="tiny">压缩 <span class="num" style="color:var(--ink-dim)">3.9 GB</span></span>
+              </div>
+
+              <div style="margin-top:14px">
+                <div class="kv">
+                  <span class="k">swap 已用</span>
+                  <span class="v">3.2 <small>/ 8.0 GB</small> <span style="color:var(--ink-dim);margin-left:6px">40%</span></span>
+                </div>
+                <div class="meter" style="margin-top:8px;height:6px"><i style="width:40%"></i></div>
+                <div class="kv" style="margin-top:8px"><span class="tiny">↳ swapfile 占用 3.2 GB（主窗口「存储」可查）</span><span class="tiny">+2 今日</span></div>
+                <div class="kv" style="margin-top:4px"><span class="tiny">颠簸 in <span class="num">0.0</span>/s</span><span class="tiny">out <span class="num">1.2</span>/s</span></div>
+              </div>
+
+              <div class="hair-top">
+                <div class="kv"><span class="panel-sub">换出受害者</span><span class="tiny">按已换出量 · 点开检视</span></div>
+                <div style="margin-top:6px">
+                  <div class="victim"><span class="n">Google Chrome Helper</span><span class="s">1.64 GB</span><span class="p">72%</span></div>
+                  <div class="victim"><span class="n">Cursor Helper (Renderer)</span><span class="s">912 MB</span><span class="p">58%</span></div>
+                  <div class="victim"><span class="n">Slack Helper</span><span class="s">486 MB</span><span class="p">64%</span></div>
+                  <div class="victim"><span class="n">Notion Helper</span><span class="s">221 MB</span><span class="p">43%</span></div>
+                </div>
+              </div>
+            </div>
+
+            <footer><span>上次深探 2 min 前</span><span>每 10 秒刷新</span></footer>
+          </div>
+        </div>
+        <div class="mock-cap"><b>概况 tab</b> — 只有内存域；存储读数不再混入，swap 仅作两域接口</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 4. 主窗口 ================= -->
+  <section class="block">
+    <div class="sec-head"><span class="sec-no">04</span><span class="sec-title">主窗口 · 单行 chrome</span></div>
+    <p class="sec-note">
+      header 与 tab 合并为 48px 一行，删掉面包屑与 tab 行右侧冗余说明——页面自己的 h1 已经承担了标题职责。
+      点下面三个 tab 可切换样式。
+    </p>
+
+    <div class="mock-row">
+      <div class="mock-col">
+        <div class="main app">
+          <header>
+            <span class="scissors">✂</span>
+            <span class="brand">Prune</span>
+            <div class="tabs">
+              <div class="tab-list" id="mtabs">
+                <span class="tab on" data-view="apps">内存 · 应用</span>
+                <span class="tab" data-view="overview">内存 · 概况</span>
+                <span class="tab" data-view="disk">存储</span>
+              </div>
+            </div>
+            <span class="badge">footprint 口径</span>
+            <span class="tiny">上次深探 2 min 前</span>
+            <span class="ghost-btn">⟳ 刷新</span>
+          </header>
+
+          <!-- apps -->
+          <div class="main-body" id="view-apps">
+            <div class="apps-view">
+              <div class="view-head">
+                <div>
+                  <h2 class="h1">每个应用占用的绝对内存</h2>
+                  <p class="lede">footprint 口径（含被换出到磁盘的部分）· 按总量降序 · 点击查看进程明细</p>
+                </div>
+                <span class="tiny">10 个应用 · 9 个已深探</span>
+              </div>
+
+              <div class="list-head"><span>#</span><span>应用</span><span>相对占用</span><span style="text-align:right">总量</span></div>
+
+              <div class="big-row cols">
+                <span class="rank">01</span>
+                <span><span class="big-name">Cursor</span><span class="big-meta">14 个进程 · 精确 · 3 个项目 · 22% 在磁盘</span></span>
+                <span class="meter row-meter"><i style="width:100%"></i></span>
+                <span class="big-val">8.42 GB</span>
+              </div>
+              <div class="big-row cols">
+                <span class="rank">02</span>
+                <span><span class="big-name">Google Chrome<span class="leak">疑似泄漏 +612 MB</span></span><span class="big-meta">22 个进程 · 深探 18/22 · ≈ 下界</span></span>
+                <span class="meter warn row-meter"><i style="width:62%"></i></span>
+                <span class="big-val">≈ 5.18 GB</span>
+              </div>
+              <div class="big-row cols">
+                <span class="rank">03</span>
+                <span><span class="big-name">Docker</span><span class="big-meta">7 个进程 · RSS 口径</span></span>
+                <span class="meter neutral row-meter"><i style="width:36%"></i></span>
+                <span class="big-val">3.04 GB</span>
+              </div>
+              <div class="big-row cols">
+                <span class="rank">04</span>
+                <span><span class="big-name">微信</span><span class="big-meta">5 个进程 · 精确 · 31% 在磁盘</span></span>
+                <span class="meter row-meter"><i style="width:27%"></i></span>
+                <span class="big-val">2.31 GB</span>
+              </div>
+              <div class="big-row cols">
+                <span class="rank">05</span>
+                <span><span class="big-name">Xcode</span><span class="big-meta">9 个进程 · 精确</span></span>
+                <span class="meter row-meter"><i style="width:17%"></i></span>
+                <span class="big-val">1.42 GB</span>
+              </div>
+              <div class="big-row cols">
+                <span class="rank">06</span>
+                <span><span class="big-name">Figma</span><span class="big-meta">4 个进程 · RSS 口径</span></span>
+                <span class="meter neutral row-meter"><i style="width:10%"></i></span>
+                <span class="big-val">902 MB</span>
+              </div>
+              <div class="big-row cols">
+                <span class="rank">07</span>
+                <span><span class="big-name">Slack</span><span class="big-meta">6 个进程 · RSS 口径</span></span>
+                <span class="meter neutral row-meter"><i style="width:9%"></i></span>
+                <span class="big-val">764 MB</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- overview -->
+          <div class="main-body ov" id="view-overview" style="display:none">
+            <aside>
+              <div class="aside-head">
+                <span class="panel-sub">进程家族</span>
+                <span class="tiny">10 个 · 按总量降序</span>
+              </div>
+              <div class="aside-list">
+                <div class="fam">
+                  <div class="fam-line"><span class="faint" style="font-size:10px">▾</span><span class="fam-name">Cursor</span><span class="fam-val">8.42 GB</span></div>
+                  <div class="fam-meta" style="margin-left:18px">14 个进程 · 3 个项目 · 22% 在磁盘</div>
+                  <div class="sub-list">
+                    <div class="sub-row on"><span class="t">Cursor Helper (Renderer)</span><span class="m">2.14 GB</span></div>
+                    <div class="sub-row"><span class="t">Cursor Helper (GPU)</span><span class="m">986 MB</span></div>
+                    <div class="sub-row"><span class="t">Cursor Helper</span><span class="m">412 MB</span></div>
+                  </div>
+                </div>
+                <div class="fam">
+                  <div class="fam-line"><span class="faint" style="font-size:10px">▸</span><span class="fam-name">Google Chrome</span><span class="fam-val">≈ 5.18 GB</span></div>
+                  <div class="fam-meta" style="margin-left:18px">22 个进程 · ≈ · 68% 在磁盘</div>
+                </div>
+                <div class="fam">
+                  <div class="fam-line"><span class="faint" style="font-size:10px">▸</span><span class="fam-name">Docker</span><span class="fam-val">3.04 GB</span></div>
+                  <div class="fam-meta" style="margin-left:18px">7 个进程 · RSS</div>
+                </div>
+                <div class="fam">
+                  <div class="fam-line"><span class="faint" style="font-size:10px">▸</span><span class="fam-name">微信</span><span class="fam-val">2.31 GB</span></div>
+                  <div class="fam-meta" style="margin-left:18px">5 个进程 · 31% 在磁盘</div>
+                </div>
+                <div class="fam">
+                  <div class="fam-line"><span class="faint" style="font-size:10px">▸</span><span class="fam-name">Xcode</span><span class="fam-val">1.42 GB</span></div>
+                  <div class="fam-meta" style="margin-left:18px">9 个进程</div>
+                </div>
+              </div>
+            </aside>
+
+            <div class="inspector">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+                <div>
+                  <h2 class="h1">Cursor Helper (Renderer)</h2>
+                  <p class="lede">Cursor · pid 42188 · ppid 42102</p>
+                </div>
+                <span class="badge">footprint 口径</span>
+              </div>
+
+              <div class="sect" style="margin-top:16px">
+                <div class="sect-head"><span class="sect-title">内存构成</span><span class="sect-note">同量纲对照</span></div>
+                <div class="cmp">
+                  <div class="cmp-line"><span class="cmp-label">footprint（含换出）</span><span class="cmp-val">2.14 GB</span></div>
+                  <div class="meter" style="margin-top:6px;height:4px"><i style="width:100%"></i></div>
+                  <div class="cmp-sub">占该应用总量的 25%</div>
+                </div>
+                <div class="cmp" style="margin-top:12px">
+                  <div class="cmp-line"><span class="cmp-label">RSS（物理常驻）</span><span class="cmp-val">1.68 GB</span></div>
+                  <div class="meter neutral" style="margin-top:6px;height:4px"><i style="width:78%"></i></div>
+                  <div class="cmp-sub">占 footprint 的 78.5%</div>
+                </div>
+                <div class="cmp" style="margin-top:12px">
+                  <div class="cmp-line"><span class="cmp-label">已换出到磁盘</span><span class="cmp-val">460 MB</span></div>
+                  <div class="meter warn" style="margin-top:6px;height:4px"><i style="width:21%"></i></div>
+                  <div class="cmp-sub">占 footprint 的 21.5%</div>
+                </div>
+              </div>
+
+              <div class="sect">
+                <div class="sect-head"><span class="sect-title">footprint 走势</span><span class="sect-note">最近 4 小时 · 5 min 采样</span></div>
+                <svg width="100%" height="56" style="margin-top:10px;display:block" viewBox="0 0 480 56" preserveAspectRatio="none">
+                  <polyline fill="none" stroke="#34d399" stroke-width="1.5" stroke-linejoin="round"
+                    points="0,42 24,40 48,44 72,38 96,36 120,39 144,33 168,30 192,34 216,28 240,26 264,30 288,24 312,22 336,26 360,20 384,18 408,22 432,16 456,14 480,17" />
+                </svg>
+                <div class="kv" style="margin-top:6px"><span class="tiny">低 <span class="num" style="color:var(--ink-dim)">1.62 GB</span></span><span class="tiny">21 个点</span><span class="tiny">高 <span class="num" style="color:var(--ink-dim)">2.14 GB</span></span></div>
+              </div>
+
+              <div class="sect">
+                <div class="sect-title" style="margin-bottom:8px">进程信息</div>
+                <div class="kv" style="padding:3px 0"><span class="tiny" style="width:84px;flex:none">可执行文件</span><span class="tiny num" style="color:var(--ink-dim);flex:1;text-align:right;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">/Applications/Cursor.app/…/Cursor Helper</span></div>
+                <div class="kv" style="padding:3px 0"><span class="tiny" style="width:84px;flex:none">工作区</span><span class="tiny num" style="color:var(--ink-dim);flex:1;text-align:right">~/Desktop/git/prune</span></div>
+                <div class="kv" style="padding:3px 0"><span class="tiny" style="width:84px;flex:none">读数来源</span><span class="tiny num" style="color:var(--ink-dim);flex:1;text-align:right">/usr/bin/footprint --swapped</span></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- disk -->
+          <div class="main-body" id="view-disk" style="display:none">
+            <div class="disk">
+              <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:16px">
+                <div>
+                  <h2 class="disk-h1"><span style="color:var(--accent)">⚡</span> 45.0 GB<small>可回收</small></h2>
+                  <p class="lede">L1 零后悔 + L2 可再生 + L3 需判断 · Docker 等 L4 高风险项不计入</p>
+                </div>
+                <span class="ghost-btn" style="margin-top:4px">⟳ 重新扫描</span>
+              </div>
+
+              <div class="vol">
+                <div class="kv">
+                  <span class="sect-title">卷容量</span>
+                  <span class="tiny">已用 <span class="num" style="color:var(--ink-dim)">512 GB</span> / 1 TB <span class="num" style="color:var(--ink);margin-left:8px">剩余 78 GB</span></span>
+                </div>
+                <div class="meter" style="margin-top:8px;height:5px"><i class="dim" style="width:87%;background:var(--ink-faint)"></i></div>
+                <div class="tiny" style="margin-top:6px">可回收 <span class="num" style="color:var(--accent)">45.0 GB</span> · 相当于剩余空间的 58%</div>
+              </div>
+
+              <div class="layer">
+                <div class="layer-row"><span class="layer-label">L1 · 跨平台二进制</span><span class="meter layer-meter"><i style="width:100%"></i></span><span class="layer-val">21.4 GB</span></div>
+                <div class="layer-row"><span class="layer-label">L2 · 包管理器等缓存</span><span class="meter layer-meter"><i style="width:70%;background:var(--info)"></i></span><span class="layer-val">15.1 GB</span></div>
+                <div class="layer-row"><span class="layer-label">L3 · 项目依赖 / 模拟器</span><span class="meter layer-meter"><i style="width:39%;background:var(--warn)"></i></span><span class="layer-val">8.5 GB</span></div>
+                <div class="layer-row"><span class="layer-label">L4 · Docker 等高风险</span><span class="meter layer-meter"><i style="width:3%;background:var(--danger)"></i></span><span class="layer-val">680 MB</span></div>
+              </div>
+
+              <div class="dw">
+                <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
+                  <div>
+                    <div class="dw-h">🟢 21.4 GB · 你的 Mac 永远加载不了</div>
+                    <p class="dw-p">Yarn v6 缓存 · 1,284 个跨平台二进制包 · 浪费比 3.8 : 1 · 本机可用 5.6 GB</p>
+                  </div>
+                  <span class="primary-btn">预览清理</span>
+                </div>
+                <div class="dw-platforms">
+                  <div><span style="color:var(--ink-dim)">darwin-x64</span><span class="num">11.2 GB · 642 个</span></div>
+                  <div><span style="color:var(--ink-dim)">linux-x64</span><span class="num">6.8 GB · 402 个</span></div>
+                  <div><span style="color:var(--ink-dim)">linux-arm64</span><span class="num">2.6 GB · 178 个</span></div>
+                  <div><span style="color:var(--ink-dim)">win32-x64</span><span class="num">840 MB · 62 个</span></div>
+                </div>
+              </div>
+
+              <div style="margin-top:16px">
+                <div class="kv"><span class="sect-title">全部可回收项</span><span class="tiny">9 组 · 扫描 3 min 前 · 耗时 1.8 s</span></div>
+                <div style="margin-top:4px">
+                  <div class="group-row"><span style="flex:1"><span class="group-name">npm / pnpm store</span><span class="group-root">~/.local/share/pnpm/store · 8,412 项</span></span><span class="pill l2">L2</span><span class="group-val">9.2 GB</span><span class="mini-btn">预览</span></div>
+                  <div class="group-row"><span style="flex:1"><span class="group-name">Xcode DerivedData</span><span class="group-root">~/Library/Developer/Xcode/DerivedData · 12 项</span></span><span class="pill l3">L3</span><span class="group-val">4.1 GB</span><span class="mini-btn">预览</span></div>
+                  <div class="group-row"><span style="flex:1"><span class="group-name">iOS 模拟器缓存</span><span class="group-root">~/Library/Developer/CoreSimulator · 4 项</span></span><span class="pill l4">L4</span><span class="group-val">2.2 GB</span><span class="tiny">手动处理</span></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="mock-cap"><b>960 × 640</b> — 三个 tab 可点击切换（应用 / 概况 / 存储）</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= 5. 组件规范 ================= -->
+  <section class="block">
+    <div class="sec-head"><span class="sec-no">05</span><span class="sec-title">组件规范（与代码一一对应）</span></div>
+    <table class="spec-table">
+      <thead>
+        <tr><th>元素</th><th>规则</th><th>代码位置</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Hairline 分组</td>
+          <td>分区间用 <code>border-hairline-soft</code> + 16–20px 间距；不再出现「卡片内再套卡片」</td>
+          <td><code>MainWindow.tsx</code> 各 section</td>
+        </tr>
+        <tr>
+          <td>主数字</td>
+          <td>面板 15px / 存储页 22px / Stat 19px，一律 <code>font-mono</code> + <code>tabular-nums</code>，单位降为 11px faint</td>
+          <td><code>primitives.tsx · Stat</code>、<code>MenuBarPanel · DomainHero</code></td>
+        </tr>
+        <tr>
+          <td>Badge</td>
+          <td>胶囊（<code>rounded-full</code>）+ 12% 同色底，无描边；仅用于口径与状态</td>
+          <td><code>primitives.tsx · Badge</code></td>
+        </tr>
+        <tr>
+          <td>Meter</td>
+          <td>轨道 <code>bg-white/[0.05]</code>；列表内 3px、区块内 4px、容量条 5px</td>
+          <td><code>primitives.tsx · Meter</code></td>
+        </tr>
+        <tr>
+          <td>按钮</td>
+          <td>次要 = 淡底 <code>bg-white/[0.05]</code> → hover 0.09；主动作 = <code>accent/14</code> 淡底，均无描边</td>
+          <td><code>MainWindow.tsx</code> 刷新、<code>ReclaimBoard.tsx</code> 预览</td>
+        </tr>
+        <tr>
+          <td>Tabs</td>
+          <td>无容器外框；选中 = <code>bg-white/[0.08]</code>，未选 faint，hover dim</td>
+          <td><code>Tabs.tsx</code></td>
+        </tr>
+        <tr>
+          <td>颜色纪律</td>
+          <td>accent 只标「可行动的数字」；warn/danger 仅异常；正常态全屏无暖色</td>
+          <td>全局</td>
+        </tr>
+      </tbody>
+    </table>
+  </section>
+
+  <!-- ================= 6. 与 v1 的差异 ================= -->
+  <section class="block">
+    <div class="sec-head"><span class="sec-no">06</span><span class="sec-title">本轮相对 v1 的改动</span></div>
+    <div class="swap-list">
+      <div class="swap-item"><span class="swap-no">01</span><div class="swap-txt"><b>面板 hero 归因收进 tooltip。</b>v1 存储行右侧挂着「🟢 12.4 GB 跨平台二进制 · 剩余 78 GB」三件事，v2 只留「可回收 · 剩余」，A1 归因悬停可见。</div></div>
+      <div class="swap-item"><span class="swap-no">02</span><div class="swap-txt"><b>应用列表行高从 2 行压到 1 行 + 3px 细线。</b>10 条从溢出滚动变成一屏放下 8 条，仍保留进程数与口径后缀。</div></div>
+      <div class="swap-item"><span class="swap-no">03</span><div class="swap-txt"><b>主窗口省掉一整行 chrome。</b>48px 单行承载品牌 + tab + 口径 + 时间 + 刷新，内容区多出 36px。</div></div>
+      <div class="swap-item"><span class="swap-no">04</span><div class="swap-txt"><b>存储页主数字 22px。</b>可回收量从「一行文字」升级为页面锚点，卷容量与分层都成为它的注脚。</div></div>
+      <div class="swap-item"><span class="swap-no">05</span><div class="swap-txt"><b>L1–L4 从 2×2 卡片矩阵压成 4 条对齐行。</b>同一列数值纵向可比，扫读速度提升，且省出约 70px 高度。</div></div>
+    </div>
+  </section>
+
+  <div class="rule"></div>
+  <p class="sec-note" style="max-width:760px">
+    样式稿仅为视觉与排版参照，数据为示意。确认方向后按此稿回写到 React 组件
+    （<code>primitives.tsx / Tabs.tsx / MenuBarPanel.tsx / MainWindow.tsx / ReclaimBoard.tsx</code>）。
+  </p>
+</div>
+
+<script>
+  const tabs = document.querySelectorAll('#mtabs .tab');
+  const views = {
+    apps: document.getElementById('view-apps'),
+    overview: document.getElementById('view-overview'),
+    disk: document.getElementById('view-disk'),
+  };
+  tabs.forEach((t) => {
+    t.addEventListener('click', () => {
+      tabs.forEach((x) => x.classList.toggle('on', x === t));
+      const v = t.dataset.view;
+      Object.entries(views).forEach(([k, el]) => {
+        el.style.display = k === v ? (k === 'overview' ? 'flex' : 'block') : 'none';
+      });
+    });
+  });
+</script>
+</body>
+</html>
