@@ -63,10 +63,14 @@ export function MenuBarPanel() {
               { id: "overview", label: "概况", hint: "内存压力与 swap" },
             ]}
           />
-          {snapshot && tab === "overview" ? (
-            <span className="text-[10px] text-ink-faint">
-              swap {formatPercent(snapshot.swap.total > 0 ? snapshot.swap.used / snapshot.swap.total : 0)}
-            </span>
+          {snapshot ? (
+            tab === "overview" ? (
+              <span className="text-[10px] text-ink-faint">
+                swap {formatPercent(snapshot.swap.total > 0 ? snapshot.swap.used / snapshot.swap.total : 0)}
+              </span>
+            ) : (
+              <AppMemorySummary families={snapshot.families} />
+            )
           ) : null}
         </div>
 
@@ -103,13 +107,7 @@ function AppsSection() {
     <section>
       {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
       {leaks ? <LeakBanner report={leaks} onOpen={() => void openMain(undefined, "apps")} /> : null}
-      <div className="flex items-baseline justify-between gap-2">
-        <h2 className="shrink-0 text-[11px] font-medium tracking-wide text-ink-dim">
-          每个应用占用
-        </h2>
-        <AppMemorySummary families={families} />
-      </div>
-      <div className="mt-1">
+      <div className={leaks ? "mt-1" : ""}>
         <AppMemoryList
           compact
           limit={10}

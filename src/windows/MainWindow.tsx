@@ -154,6 +154,12 @@ export function MainWindow() {
             </div>
           ) : null}
           <div className="mt-3">
+            <div className="grid grid-cols-[26px_minmax(0,1fr)_112px_86px] items-center gap-2.5 border-b border-hairline-soft px-2 pb-2 text-[10px] text-ink-faint">
+              <span>#</span>
+              <span>应用</span>
+              <span>相对占用</span>
+              <span className="text-right">总量</span>
+            </div>
             <AppMemoryList
               families={families}
               processes={processes}
