@@ -39,9 +39,11 @@ pub fn run() {
             commands::mem_refresh,
             commands::open_main,
             commands::kill_process,
+            commands::reveal_path,
             commands::disk_report,
             commands::disk_scan,
             commands::reclaim_preview,
+            commands::reclaim_children,
             commands::reclaim_execute
         ])
         .setup(|app| {

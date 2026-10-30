@@ -10,12 +10,13 @@
 //! - `reclaim_preview` dry-run：生成待清理清单
 //! - `reclaim_execute` 执行清理（走废纸篓，护栏在 prune-core）
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use prune_core::db::Point;
 use prune_core::disk::DiskReport;
 use prune_core::mem::{MemSnapshot, ProcMem};
-use prune_core::reclaim::{self, Limits, ReclaimItem, ReclaimPreview, ReclaimReport};
+use prune_core::reclaim::{self, Limits, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::sampler::{self, MemState};
@@ -99,6 +100,27 @@ pub fn kill_process(pid: i32, force: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// 在 Finder 中定位路径：目录直接打开，文件则选中（`open -R`）。
+///
+/// 只做「展示」不做修改，因此不做白名单校验；但要求路径真实存在，
+/// 免得 Finder 弹一个空窗口。
+#[tauri::command]
+pub fn reveal_path(path: String) -> Result<(), String> {
+    let p = std::path::Path::new(&path);
+    if !p.exists() {
+        return Err(format!("路径不存在：{path}"));
+    }
+    let mut cmd = std::process::Command::new("open");
+    if p.is_dir() {
+        cmd.arg(&path);
+    } else {
+        cmd.arg("-R").arg(&path);
+    }
+    cmd.spawn()
+        .map(|_| ())
+        .map_err(|e| format!("打开 Finder 失败：{e}"))
+}
+
 fn now_secs() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -132,6 +154,19 @@ pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> R
             notes: vec!["尚未完成扫描，请稍候或手动刷新".into()],
         },
     }
+}
+
+/// 一级子项体积明细（按体积降序）：du 较慢，独立命令让预览弹层先出、内容后到。
+/// du 放到阻塞线程池，不卡主线程。
+#[tauri::command]
+pub async fn reclaim_children(path: String) -> Result<Vec<ReclaimChild>, String> {
+    let p = PathBuf::from(&path);
+    if !p.is_dir() {
+        return Err(format!("不是目录：{path}"));
+    }
+    tauri::async_runtime::spawn_blocking(move || Ok(reclaim::first_level_children(&p)))
+        .await
+        .map_err(|e| format!("明细线程失败: {e}"))?
 }
 
 /// 执行清理：路径校验 / 级别闸门 / 熔断都在 prune-core，这里只转发。

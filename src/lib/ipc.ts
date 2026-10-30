@@ -1,7 +1,7 @@
 /** 与 Rust 侧 IPC 命令的薄封装（契约见 docs/m2-memory-plan.md §6 / docs/m1-disk-plan.md §8）。 */
 import { invoke } from "@tauri-apps/api/core";
 
-import type { DiskReport, ReclaimItem, ReclaimPreview, ReclaimReport } from "../types/disk";
+import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport } from "../types/disk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
 
 /** 浏览器里跑 vite 时没有任何 Tauri 注入，需要显式兜底而不是静默失败 */
@@ -35,6 +35,11 @@ export function killProcess(pid: number, force: boolean): Promise<void> {
   return invoke<void>("kill_process", { pid, force });
 }
 
+/** 在 Finder 中打开目录；传文件路径时定位并选中它 */
+export function revealPath(path: string): Promise<void> {
+  return invoke<void>("reveal_path", { path });
+}
+
 // ---------------------------------------------------------------- 磁盘（M1）
 
 export function diskReport(): Promise<DiskReport | null> {
@@ -49,6 +54,11 @@ export function diskScan(): Promise<void> {
 /** dry-run：只生成清单，不动任何文件 */
 export function reclaimPreview(keys: string[]): Promise<ReclaimPreview> {
   return invoke<ReclaimPreview>("reclaim_preview", { keys });
+}
+
+/** 一级子项体积明细（du 较慢，独立按需加载；预览弹层先出、内容后到） */
+export function reclaimChildren(path: string): Promise<ReclaimChild[]> {
+  return invoke<ReclaimChild[]>("reclaim_children", { path });
 }
 
 /** 执行清理（走废纸篓）；成功后 Rust 侧会自动重扫并发 disk://done */

@@ -44,6 +44,41 @@ pub struct ReclaimItem {
     pub level: Level,
 }
 
+/// 一级子项（文件或目录）及其占用；由独立命令按需加载（du 慢，不能拖住 preview）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ReclaimChild {
+    pub name: String,
+    pub bytes: u64,
+    /// 是否目录（UI 用不同图标；symlink 记 false，与体积口径一致）
+    #[serde(default)]
+    pub is_dir: bool,
+}
+
+/// 枚举 root 的一级文件/目录并统计各自体积（降序，同名次序稳定）。
+///
+/// symlink 计 0（`tree_size` 自身也跳过）；单文件直接取占用；
+/// 上限 500 项防异常巨型目录拖死调用方。
+pub fn first_level_children(root: &Path) -> Vec<ReclaimChild> {
+    let Ok(rd) = std::fs::read_dir(root) else {
+        return Vec::new();
+    };
+    let mut out: Vec<ReclaimChild> = rd
+        .flatten()
+        .take(500)
+        .map(|e| {
+            let is_dir = e.file_type().map(|t| t.is_dir()).unwrap_or(false);
+            ReclaimChild {
+                name: e.file_name().to_string_lossy().into_owned(),
+                bytes: tree_size(&e.path()),
+                is_dir,
+            }
+        })
+        .collect();
+    out.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.name.cmp(&b.name)));
+    out
+}
+
 /// dry-run 结果
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -647,6 +682,26 @@ mod tests {
         let pv = preview(&["node-modules".into()], &report);
         assert!(pv.items.is_empty());
         assert!(pv.notes.iter().any(|n| n.contains("只做统计")));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 一级子项明细：按体积降序、目录标记正确（供前端按需加载）
+    #[test]
+    fn first_level_children_sorted_desc_with_dir_flag() {
+        let home = temp_home("children");
+        let root = home.join(".npm/_cacache");
+        let big = root.join("content-v2");
+        let small = root.join("index-v5");
+        std::fs::create_dir_all(&big).unwrap();
+        std::fs::create_dir_all(&small).unwrap();
+        std::fs::write(big.join("blob"), vec![0u8; 400]).unwrap();
+        std::fs::write(small.join("idx"), vec![0u8; 100]).unwrap();
+
+        let children = first_level_children(&root);
+        assert_eq!(children.len(), 2, "两个一级目录都在明细里");
+        assert_eq!(children[0].name, "content-v2", "按体积降序");
+        assert!(children[0].bytes >= 400 && children[1].bytes >= 100);
+        assert!(children.iter().all(|c| c.is_dir), "子目录标记为目录");
         let _ = std::fs::remove_dir_all(&home);
     }
 

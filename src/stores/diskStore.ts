@@ -9,6 +9,8 @@ interface DiskStore {
   report: DiskReport | null;
   progress: ScanProgress | null;
   preview: ReclaimPreview | null;
+  /** dry-run 清单生成中：弹层先出、内容后到 */
+  previewLoading: boolean;
   /** 扫描中（按钮禁用 + 进度条） */
   scanning: boolean;
   /** dry-run / 执行中 */
@@ -32,6 +34,7 @@ export const useDiskStore = create<DiskStore>((set, get) => ({
   report: null,
   progress: null,
   preview: null,
+  previewLoading: false,
   scanning: false,
   busy: false,
   error: null,
@@ -84,21 +87,22 @@ export const useDiskStore = create<DiskStore>((set, get) => ({
 
   loadPreview: async (keys) => {
     if (get().busy || !isTauri()) {
-      if (!isTauri() && import.meta.env.DEV) set({ preview: devDiskPreview() });
+      if (!isTauri() && import.meta.env.DEV) set({ preview: devDiskPreview(), previewLoading: false });
       return;
     }
-    set({ busy: true, error: null });
+    // 弹层先出：previewLoading 驱动骨架屏，清单生成后再填内容
+    set({ busy: true, error: null, preview: null, previewLoading: true });
     try {
       const preview = await reclaimPreview(keys);
-      set({ preview });
+      set({ preview, previewLoading: false });
     } catch (e) {
-      set({ error: String(e) });
+      set({ error: String(e), previewLoading: false });
     } finally {
       set({ busy: false });
     }
   },
 
-  clearPreview: () => set({ preview: null }),
+  clearPreview: () => set({ preview: null, previewLoading: false }),
 
   execute: async (confirmed) => {
     const preview = get().preview;

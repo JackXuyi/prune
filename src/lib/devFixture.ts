@@ -4,6 +4,7 @@ import type {
   DetailItem,
   DiskReport,
   PlatformStat,
+  ReclaimItem,
   ReclaimPreview,
 } from "../types/disk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
@@ -383,12 +384,21 @@ export function devDiskReport(): DiskReport {
 export function devDiskPreview(): ReclaimPreview {
   const report = devDiskReport();
   const yarn = report.groups[0];
-  const items = (yarn.deadweight?.items ?? []).map((it) => ({
-    path: it.path,
-    label: `Yarn 缓存 · ${it.name}`,
-    bytes: it.bytes,
-    level: "l1" as const,
-  }));
+  const items = (yarn.deadweight?.items ?? []).map(
+    (it): ReclaimItem => ({
+      path: it.path,
+      label: `Yarn 缓存 · ${it.name}`,
+      bytes: it.bytes,
+      level: "l1",
+    }),
+  );
+  // npm 缓存整根条目：FileList 会按需加载一级明细（浏览器模式内嵌演示数据）
+  items.push({
+    path: "/Users/dev/.npm/_cacache",
+    label: "npm 缓存",
+    bytes: 8 * GB,
+    level: "l2",
+  });
   return {
     items,
     totalBytes: items.reduce((sum, i) => sum + i.bytes, 0),

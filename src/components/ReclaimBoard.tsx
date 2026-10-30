@@ -1,9 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { formatBytes, formatRelative } from "../lib/format";
+import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
-import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type VolumeInfo } from "../types/disk";
-import { RefreshIcon } from "./icons";
+import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
+import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
 
 /** M4/S2：存储 tab 顶部的卷容量条（已用/总量 + 可回收相当于剩余空间的比例） */
@@ -56,6 +57,7 @@ export function ReclaimBoard() {
   const progress = useDiskStore((s) => s.progress);
   const error = useDiskStore((s) => s.error);
   const preview = useDiskStore((s) => s.preview);
+  const previewLoading = useDiskStore((s) => s.previewLoading);
   const lastReclaimed = useDiskStore((s) => s.lastReclaimed);
   const refresh = useDiskStore((s) => s.refresh);
   const clearReclaimed = useDiskStore((s) => s.clearReclaimed);
@@ -195,17 +197,17 @@ export function ReclaimBoard() {
         </ul>
       </section>
 
-      {preview ? <PreviewPanel /> : null}
+      {preview || previewLoading ? <PreviewPanel /> : null}
     </div>
   );
 }
 
 function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
-  const rows: { level: Level; label: string; bytes: number; hint: string }[] = [
-    { level: "l1", label: "跨平台二进制", bytes: totals.deadweight, hint: "你的 Mac 永远加载不了" },
-    { level: "l2", label: "包管理器等缓存", bytes: totals.l2, hint: "删了会重建，只慢下一次安装" },
-    { level: "l3", label: "项目依赖 / 模拟器", bytes: totals.l3, hint: "要重装或丢模拟器状态，逐个确认" },
-    { level: "l4", label: "Docker 等高风险项", bytes: totals.l4, hint: "只提供命令，不执行，不计入主数字" },
+  const rows: { level: Level; tag: string; label: string; bytes: number; hint: string }[] = [
+    { level: "l1", tag: "L1", label: "跨平台二进制", bytes: totals.deadweight, hint: "零后悔 · 你的 Mac 永远加载不了" },
+    { level: "l2", tag: "L2", label: "包管理器等缓存", bytes: totals.l2, hint: "可再生 · 删了会重建，只慢下一次安装" },
+    { level: "l3", tag: "L3", label: "项目依赖 / 模拟器", bytes: totals.l3, hint: "需判断 · 要重装或丢模拟器状态，逐个确认" },
+    { level: "l4", tag: "L4", label: "Docker 等高风险项", bytes: totals.l4, hint: "只提供命令，不执行，不计入主数字" },
   ];
   const max = Math.max(...rows.map((r) => r.bytes), 1);
 
@@ -216,7 +218,7 @@ function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: nu
         return (
           <div key={r.level} className="flex items-center gap-3" title={r.hint}>
             <span className="w-28 shrink-0 truncate text-[11px] text-ink-dim">
-              {meta.label} · {r.label}
+              <span className="font-mono text-[10px] text-ink-faint">{r.tag}</span> · {r.label}
             </span>
             <Meter ratio={r.bytes / max} tone={meta.tone} height={4} className="min-w-0 flex-1" />
             <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
@@ -300,13 +302,24 @@ function GroupRow({ group }: { group: CacheGroup }) {
   const busy = useDiskStore((s) => s.busy);
   const meta = LEVEL_META[group.level];
   const details = group.details ?? [];
+  const [menu, setMenu] = useState<PathTarget | null>(null);
   // L4 只给命令；聚合项（root 是 home）整项不可清，但 A4/A5 有明细时逐项确认
   const cleanable = group.cleanable && group.level !== "l4";
   const perItem = !cleanable && details.length > 0 && group.level !== "l4";
   const actionable = cleanable || perItem;
+  // 聚合项的 root 是 home，右键打开它没有意义——只对「整根可清」的分组开放
+  const rootIsDir = group.cleanable && group.level !== "l4";
 
   return (
-    <li className="rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.03]">
+    <li
+      className="rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.03]"
+      onContextMenu={(e) => {
+        if (!rootIsDir) return;
+        e.preventDefault();
+        setMenu({ path: group.root, isDir: true, x: e.clientX, y: e.clientY });
+      }}
+      title={rootIsDir ? `${group.root}\n右键可打开所在目录` : group.root}
+    >
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[11.5px] text-ink">{group.label}</span>
@@ -338,6 +351,7 @@ function GroupRow({ group }: { group: CacheGroup }) {
         )}
       </div>
       {details.length > 0 ? <GroupDetails details={details} /> : null}
+      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
     </li>
   );
 }
@@ -346,6 +360,7 @@ function GroupRow({ group }: { group: CacheGroup }) {
 function GroupDetails({ details }: { details: DetailItem[] }) {
   const stale = details.filter((d) => d.ageDays > STALE_DAYS).length;
   const shown = details.slice(0, 20);
+  const [menu, setMenu] = useState<PathTarget | null>(null);
   return (
     <details className="mt-1 pl-2">
       <summary className="cursor-pointer text-[10px] text-ink-faint hover:text-ink-dim">
@@ -354,14 +369,21 @@ function GroupDetails({ details }: { details: DetailItem[] }) {
       </summary>
       <ul className="mt-1 space-y-0.5">
         {shown.map((d) => (
-          <li key={d.path} className="flex items-baseline gap-2 text-[10.5px]">
+          <li
+            key={d.path}
+            className="flex items-baseline gap-2 text-[10.5px]"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ path: d.path, isDir: true, x: e.clientX, y: e.clientY });
+            }}
+            title={`${d.path}\n右键可打开所在目录`}
+          >
             <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
               {formatBytes(d.bytes)}
             </span>
             <span className="w-20 shrink-0 text-ink-faint">{formatAge(d.ageDays)}</span>
             <span
               className={`min-w-0 flex-1 truncate ${d.ageDays > STALE_DAYS ? "text-ink-faint" : "text-ink-dim"}`}
-              title={d.path}
             >
               {d.note ?? d.name}
             </span>
@@ -371,7 +393,200 @@ function GroupDetails({ details }: { details: DetailItem[] }) {
           <li className="text-[10px] text-ink-faint">… 另有 {details.length - shown.length} 项</li>
         ) : null}
       </ul>
+      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
     </details>
+  );
+}
+
+/** 右键菜单目标：路径 + 是否目录 + 屏幕坐标 */
+type PathTarget = { path: string; isDir: boolean; x: number; y: number };
+
+function joinPath(root: string, name: string): string {
+  return `${root.replace(/\/+$/, "")}/${name}`;
+}
+
+/**
+ * 路径右键菜单：在 Finder 中打开 / 复制路径。
+ * 目录直接开窗，文件用 `open -R` 定位选中（Rust 侧 reveal_path）。
+ */
+function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void }) {
+  const [err, setErr] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  // 视口内收口，避免贴边被裁
+  const x = Math.min(target.x, window.innerWidth - 196);
+  const y = Math.min(target.y, window.innerHeight - 112);
+
+  const reveal = async () => {
+    if (!isTauri()) {
+      setErr("浏览器预览模式无法打开 Finder");
+      return;
+    }
+    try {
+      await revealPath(target.path);
+      onClose();
+    } catch (e) {
+      setErr(String(e));
+    }
+  };
+
+  const copy = async () => {
+    try {
+      await navigator.clipboard.writeText(target.path);
+      setCopied(true);
+      onClose();
+    } catch {
+      setErr("复制失败");
+    }
+  };
+
+  return (
+    <>
+      <div
+        className="fixed inset-0 z-40"
+        onClick={onClose}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          onClose();
+        }}
+      />
+      <div
+        className="fixed z-50 w-[184px] rounded-lg border border-hairline bg-surface-raised py-1 shadow-2xl shadow-black/50"
+        style={{ left: x, top: y }}
+      >
+        <button
+          type="button"
+          onClick={() => void reveal()}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
+        >
+          {target.isDir ? <FolderIcon size={12} /> : <FileIcon size={12} />}
+          {target.isDir ? "在 Finder 中打开" : "在 Finder 中显示"}
+        </button>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
+        >
+          <span className="w-3 text-center font-mono text-[10px] text-ink-faint">⧉</span>
+          {copied ? "已复制" : "复制路径"}
+        </button>
+        {err ? (
+          <p className="border-t border-hairline-soft px-2.5 pt-1.5 pb-1 text-[10px] leading-snug text-danger">
+            {err}
+          </p>
+        ) : null}
+      </div>
+    </>
+  );
+}
+
+/**
+ * 一级子项列表：像 Finder 一样逐条列出文件/目录。
+ * 明细由独立命令按需加载（du 慢，不拖住预览弹层）；左键直接打开，右键出菜单。
+ */
+function FileList({ root }: { root: string }) {
+  const [children, setChildren] = useState<ReclaimChild[] | null>(null);
+  const [err, setErr] = useState<string | null>(null);
+  const [menu, setMenu] = useState<PathTarget | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    if (!isTauri()) {
+      // 浏览器 dev 模式：演示数据
+      setChildren([
+        { name: "content-v2", bytes: 7.6 * 1024 ** 3, isDir: true },
+        { name: "index-v5", bytes: 0.4 * 1024 ** 3, isDir: true },
+        { name: "tmp", bytes: 0, isDir: true },
+      ]);
+      return;
+    }
+    reclaimChildren(root)
+      .then((c) => {
+        if (alive) setChildren(c);
+      })
+      .catch((e) => {
+        if (alive) setErr(String(e));
+      });
+    return () => {
+      alive = false;
+    };
+  }, [root]);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2600);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const openInFinder = async (p: string) => {
+    try {
+      await revealPath(p);
+    } catch (e) {
+      setToast(String(e));
+    }
+  };
+
+  return (
+    <>
+      <ul className="mt-1 max-h-40 overflow-y-auto rounded-md bg-white/[0.02] py-1">
+        {children === null ? (
+          err ? (
+            <li className="px-2 py-1.5 text-[10px] text-danger">{err}</li>
+          ) : (
+            [0, 1, 2].map((i) => (
+              <li key={i} className="flex items-center gap-2 px-2 py-[5px]">
+                <span className="size-3 shrink-0 animate-pulse rounded-sm bg-white/[0.08]" />
+                <span className="h-2 w-40 animate-pulse rounded bg-white/[0.06]" />
+                <span className="ml-auto h-2 w-10 shrink-0 animate-pulse rounded bg-white/[0.05]" />
+              </li>
+            ))
+          )
+        ) : (
+          children.map((c) => {
+            const full = joinPath(root, c.name);
+            return (
+              <li key={c.name}>
+                <button
+                  type="button"
+                  onClick={() => void openInFinder(full)}
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({ path: full, isDir: c.isDir ?? false, x: e.clientX, y: e.clientY });
+                  }}
+                  className="flex w-full items-center gap-2 px-2 py-[3px] text-left text-[10px] text-ink-dim transition-colors hover:bg-white/[0.05] hover:text-ink"
+                  title={`${full}\n单击在 Finder 中打开 · 右键更多`}
+                >
+                  {c.isDir ? (
+                    <FolderIcon size={11} className="shrink-0 text-accent/70" />
+                  ) : (
+                    <FileIcon size={11} className="shrink-0 text-ink-faint" />
+                  )}
+                  <span className="min-w-0 flex-1 truncate font-mono">{c.name}</span>
+                  <span className="shrink-0 font-mono tabular-nums text-ink-faint">
+                    {c.bytes > 0 ? formatBytes(c.bytes) : "—"}
+                  </span>
+                </button>
+              </li>
+            );
+          })
+        )}
+      </ul>
+      {toast ? (
+        <div className="fixed bottom-16 left-5 z-50 rounded-md border border-danger/30 bg-danger/[0.12] px-3 py-2 text-[10.5px] text-danger shadow-xl">
+          {toast}
+        </div>
+      ) : null}
+      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
+    </>
   );
 }
 
@@ -381,6 +596,26 @@ function PreviewPanel() {
   const clear = useDiskStore((s) => s.clearPreview);
   const busy = useDiskStore((s) => s.busy);
   const [confirmed, setConfirmed] = useState(false);
+  const [menu, setMenu] = useState<PathTarget | null>(null);
+
+  // 弹层先出：清单还没生成时只渲染骨架
+  if (!preview) {
+    return (
+      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-[#0b0e11]/95 px-5 py-3 backdrop-blur-xl">
+        <h3 className="text-[12px] font-medium text-ink">
+          正在生成清理清单<span className="animate-pulse text-ink-faint">…</span>
+        </h3>
+        <div className="mt-2 space-y-1.5">
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="flex items-center gap-2">
+              <span className="h-2.5 w-14 animate-pulse rounded bg-white/[0.06]" />
+              <span className="h-2.5 w-64 animate-pulse rounded bg-white/[0.05]" />
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
 
   const blocked = preview.needsConfirm && !confirmed;
   const shown = preview.items.slice(0, 50);
@@ -395,15 +630,26 @@ function PreviewPanel() {
               {preview.items.length} 项 · 全部走废纸篓，可恢复
             </span>
           </h3>
-          <ul className="mt-1 max-h-24 overflow-y-auto pr-2">
+          <ul className="mt-1 max-h-56 overflow-y-auto pr-2">
             {shown.map((it) => (
-              <li key={it.path} className="flex items-baseline gap-2 text-[10px] text-ink-faint">
-                <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
-                  {formatBytes(it.bytes)}
-                </span>
-                <span className="min-w-0 flex-1 truncate" title={it.path}>
-                  {it.label}
-                </span>
+              <li key={it.path}>
+                <div
+                  className="flex items-baseline gap-2 text-[10px] text-ink-faint"
+                  onContextMenu={(e) => {
+                    e.preventDefault();
+                    setMenu({ path: it.path, isDir: true, x: e.clientX, y: e.clientY });
+                  }}
+                  title={`${it.path}\n右键可打开所在目录`}
+                >
+                  <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
+                    {formatBytes(it.bytes)}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">{it.label}</span>
+                </div>
+                <div className="ml-[68px]">
+                  <p className="text-[9.5px] text-ink-faint/80">一级条目 · 单击在 Finder 中打开，右键更多</p>
+                  <FileList root={it.path} />
+                </div>
               </li>
             ))}
             {preview.items.length > shown.length ? (
@@ -448,6 +694,7 @@ function PreviewPanel() {
           </div>
         </div>
       </div>
+      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
     </div>
   );
 }

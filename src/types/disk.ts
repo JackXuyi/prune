@@ -114,6 +114,13 @@ export interface ReclaimItem {
   level: Level;
 }
 
+export interface ReclaimChild {
+  name: string;
+  bytes: number;
+  /** 是否目录（决定图标与右键语义） */
+  isDir?: boolean;
+}
+
 export interface ReclaimPreview {
   items: ReclaimItem[];
   totalBytes: number;
