@@ -1,7 +1,7 @@
 # Windows 支持方案（W0–W4）
 
 > 目标：让 Prune 在 Windows 上不只是「能编译」，而是核心功能可用。
-> 状态：**W0 ✅ / W1 ✅ / W2 ✅ / W3–W4 待开工**（更新于 2026-11-02）
+> 状态：**W0 ✅ / W1 ✅ / W2 ✅ / W3 ✅（代码层，真机走查待做）/ W4 待开工**（更新于 2026-11-02）
 
 ## 1. 结论与前提
 
@@ -22,7 +22,7 @@ Prune 原本是 macOS-first 实现：壳层（Tauri）用 `#[cfg]` 门隔离得�
 | **W0 编译基线** | Windows target 交叉编译、清理 unix-only 代码导致的编译失败 | ✅ |
 | **W1 低成本补丁** | 路径口径统一、白名单平台化、reveal/kill 分流、workspace 路径 | ✅ |
 | **W2 内存口径** | vm_stat/sysctl → GlobalMemoryStatusEx；footprint → Private Bytes；swap/换出按口径隐藏 | ✅ |
-| **W3 壳层体验** | 面板定位实测、托盘常驻、失焦隐藏；Accessory 的 Windows 等价物验证 | 待开工 |
+| **W3 壳层体验** | 面板定位实测、托盘常驻、失焦隐藏；Accessory 的 Windows 等价物验证 | ✅ 代码层（真机走查待做） |
 | **W4 打包分发** | NSIS 安装包、签名策略、CI（Windows runner 跑 check + test） | 待开工 |
 
 ## 3. W0 编译基线
@@ -124,10 +124,38 @@ UI 呈现统一按「隐藏」处理：由前端根据 `null` 字段决定是否
 | 压力用「可用内存比例」映射 | 用 `MEMORYSTATUSEX.dwMemoryLoad` | 系统自己给的占用率比「100 − avail/total」更接近任务管理器口径，且省一次计算 |
 | 统一用 `*_available` 布尔 | 改成 `Option<T>` | 一处语义两种表达（`false` 与「读到 0」）容易分歧；`Option` 让「没有口径」在类型上不可忽略 |
 
-## 6. 风险
+## 6. W3 壳层体验（已完成，代码层）
+
+壳层大部分行为**本来就走 Tauri 跨平台 API**，审计结论是改动极少：
+
+| 行为 | macOS | Windows | 需要改动吗 |
+|---|---|---|---|
+| 关窗不退出（主窗口红叉只 hide） | CloseRequested 拦截 | 同一回调，跨平台 | ❌ 已通用 |
+| 面板失焦隐藏 | `Focused(false)` → hide | 同一回调，跨平台 | ❌ 已通用（见下方宽限期） |
+| 面板定位（legacy_toggle） | tray.rect() 物理像素 | Windows 同为物理像素，算法直接复用 | ❌ 已通用 |
+| Accessory 等价物 | `ActivationPolicy::Accessory` | 无 Dock 概念；main `visible:false` + 托盘常驻即等价形态 | ❌ 已通用（policy 调用已有 cfg 门） |
+| `kill_process` | signal | W1 已分流到 sysinfo | ❌ 已通用 |
+| **托盘图标** | 黑色模板图（系统反色） | `icon_as_template` 无效，黑图在深色任务栏**不可见** | ✅ macOS 用 `tray.png` + template；其他平台用彩色 `32x32.png` |
+| **焦点竞态** | 无此问题 | 点击托盘时焦点先给任务栏（explorer），`show + set_focus` 后可能收到迟到的 `Focused(false)`，面板刚弹出即被藏 | ✅ 显示后 300 ms blur 宽限期（`PANEL_SHOWN_AT_MS` 原子） |
+
+改动集中在 `src-tauri/src/tray.rs`（图标平台化 + blur 宽限），无新依赖、无 conf 变更
+（panel 的 `skipTaskbar`/`alwaysOnTop`/`transparent` 配置在 Windows 均有效）。
+
+### W3 真机走查清单（W4 前或随 W4 一起做，无法在 macOS 上代替）
+
+1. 托盘左键单击弹出面板，位置贴图标下方且不越屏；再点一次收起。
+2. 弹出后立即点击其他应用：面板应在宽限期后正常隐藏（且不被竞态提前藏掉）。
+3. 深色/浅色任务栏下托盘图标均可见。
+4. 主窗口点红叉隐藏后，托盘菜单「打开主窗口」能唤回。
+5. 内存读数对照任务管理器（物理总量/可用/占用率/单进程 Private Bytes/提交大小）。
+6. 结束进程：普通进程与需要管理员权限的进程各试一次，确认错误文案。
+7. `explorer /select,` 对含空格路径定位正确。
+8. `AppData/Local/Temp` 等白名单扫描出数且可删除（普通权限）。
+
+## 7. 风险
 
 - **真机验证是硬门槛**：`cargo check` 只能证明能编译，托盘定位、透明面板、失焦隐藏、
-  Temp 目录删除权限都必须在 Windows 上走查（W3）。
+  Temp 目录删除权限都必须在 Windows 上走查（清单见 §6）。
 - **Gitee 仓库没有 GitHub Actions**：W4 的 CI 要么接 Gitee Go，要么在 GitHub 建镜像仓；
   在此之前 `scripts/check-windows.sh` 是本仓库唯一可自动化的 Windows 关口。
 - **`%LOCALAPPDATA%` 被改写**的罕见场景目前不支持，若要支持需把 `WhitelistEntry.rel`

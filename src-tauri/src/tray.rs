@@ -33,6 +33,19 @@ pub const PANEL_H: f64 = 560.0;
 /// 面板与菜单栏图标的间距（逻辑像素）
 const MARGIN: f64 = 8.0;
 
+/// 面板「刚显示」的时刻（Unix 毫秒）。用于 blur 宽限期：
+/// Windows 上点击托盘时焦点先落在任务栏（explorer），show + set_focus 之后
+/// 可能仍收到一次迟到的 Focused(false)，把刚弹出的面板立刻藏掉。
+const BLUR_GRACE_MS: u64 = 300;
+static PANEL_SHOWN_AT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     let open_main = MenuItem::with_id(app, "open-main", "打开主窗口", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "退出 Prune", true, None::<&str>)?;
@@ -41,12 +54,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         &[&open_main, &PredefinedMenuItem::separator(app)?, &quit],
     )?;
 
-    TrayIconBuilder::with_id(TRAY_ID)
-        // 菜单栏用 Lucide scissors 模板图标（纯黑 + 透明，系统自动适配深浅色）
-        .icon(tauri::image::Image::from_bytes(include_bytes!(
-            "../icons/tray.png"
-        ))?)
-        .icon_as_template(true)
+    let tray = TrayIconBuilder::with_id(TRAY_ID)
+        .icon(tray_icon())
         .tooltip("Prune")
         .menu(&menu)
         .show_menu_on_left_click(false)
@@ -67,7 +76,26 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
+    // 模板图标是 macOS 专属机制：黑图 + 系统反色。其他平台关掉（否则彩色
+    // 图标被当模板处理再被忽略，行为依赖平台默认值），并显式留彩色原图。
+    tray.set_icon_as_template(cfg!(target_os = "macos")).ok();
     Ok(())
+}
+
+/// 托盘图标：macOS 用黑色模板图（系统自动适配深浅色菜单栏）；
+/// 其他平台用彩色应用图标（深色任务栏下黑色模板图不可见）。
+/// 内嵌字节解析失败直接 panic——这是编译期打包产物，坏不了。
+fn tray_icon() -> tauri::image::Image<'static> {
+    #[cfg(target_os = "macos")]
+    {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
+            .expect("内置 tray 图标损坏")
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
+            .expect("内置应用图标损坏")
+    }
 }
 
 /// 面板可见则隐藏，否则定位并显示。
@@ -96,6 +124,7 @@ pub(crate) fn legacy_toggle(app: &AppHandle, panel: &WebviewWindow) {
         return;
     }
     position_panel(app, panel);
+    PANEL_SHOWN_AT_MS.store(now_ms(), std::sync::atomic::Ordering::Release);
     let _ = panel.show();
     let _ = panel.set_focus();
 }
@@ -262,11 +291,18 @@ fn position_main(app: &AppHandle, main: &WebviewWindow) {
     let _ = main.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 
-/// 在 setup 中挂上「面板失焦 → 隐藏」
+/// 在 setup 中挂上「面板失焦 → 隐藏」。
+///
+/// 带 `BLUR_GRACE_MS` 宽限期：显示后一小段时间内的失焦视为平台焦点竞态
+/// （Windows 任务栏抢焦点），忽略之；真实点击别处的失焦仍立即隐藏。
 pub fn attach_blur_to_hide(panel: &WebviewWindow) {
     let handle = panel.clone();
     panel.on_window_event(move |event| {
         if let WindowEvent::Focused(false) = event {
+            let shown_at = PANEL_SHOWN_AT_MS.load(std::sync::atomic::Ordering::Acquire);
+            if shown_at > 0 && now_ms().saturating_sub(shown_at) < BLUR_GRACE_MS {
+                return;
+            }
             let _ = handle.hide();
         }
     });
