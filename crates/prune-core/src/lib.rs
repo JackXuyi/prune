@@ -10,6 +10,7 @@
 //! - `reclaim/`  ✅ M1：安全删除：路径白名单 + 废纸篓（trash）+ dry-run 前置 + >20GB 熔断
 //! - `leak/`     ✅ M3：B5 泄漏**嫌疑**判定（单进程序列回归 + 阶梯排除 + 良性名单）
 //! - `paths/`    ✅ W1：平台路径口径（home / 配置目录 / 系统根），跨平台唯一出处
+//! - `win/`      ✅ W2：Windows 系统调用（GlobalMemoryStatusEx / 进程 Private Bytes）
 
 pub mod classify;
 pub mod db;
@@ -19,6 +20,9 @@ pub mod mem;
 pub mod paths;
 pub mod reclaim;
 pub mod swap;
+/// Windows 系统调用封装（GlobalMemoryStatusEx / Private Bytes），仅 Windows 编译
+#[cfg(windows)]
+pub mod win;
 
 /// 返回 crate 版本。
 pub fn version() -> &'static str {

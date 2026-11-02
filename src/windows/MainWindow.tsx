@@ -17,7 +17,15 @@ import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, nu
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
-import { isExact, swappedRatio, totalOf, type FamilyMem, type ProcMem, type WorkspaceSource } from "../types/mem";
+import {
+  isExact,
+  memSourceLabel,
+  swappedRatio,
+  totalOf,
+  type FamilyMem,
+  type ProcMem,
+  type WorkspaceSource,
+} from "../types/mem";
 
 type MainTab = "apps" | "overview" | "disk";
 
@@ -326,9 +334,14 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
   const snapshot = useMemStore((s) => s.snapshot);
   if (!snapshot) return null;
 
-  const { swap, pressure, thrash, compressorBytes, pagesFreeBytes, physicalTotal, topSwapped } =
-    snapshot;
+  const { swap, pressure, thrash, compressorBytes, freeBytes, physicalTotal, topSwapped } = snapshot;
   const swapRatio = swap.total > 0 ? swap.used / swap.total : 0;
+  // 换出口径只在有换页计数的平台上存在；Windows 没有 → 整块隐藏，而不是显示「没有换出」
+  const hasSwapMetrics = thrash != null;
+  const swapHint =
+    swap.fileCount == null
+      ? `${formatBytes(swap.used)} / ${formatBytes(swap.total)} · pagefile`
+      : `${formatBytes(swap.used)} / ${formatBytes(swap.total)} · ${swap.fileCount} 个 swapfile · 占用存储见「存储」tab`;
 
   return (
     <div className="space-y-4">
@@ -342,75 +355,98 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
       <div className="grid grid-cols-2 gap-x-8 gap-y-5 border-b border-hairline-soft pb-5">
         <Stat label="物理内存" value={numOf(physicalTotal)} unit={unitOf(physicalTotal)} />
         <Stat
-          label="压缩内存"
-          value={formatBytes(compressorBytes)}
-          hint="vm_stat 压缩页"
+          label="已用"
+          value={formatBytes(snapshot.physicalUsedBytes ?? 0)}
+          hint={physicalTotal > 0 ? formatPercent((snapshot.physicalUsedBytes ?? 0) / physicalTotal) : undefined}
         />
-        <Stat label="空闲页" value={formatBytes(pagesFreeBytes)} hint="Pages free" />
+        <Stat label="可用" value={formatBytes(freeBytes)} hint={freeBytesHint(compressorBytes)} />
+        {compressorBytes != null ? (
+          <Stat label="压缩内存" value={formatBytes(compressorBytes)} hint="vm_stat 压缩页" />
+        ) : null}
         <Stat
           label="swap 已用"
           value={formatPercent(swapRatio)}
           tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
-          hint={`${formatBytes(swap.used)} / ${formatBytes(swap.total)} · ${swap.fileCount} 个 swapfile · 占用存储见「存储」tab`}
+          hint={swapHint}
         />
       </div>
 
-      <section className="border-b border-hairline-soft pb-5">
-        <div className="flex items-center justify-between">
-          <span className="text-[11px] text-ink-dim">内存压力</span>
-          <PressureDot level={pressure.level} />
-        </div>
-        <div className="mt-2.5 flex items-center justify-between text-[10px] text-ink-faint">
-          <span>
-            内核原始值 <span className="font-mono text-ink-dim">{pressure.raw}</span>（1 正常 / 2 警告 / 4 紧张）
-          </span>
-          <span>
-            今日新增 swapfile <span className="font-mono text-ink-dim">+{swap.newToday}</span>
-          </span>
-        </div>
-        <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-ink-faint">
-          <span>
-            换入速率{" "}
-            <span className="font-mono tabular-nums text-ink-dim">
-              {formatRate(thrash.swapinsPerSec)}/s
-            </span>
-          </span>
-          <span>
-            换出速率{" "}
-            <span className="font-mono tabular-nums text-ink-dim">
-              {formatRate(thrash.swapoutsPerSec)}/s
-            </span>
-          </span>
-        </div>
-      </section>
+      {pressure ? (
+        <section className="border-b border-hairline-soft pb-5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] text-ink-dim">内存压力</span>
+            <PressureDot level={pressure.level} />
+          </div>
+          <div className="mt-2.5 flex items-center justify-between text-[10px] text-ink-faint">
+            <span>{pressureCaption(pressure)}</span>
+            {swap.newToday != null ? (
+              <span>
+                今日新增 swapfile <span className="font-mono text-ink-dim">+{swap.newToday}</span>
+              </span>
+            ) : null}
+          </div>
+          {hasSwapMetrics ? (
+            <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-ink-faint">
+              <span>
+                换入速率{" "}
+                <span className="font-mono tabular-nums text-ink-dim">
+                  {formatRate(thrash.swapinsPerSec)}/s
+                </span>
+              </span>
+              <span>
+                换出速率{" "}
+                <span className="font-mono tabular-nums text-ink-dim">
+                  {formatRate(thrash.swapoutsPerSec)}/s
+                </span>
+              </span>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
 
-      <section>
-        <div className="flex items-baseline justify-between">
-          <span className="text-[11px] text-ink-dim">换出受害者</span>
-          <span className="text-[10px] text-ink-faint">存活但大部分在磁盘上</span>
-        </div>
-        {topSwapped.length === 0 ? (
-          <p className="mt-2 py-1 text-[11px] text-ink-faint">当前没有明显被换出的进程。</p>
-        ) : (
-          <ul className="mt-1.5">
-            {topSwapped.map((p) => (
-              <VictimRow
-                key={`${p.pid}-${p.startTime}`}
-                proc={p}
-                onKillMenu={onKillMenu}
-              />
-            ))}
-          </ul>
-        )}
-      </section>
+      {hasSwapMetrics ? (
+        <section>
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] text-ink-dim">换出受害者</span>
+            <span className="text-[10px] text-ink-faint">存活但大部分在磁盘上</span>
+          </div>
+          {topSwapped.length === 0 ? (
+            <p className="mt-2 py-1 text-[11px] text-ink-faint">当前没有明显被换出的进程。</p>
+          ) : (
+            <ul className="mt-1.5">
+              {topSwapped.map((p) => (
+                <VictimRow
+                  key={`${p.pid}-${p.startTime}`}
+                  proc={p}
+                  onKillMenu={onKillMenu}
+                />
+              ))}
+            </ul>
+          )}
+        </section>
+      ) : null}
 
       {!snapshot.deepAvailable ? (
         <p className="mt-4 rounded-lg bg-warn/[0.07] px-3 py-2 text-[11px] leading-relaxed text-warn">
-          深探不可用：当前全部为 RSS 口径（不含换出量）。请确认 /usr/bin/footprint 可执行。
+          深探不可用：当前全部为 RSS 口径。macOS 请确认 /usr/bin/footprint 可执行；
+          Windows 通常是该进程受保护或权限不足。
         </p>
       ) : null}
     </div>
   );
+}
+
+/** 「可用」的补注：macOS 给的是 Pages free，Windows 是 AvailPhys，语义不同别混着说 */
+function freeBytesHint(compressorBytes: number | null): string {
+  return compressorBytes == null ? "系统可用物理内存" : "Pages free";
+}
+
+/** 压力行的原始值说明：两个平台的 raw 含义完全不同 */
+function pressureCaption(pressure: { raw: number; metric: "kernel" | "occupancy" }): string {
+  if (pressure.metric === "occupancy") {
+    return `内存占用率 ${pressure.raw}%（<80 正常 / 80–91 警告 / ≥92 紧张）`;
+  }
+  return `内核原始值 ${pressure.raw}（1 正常 / 2 警告 / 4 紧张）`;
 }
 
 function VictimRow({
@@ -552,13 +588,13 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
           <Row label="家族" value={proc.family} />
           <Row
             label="读数来源"
-            value={proc.source === "footprint" ? "/usr/bin/footprint --swapped" : "sysinfo RSS"}
+            value={memSourceLabel(proc.source)}
             mono
           />
         </dl>
         {snapshot?.deepAvailable === false ? (
           <p className="mt-2.5 rounded bg-warn/[0.07] px-2 py-1.5 text-[10px] leading-relaxed text-warn">
-            深探不可用，当前为 RSS 口径（不含换出量）。
+            深探不可用，当前为 RSS 口径。
           </p>
         ) : null}
       </section>

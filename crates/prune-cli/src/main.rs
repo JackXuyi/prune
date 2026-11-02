@@ -356,14 +356,23 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
     }
 
     let total = mem::system::physical_total();
+    // 没有口径就写「不可用」——不打印 0，避免脚本把 0 当真
+    let compressor = mem::system::read()
+        .ok()
+        .and_then(|s| s.compressor)
+        .map(hb)
+        .unwrap_or_else(|| "不可用".to_string());
+    let pressure_text = pressure
+        .map(|p| format!("{:?}", p.level))
+        .unwrap_or_else(|| "不可用".to_string());
     println!(
-        "物理 {} · 压缩器 {} · swap {}/{}（{:.0}%） · 压力 {:?}",
+        "物理 {} · 压缩器 {} · swap {}/{}（{:.0}%） · 压力 {}",
         hb(total),
-        hb(mem::system::read().map(|s| s.compressor_bytes()).unwrap_or(0)),
+        compressor,
         hb(swap_info.used),
         hb(swap_info.total),
         swap_info.used_ratio() * 100.0,
-        pressure.level
+        pressure_text
     );
     println!();
     let head = if swapped {

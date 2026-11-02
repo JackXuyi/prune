@@ -1,4 +1,4 @@
-//! footprint 深探（B1）：调用 `/usr/bin/footprint -p <pid> --swapped -j <file>`。
+//! 深探（B1）：macOS 调 `/usr/bin/footprint`，Windows 走 `GetProcessMemoryInfo`。
 //!
 //! **降级链（docs/m2-memory-plan.md §7，本期最关键的正确性要求）**
 //!
@@ -10,6 +10,11 @@
 //! | 超过 3 s | `ProbeError::Timeout` → 单进程降级 RSS |
 //!
 //! 唯一成功判据是「JSON 文件产出 + 必需字段完整」，**不看退出码**。
+//!
+//! Windows 没有 footprint 也没有「换出量」口径，改用 **Private Bytes**
+//! （`K32GetProcessMemoryInfo` 的 `PrivateUsage`）：语义最接近 footprint 的
+//! 「真实占用」，但**不含被换出到 pagefile 的部分**，因此 `swapped = None`，
+//! UI 隐藏换出相关读数，而不是显示 0。
 
 use std::collections::HashMap;
 #[cfg(target_os = "macos")]
@@ -35,10 +40,10 @@ pub const DEFAULT_CONCURRENCY: usize = 8;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FootprintSample {
     pub pid: i32,
-    /// phys_footprint（含被换出部分）
+    /// macOS：phys_footprint（含被换出部分）；Windows：Private Bytes
     pub footprint: u64,
-    /// categories[*].swapped 求和
-    pub swapped: u64,
+    /// `categories[*].swapped` 求和。None = 该平台没有换出口径（Windows）
+    pub swapped: Option<u64>,
 }
 
 /// 深探失败原因（全部意味着「该进程退回 RSS 口径」）
@@ -94,10 +99,32 @@ pub fn probe_with_timeout(pid: i32, timeout: Duration) -> Result<FootprintSample
     {
         probe_macos(pid, timeout)
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
+    {
+        let _ = timeout;
+        probe_windows(pid)
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
     {
         let _ = (pid, timeout);
-        Err(ProbeError::Spawn("footprint 仅在 macOS 可用".to_string()))
+        Err(ProbeError::Spawn("当前平台没有深探实现".to_string()))
+    }
+}
+
+/// Windows：Private Bytes。
+///
+/// `OpenProcess` 打不开（进程已退出 / 权限不足 / 受保护进程）一律算「无产出」，
+/// 由调用方把该进程降级成 RSS 口径——和 macOS 的 `NoOutput` 语义保持一致。
+#[cfg(windows)]
+fn probe_windows(pid: i32) -> Result<FootprintSample, ProbeError> {
+    match crate::win::private_bytes(pid) {
+        Some(bytes) => Ok(FootprintSample {
+            pid,
+            footprint: bytes,
+            // 换出量在 Windows 上没有可读口径：None 而不是 0
+            swapped: None,
+        }),
+        None => Err(ProbeError::NoOutput),
     }
 }
 
@@ -190,7 +217,8 @@ pub fn parse(json: &str) -> Result<FootprintSample, ProbeError> {
     Ok(FootprintSample {
         pid,
         footprint,
-        swapped,
+        // macOS 有换出口径：即使 categories 缺失也返回 Some(0)（真实的「没换出」）
+        swapped: Some(swapped),
     })
 }
 
@@ -251,7 +279,7 @@ mod tests {
         let s = parse(json).expect("应解析成功");
         assert_eq!(s.pid, 4242);
         assert_eq!(s.footprint, 3_355_443_200);
-        assert_eq!(s.swapped, 3_200_000_000);
+        assert_eq!(s.swapped, Some(3_200_000_000));
     }
 
     #[test]
@@ -277,7 +305,7 @@ mod tests {
     fn parse_without_categories_yields_zero_swapped() {
         let json = r#"{"processes":[{"pid":7,"footprint":1024}]}"#;
         let s = parse(json).unwrap();
-        assert_eq!(s.swapped, 0);
+        assert_eq!(s.swapped, Some(0));
         assert_eq!(s.footprint, 1024);
     }
 

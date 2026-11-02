@@ -1,7 +1,7 @@
 # Windows 支持方案（W0–W4）
 
 > 目标：让 Prune 在 Windows 上不只是「能编译」，而是核心功能可用。
-> 状态：**W0 ✅ / W1 ✅ / W2–W4 待开工**（更新于 2026-11-02）
+> 状态：**W0 ✅ / W1 ✅ / W2 ✅ / W3–W4 待开工**（更新于 2026-11-02）
 
 ## 1. 结论与前提
 
@@ -21,7 +21,7 @@ Prune 原本是 macOS-first 实现：壳层（Tauri）用 `#[cfg]` 门隔离得�
 |---|---|---|
 | **W0 编译基线** | Windows target 交叉编译、清理 unix-only 代码导致的编译失败 | ✅ |
 | **W1 低成本补丁** | 路径口径统一、白名单平台化、reveal/kill 分流、workspace 路径 | ✅ |
-| **W2 内存口径** | vm_stat/sysctl → GlobalMemoryStatusEx；footprint → Private Bytes；swap/工作区降级 | 待开工 |
+| **W2 内存口径** | vm_stat/sysctl → GlobalMemoryStatusEx；footprint → Private Bytes；swap/换出按口径隐藏 | ✅ |
 | **W3 壳层体验** | 面板定位实测、托盘常驻、失焦隐藏；Accessory 的 Windows 等价物验证 | 待开工 |
 | **W4 打包分发** | NSIS 安装包、签名策略、CI（Windows runner 跑 check + test） | 待开工 |
 
@@ -103,18 +103,26 @@ scripts/check-windows.sh --build                                       # 额外�
 >
 > 若管理员改过 `%LOCALAPPDATA%`（非默认位置），上述 home 相对路径会失配，当前不覆盖。
 
-## 5. W2 预告（内存口径，未开工）
+## 5. W2 内存口径（已完成）
 
-| macOS 现状 | Windows 方案 | 降级处理 |
+| macOS 现状 | Windows 方案 | 落地方式 |
 |---|---|---|
-| `vm_stat` 页统计 + 压缩内存 | `GlobalMemoryStatusEx`（物理总量/可用） | 压缩内存字段隐藏 |
-| `kern.memorystatus_vm_pressure_level` | 可用内存比例映射三级 | 明确标注为估算 |
-| `sysctl vm.swapusage` + swapfile 目录 | 页面文件统计（`GetPerformanceInfo`） | 颠簸速率隐藏 |
-| `footprint` 深探（含 swapped） | `GetProcessMemoryInfo` Private Bytes | swapped 字段隐藏 |
-| `lsof` 工作区归属 | 不可用 | 归属列隐藏 |
+| `vm_stat` 页统计 + 压缩内存 | `GlobalMemoryStatusEx`（物理总量/可用/占用率） | `SystemMem` 改成平台中性模型；压缩内存 `Option`，Windows 为 `None` → UI 隐藏 |
+| `kern.memorystatus_vm_pressure_level` | 用 `dwMemoryLoad` 占用率分档 | `Pressure.metric` 区分 `kernel` / `occupancy`，UI 换文案（不把 84 当非法 level） |
+| `sysctl vm.swapusage` + swapfile 目录 | pagefile 统计（`GetPerformanceInfo`，经 sysinfo） | swap 用量可用；`fileCount` / `newToday` 为 `None` → UI 隐藏 |
+| `footprint` 深探（含 swapped） | `GetProcessMemoryInfo` 的 Private Bytes | `MemSource::Private` 单独标注口径；`swapped` 为 `None` → 换出列/受害者榜隐藏 |
+| `lsof` 工作区归属 | 无等价物 | 句柄那一级不可用；标签/继承仍工作，因此**只缺一级**而不是整体隐藏（见 §5.1） |
 
-UI 呈现统一按「隐藏」处理：由前端根据 `*_available` 字段决定是否渲染对应卡片，
+UI 呈现统一按「隐藏」处理：由前端根据 `null` 字段决定是否渲染对应卡片，
 后端只负责把「有没有数据」说清楚，不伪造数值。
+
+### 5.1 与预告的差异（已评估，按更诚实的方案落地）
+
+| 预告 | 实际 | 原因 |
+|---|---|---|
+| 工作区归属整体隐藏 | 仅缺「句柄」一级，标签/继承保留 | Windows 上 `workspaceStorage` 与 `--folder-uri` 都能读到，隐藏会白丢真实数据；`WorkspaceRef.source` 已如实标注置信度 |
+| 压力用「可用内存比例」映射 | 用 `MEMORYSTATUSEX.dwMemoryLoad` | 系统自己给的占用率比「100 − avail/total」更接近任务管理器口径，且省一次计算 |
+| 统一用 `*_available` 布尔 | 改成 `Option<T>` | 一处语义两种表达（`false` 与「读到 0」）容易分歧；`Option` 让「没有口径」在类型上不可忽略 |
 
 ## 6. 风险
 

@@ -1,8 +1,13 @@
-//! swap 仪表（B2）：`sysctl vm.swapusage` + `/System/Volumes/VM/` swapfile 统计。
+//! swap 仪表：macOS 走 `sysctl vm.swapusage` + `/System/Volumes/VM/` swapfile 统计，
+//! Windows 走 pagefile（`GetPerformanceInfo`，经 sysinfo 封装）。
 //!
-//! 两个坑（docs/m2-memory-plan.md §2）：
+//! 两个 macOS 坑（docs/m2-memory-plan.md §2）：
 //! 1. swapfile **编号不连续**（回收后不重用）→ 只能数文件个数，不能按最大编号推算；
 //! 2. 「今日新增」按文件 mtime 落在本地当日统计，并用「与上次数量的差值」兜底（D-M6）。
+//!
+//! Windows 没有 swapfile 这一层概念（pagefile 是系统托管的单个/多个 .sys 文件，
+//! 大小与增长由系统决定），因此 `file_count` / `new_today` 为 `None`——UI 隐藏，
+//! 不用 0 冒充「没有新增」。
 
 use std::path::Path;
 
@@ -15,10 +20,10 @@ pub struct SwapInfo {
     pub total: u64,
     pub used: u64,
     pub free: u64,
-    /// `/System/Volumes/VM/swapfile*` 文件个数
-    pub file_count: usize,
-    /// 今日新增（按 mtime 当日 + 数量差值兜底）
-    pub new_today: usize,
+    /// macOS：`/System/Volumes/VM/swapfile*` 文件个数；None = 该平台无此口径
+    pub file_count: Option<usize>,
+    /// macOS：今日新增（mtime 当日 + 数量差值兜底）；None = 该平台无此口径
+    pub new_today: Option<usize>,
 }
 
 impl SwapInfo {
@@ -135,9 +140,27 @@ pub fn count_new_since(files: &[SwapFile], since: u64) -> usize {
 
 /// 采集一次 swap 状态。
 ///
-/// `prev_count` 为上一轮的文件数：mtime 统计为 0 但数量增加时，用差值兜底
-/// （防止刚写完的 swapfile mtime 精度/时区导致的漏计）。
+/// `prev_count` 为上一轮的文件数（仅 macOS 有意义）：mtime 统计为 0 但数量增加时，
+/// 用差值兜底（防止刚写完的 swapfile mtime 精度/时区导致的漏计）。
 pub fn collect(prev_count: Option<usize>) -> SwapInfo {
+    #[cfg(target_os = "macos")]
+    {
+        collect_macos(prev_count)
+    }
+    #[cfg(windows)]
+    {
+        let _ = prev_count;
+        collect_windows()
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        let _ = prev_count;
+        SwapInfo::default()
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn collect_macos(prev_count: Option<usize>) -> SwapInfo {
     let (total, used, free) = read_swapusage().unwrap_or((0, 0, 0));
     let files = list_swapfiles();
     let file_count = files.len();
@@ -151,8 +174,28 @@ pub fn collect(prev_count: Option<usize>) -> SwapInfo {
         total,
         used,
         free,
-        file_count,
-        new_today: by_mtime.max(by_delta),
+        file_count: Some(file_count),
+        new_today: Some(by_mtime.max(by_delta)),
+    }
+}
+
+/// Windows：pagefile 口径。
+///
+/// 走 sysinfo 的 `total_swap` / `used_swap`（内部是 `GetPerformanceInfo` 的
+/// commit 额度减去物理内存），不自己再写一遍 FFI——
+/// 这个换算已经有一次实现，重复实现只会多一个出错点。
+#[cfg(windows)]
+fn collect_windows() -> SwapInfo {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let total = sys.total_swap();
+    let used = sys.used_swap().min(total);
+    SwapInfo {
+        total,
+        used,
+        free: total.saturating_sub(used),
+        file_count: None,
+        new_today: None,
     }
 }
 

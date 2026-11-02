@@ -1,24 +1,65 @@
-//! 系统级内存读数：`vm_stat` 页数换算、内存压力等级、物理内存总量。
+//! 系统级内存读数：macOS 走 `vm_stat` + `sysctl`，Windows 走 `GlobalMemoryStatusEx`。
 //!
-//! **页面大小必须从 `vm_stat` 头部 / `hw.pagesize` 读取**——本机是 16384 B，
+//! 平台差异由 [`SystemMem`] 的中性字段吸收，**缺失一律用 `None`，不用 0 冒充**：
+//!
+//! | 口径 | macOS | Windows |
+//! |---|---|---|
+//! | 物理总量 | `hw.memsize` | `MEMORYSTATUSEX.ullTotalPhys` |
+//! | 可用 | `Pages free` | `ullAvailPhys` |
+//! | 已用 | 总量 − free − inactive − speculative | 总量 − avail |
+//! | 压缩内存 | `Pages occupied by compressor` | 无 → `None`（UI 隐藏） |
+//! | 换页计数 | `Swapins` / `Swapouts` | 无 → `None`（颠簸速率隐藏） |
+//! | 内存压力 | `kern.memorystatus_vm_pressure_level` | 无该语义 → 用占用率分档（标注 metric） |
+//!
+//! **macOS 页面大小必须从 `vm_stat` 头部读取**——本机是 16384 B，
 //! 写死 4096 会让所有换算差 4 倍（docs/m2-memory-plan.md §2）。
 
+use super::{Pressure, PressureLevel, PressureMetric};
+
+#[cfg(target_os = "macos")]
 use std::process::Command;
 
-use super::{Pressure, PressureLevel};
-
-/// `vm_stat` 解析结果（全部为原始页数/计数，换算由方法负责）
+/// 平台中性的系统内存读数（全部字节）
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct SystemMem {
+    pub total: u64,
+    /// 可用内存：macOS 取 `Pages free`，Windows 取 `ullAvailPhys`
+    pub free: u64,
+    /// 已用内存：macOS 排除可回收缓存，Windows 为 total − avail
+    pub used: u64,
+    /// 压缩内存占用；`None` = 该平台无此口径
+    pub compressor: Option<u64>,
+    /// 累计换入页数；`None` = 该平台无此口径
+    pub swapins_total: Option<u64>,
+    /// 累计换出页数；`None` = 该平台无此口径
+    pub swapouts_total: Option<u64>,
+}
+
+impl SystemMem {
+    /// 读不到任何数据时的空读数：口径字段全为 None，UI 据此隐藏对应卡片
+    pub fn unavailable() -> Self {
+        Self {
+            total: 0,
+            free: 0,
+            used: 0,
+            compressor: None,
+            swapins_total: None,
+            swapouts_total: None,
+        }
+    }
+}
+
+/// `vm_stat` 解析结果（macOS 专用，全部为原始页数/计数）
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct VmStat {
     /// 页大小（字节），来自 vm_stat 头部
     pub page_size: u64,
-    /// Pages free
     pub pages_free: u64,
-    /// Pages inactive（可回收缓存，不算已用）
+    /// 可回收缓存，不算已用
     pub pages_inactive: u64,
-    /// Pages speculative（预取缓存，不算已用）
+    /// 预取缓存，不算已用
     pub pages_speculative: u64,
-    /// 压缩内存占用的物理页（"Pages occupied by compressor"，旧系统为 "Pages stored in compressor"）
+    /// 压缩内存占用的物理页（"Pages occupied by compressor" / 旧系统 "Pages stored in compressor"）
     pub pages_compressor: u64,
     pub swapins_total: u64,
     pub swapouts_total: u64,
@@ -26,7 +67,7 @@ pub struct SystemMem {
     pub pageouts_total: u64,
 }
 
-impl SystemMem {
+impl VmStat {
     pub fn compressor_bytes(&self) -> u64 {
         self.pages_compressor.saturating_mul(self.page_size)
     }
@@ -35,11 +76,11 @@ impl SystemMem {
         self.pages_free.saturating_mul(self.page_size)
     }
 
-    /// 物理内存「已用」（M4/S1）：总量 − 空闲 − 非活跃缓存 − 预取缓存。
+    /// 物理内存「已用」：总量 − 空闲 − 非活跃缓存 − 预取缓存。
     ///
     /// 与活动监视器 Memory Used（App + Wired + Compressed）同类近似：
     /// inactive / speculative 属于随时可回收的缓存，不应计入「已用」。
-    /// vm_stat 拿不到干净的分桶时（字段缺失）按 0 处理，结果只可能偏高，不会虚低。
+    /// 分桶缺失时按 0 处理，结果只可能偏高，不会虚低。
     pub fn used_bytes(&self, physical_total: u64) -> u64 {
         let cache = self
             .pages_free_bytes()
@@ -47,10 +88,48 @@ impl SystemMem {
             .saturating_add(self.pages_speculative.saturating_mul(self.page_size));
         physical_total.saturating_sub(cache)
     }
+
+    /// 转成平台中性读数
+    pub fn to_system(&self, physical_total: u64) -> SystemMem {
+        SystemMem {
+            total: physical_total,
+            free: self.pages_free_bytes(),
+            used: self.used_bytes(physical_total),
+            compressor: Some(self.compressor_bytes()),
+            swapins_total: Some(self.swapins_total),
+            swapouts_total: Some(self.swapouts_total),
+        }
+    }
 }
 
-/// 读取并解析一次 `vm_stat`
+/// 读取一次系统内存读数
 pub fn read() -> Result<SystemMem, String> {
+    #[cfg(target_os = "macos")]
+    {
+        let vm = read_vm_stat()?;
+        Ok(vm.to_system(physical_total()))
+    }
+    #[cfg(windows)]
+    {
+        let m = crate::win::system_memory().ok_or("GlobalMemoryStatusEx 调用失败")?;
+        Ok(SystemMem {
+            total: m.total,
+            free: m.available,
+            used: m.total.saturating_sub(m.available),
+            compressor: None,
+            swapins_total: None,
+            swapouts_total: None,
+        })
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        Err("当前平台没有系统内存读数实现".to_string())
+    }
+}
+
+/// 读取并解析一次 `vm_stat`（macOS）
+#[cfg(target_os = "macos")]
+pub fn read_vm_stat() -> Result<VmStat, String> {
     let out = Command::new("/usr/bin/vm_stat")
         .output()
         .map_err(|e| format!("执行 vm_stat 失败: {e}"))?;
@@ -62,7 +141,7 @@ pub fn read() -> Result<SystemMem, String> {
 }
 
 /// 解析 `vm_stat` 输出（纯函数，便于单测）
-pub fn parse_vm_stat(text: &str) -> Result<SystemMem, String> {
+pub fn parse_vm_stat(text: &str) -> Result<VmStat, String> {
     let page_size = text
         .lines()
         .next()
@@ -93,7 +172,7 @@ pub fn parse_vm_stat(text: &str) -> Result<SystemMem, String> {
         .copied()
         .unwrap_or(0);
 
-    Ok(SystemMem {
+    Ok(VmStat {
         page_size,
         pages_free: map.get("Pages free").copied().unwrap_or(0),
         pages_inactive: map.get("Pages inactive").copied().unwrap_or(0),
@@ -117,16 +196,35 @@ fn parse_page_size(line: &str) -> Option<u64> {
     digits.parse().ok()
 }
 
-/// 读取内核内存压力等级（`kern.memorystatus_vm_pressure_level`）
-pub fn read_pressure() -> Pressure {
-    match sysctl("kern.memorystatus_vm_pressure_level")
-        .and_then(|s| s.trim().parse::<i32>().ok())
+/// 读取内核内存压力等级。
+///
+/// - macOS：`kern.memorystatus_vm_pressure_level`（1/2/4）
+/// - Windows：没有该语义，用 `dwMemoryLoad` 占用率分档，`metric = Occupancy`
+///
+/// 返回 `None` 表示读不到——调用方按「不可用」隐藏，不要假装 Normal。
+pub fn read_pressure() -> Option<Pressure> {
+    #[cfg(target_os = "macos")]
     {
-        Some(raw) => Pressure {
+        let raw = sysctl("kern.memorystatus_vm_pressure_level")
+            .and_then(|s| s.trim().parse::<i32>().ok())?;
+        Some(Pressure {
             level: map_pressure_level(raw),
             raw,
-        },
-        None => Pressure::unknown(),
+            metric: PressureMetric::Kernel,
+        })
+    }
+    #[cfg(windows)]
+    {
+        let m = crate::win::system_memory()?;
+        Some(Pressure {
+            level: map_occupancy_pct(m.load_pct),
+            raw: m.load_pct as i32,
+            metric: PressureMetric::Occupancy,
+        })
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        None
     }
 }
 
@@ -142,18 +240,43 @@ pub fn map_pressure_level(raw: i32) -> PressureLevel {
     }
 }
 
-/// 物理内存总量（hw.memsize，字节）
+/// Windows：`dwMemoryLoad` 占用率分档（<80 正常 / 80–91 警告 / ≥92 紧张）。
+///
+/// 这是**占用率**，不是 macOS 那种内核综合压力信号——所以 `Pressure.metric`
+/// 必须标成 `Occupancy`，UI 据此换文案（1/2/4 的解释在 Windows 上不成立）。
+pub fn map_occupancy_pct(pct: u32) -> PressureLevel {
+    match pct {
+        0..=79 => PressureLevel::Normal,
+        80..=91 => PressureLevel::Warning,
+        _ => PressureLevel::Critical,
+    }
+}
+
+/// 物理内存总量（字节）
 pub fn physical_total() -> u64 {
-    sysctl("hw.memsize")
-        .and_then(|s| s.trim().parse::<u64>().ok())
-        .unwrap_or(0)
+    #[cfg(target_os = "macos")]
+    {
+        sysctl("hw.memsize")
+            .and_then(|s| s.trim().parse::<u64>().ok())
+            .unwrap_or(0)
+    }
+    #[cfg(windows)]
+    {
+        crate::win::system_memory().map(|m| m.total).unwrap_or(0)
+    }
+    #[cfg(all(not(target_os = "macos"), not(windows)))]
+    {
+        0
+    }
 }
 
 /// `hw.pagesize`，用于交叉校验 vm_stat 头部（不一致时以 vm_stat 为准）
+#[cfg(target_os = "macos")]
 pub fn hardware_page_size() -> Option<u64> {
     sysctl("hw.pagesize").and_then(|s| s.trim().parse::<u64>().ok())
 }
 
+#[cfg(target_os = "macos")]
 fn sysctl(name: &str) -> Option<String> {
     let out = Command::new("/usr/sbin/sysctl").arg("-n").arg(name).output().ok()?;
     if !out.status.success() {
@@ -179,7 +302,7 @@ Anonymous pages:                         292980.
 Pages stored in compressor:             1917419.
 Pages occupied by compressor:            401443.
 Pageins:                               78456721.
-Pageouts:                               3365569.
+Pageouts:                              3365569.
 Swapins:                               43542528.
 Swapouts:                              50939260.
 "#;
@@ -211,6 +334,20 @@ Swapouts:                              50939260.
     }
 
     #[test]
+    fn to_system_keeps_total_free_used_consistent() {
+        let m = parse_vm_stat(FIXTURE_16K).unwrap();
+        let total: u64 = 16 * 1024 * 1024 * 1024;
+        let s = m.to_system(total);
+        assert_eq!(s.total, total);
+        assert_eq!(s.free, m.pages_free_bytes());
+        assert_eq!(s.used, m.used_bytes(total));
+        assert_eq!(s.compressor, Some(m.compressor_bytes()));
+        // 已用 + 可回收缓存 = 总量（不丢页、不重复计）
+        let cache = (187659u64 + 1210) * 16_384;
+        assert_eq!(s.used + s.free + cache, total);
+    }
+
+    #[test]
     fn uses_pagesize_from_header_not_hardcoded_4096() {
         let fixture = FIXTURE_16K.replace("16384", "4096");
         let m = parse_vm_stat(&fixture).unwrap();
@@ -239,11 +376,35 @@ Swapouts:                              50939260.
     }
 
     #[test]
+    fn occupancy_pct_bands_are_monotonic() {
+        assert_eq!(map_occupancy_pct(0), PressureLevel::Normal);
+        assert_eq!(map_occupancy_pct(79), PressureLevel::Normal);
+        assert_eq!(map_occupancy_pct(80), PressureLevel::Warning);
+        assert_eq!(map_occupancy_pct(91), PressureLevel::Warning);
+        assert_eq!(map_occupancy_pct(92), PressureLevel::Critical);
+        assert_eq!(map_occupancy_pct(100), PressureLevel::Critical);
+    }
+
+    #[test]
+    fn unavailable_reading_has_no_fake_zeros() {
+        let s = SystemMem::unavailable();
+        assert_eq!(s.compressor, None);
+        assert_eq!(s.swapins_total, None);
+        assert_eq!(s.total, 0);
+    }
+
+    #[test]
     #[cfg(target_os = "macos")]
     fn reads_live_values() {
-        let m = read().expect("本机 vm_stat 应可读");
+        let s = read().expect("本机 vm_stat 应可读");
+        assert!(s.total > 0);
+        assert!(s.used > 0 && s.used <= s.total);
+        assert!(s.compressor.is_some(), "macOS 必须有压缩内存口径");
+        let m = read_vm_stat().expect("本机 vm_stat 应可读");
         assert!(m.page_size >= 4096);
         assert!(physical_total() > 0);
         assert!(hardware_page_size().is_some());
+        let p = read_pressure().expect("macOS 应能读到内存压力");
+        assert_eq!(p.metric, PressureMetric::Kernel);
     }
 }

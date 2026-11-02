@@ -152,8 +152,8 @@ fn probe_top(procs: &mut [prune_core::mem::ProcMem], top: usize) {
     for p in procs.iter_mut() {
         if let Some(s) = samples.get(&p.pid) {
             p.footprint = Some(s.footprint);
-            p.swapped = Some(s.swapped);
-            p.source = prune_core::mem::MemSource::Footprint;
+            p.swapped = s.swapped;
+            p.source = prune_core::mem::MemSource::deep();
         }
     }
 }

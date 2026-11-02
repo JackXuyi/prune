@@ -102,7 +102,7 @@ export function devSnapshot(): MemSnapshot {
     physicalTotal: 17_179_869_184,
     physicalUsedBytes: 13_800_000_000,
     compressorBytes: 6.66e9,
-    pagesFreeBytes: 62 * 1e6,
+    freeBytes: 62 * 1e6,
     swap: {
       total: 12_288 * 1e6,
       used: 10_930 * 1e6,
@@ -110,7 +110,7 @@ export function devSnapshot(): MemSnapshot {
       fileCount: 12,
       newToday: 2,
     },
-    pressure: { level: "warning", raw: 2 },
+    pressure: { level: "warning", raw: 2, metric: "kernel" },
     thrash: { swapinsPerSec: 0.4, swapoutsPerSec: 0.7 },
     topSwapped: [...deep]
       .sort((a, b) => (b.swapped ?? 0) - (a.swapped ?? 0))

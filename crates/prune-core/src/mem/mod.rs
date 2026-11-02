@@ -21,10 +21,26 @@ pub use workspace::{WorkspaceRef, WorkspaceSource};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum MemSource {
-    /// `footprint -p <pid> --swapped -j` 的 phys_footprint（含被换出部分）
+    /// macOS：`footprint -p <pid> --swapped -j` 的 phys_footprint（含被换出部分）
     Footprint,
+    /// Windows：`GetProcessMemoryInfo` 的 Private Bytes（不含被换出部分）
+    Private,
     /// sysinfo 的 RSS（不含换出量，仅作筛选与降级口径）
     Rss,
+}
+
+impl MemSource {
+    /// 当前平台的深探口径。
+    ///
+    /// 两个平台拿到的是**不同指标**，所以不能共用一个枚举值——
+    /// UI 的徽标要如实写「footprint」还是「Private Bytes」。
+    pub fn deep() -> Self {
+        if cfg!(windows) {
+            Self::Private
+        } else {
+            Self::Footprint
+        }
+    }
 }
 
 /// 内存压力等级（D-M3：语义来自 `kern.memorystatus_vm_pressure_level`）
@@ -36,22 +52,28 @@ pub enum PressureLevel {
     Critical,
 }
 
-/// 压力等级 + 原始 sysctl 值（T-210 与活动监视器校准用）
+/// 压力读数的口径来源。
+///
+/// macOS 是内核综合压力信号（1/2/4），Windows 没有等价物，
+/// 只能用 `dwMemoryLoad` 占用率分档——两者 `raw` 的含义完全不同，
+/// 所以必须随值一起透出，否则 UI 会把 84 当成「非法 level」。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PressureMetric {
+    /// `kern.memorystatus_vm_pressure_level`：1 正常 / 2 警告 / 4 紧张
+    Kernel,
+    /// Windows 占用率百分比：<80 正常 / 80–91 警告 / ≥92 紧张
+    Occupancy,
+}
+
+/// 压力等级 + 原始读数（T-210 与活动监视器校准用）
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Pressure {
     pub level: PressureLevel,
-    /// 原始 level 值：1=normal / 2=warning / 4=critical（0 或未知按 Normal 处理）
+    /// 原始值：含义由 `metric` 决定
     pub raw: i32,
-}
-
-impl Pressure {
-    pub fn unknown() -> Self {
-        Self {
-            level: PressureLevel::Normal,
-            raw: 0,
-        }
-    }
+    pub metric: PressureMetric,
 }
 
 /// 换页颠簸速率（每秒），由相邻两次采样的累计值差分得到
@@ -166,26 +188,30 @@ impl FamilyMem {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemSnapshot {
-    /// hw.memsize
+    /// 物理内存总量
     pub physical_total: u64,
-    /// 已用 = 总量 − 空闲 − 非活跃缓存 − 预取缓存（近似活动监视器 Memory Used；
-    /// serde default：旧快照反序列化为 0，UI 按「未知」处理）
+    /// 已用 = 总量 − 可回收缓存（macOS）/ 总量 − 可用（Windows）；
+    /// serde default：旧快照反序列化为 0，UI 按「未知」处理
     #[serde(default)]
     pub physical_used_bytes: u64,
-    /// 压缩内存占用（vm_stat 的 compressor pages × page size）
-    pub compressor_bytes: u64,
-    pub pages_free_bytes: u64,
+    /// 可用内存（macOS `Pages free` / Windows `ullAvailPhys`）
+    #[serde(default)]
+    pub free_bytes: u64,
+    /// 压缩内存占用。None = 该平台无此口径（Windows），UI 隐藏该卡片
+    pub compressor_bytes: Option<u64>,
     pub swap: SwapInfo,
-    pub pressure: Pressure,
-    pub thrash: Thrash,
+    /// 内存压力。None = 读不到；Windows 用 Occupancy 口径
+    pub pressure: Option<Pressure>,
+    /// 换页颠簸速率。None = 该平台没有换页计数（Windows），UI 隐藏
+    pub thrash: Option<Thrash>,
     pub families: Vec<FamilyMem>,
-    /// B4 换出受害者榜（按 swapped 降序，最多 5 条）
+    /// B4 换出受害者榜（按 swapped 降序，最多 5 条）；Windows 恒为空
     pub top_swapped: Vec<ProcMem>,
     /// 本次快照时间（Unix 秒）
     pub fast_at: i64,
-    /// 上次 footprint 深探完成时间；None = 尚未深探
+    /// 上次深探完成时间；None = 尚未深探
     pub deep_updated_at: Option<i64>,
-    /// footprint 是否可用。false 时全部读数均为 RSS 口径
+    /// 深探是否可用。false 时全部读数均为 RSS 口径
     pub deep_available: bool,
     /// B5 泄漏嫌疑判定（M3）。无库/数据不足时是**显式状态**，不是空结果
     pub leaks: LeakReport,
@@ -363,13 +389,14 @@ pub fn thrash_rate(
 }
 
 /// 装配快照。纯函数，便于单测。
+///
+/// `physical_total` 从 `system` 里取，不再单独传——两处口径打架过一次。
 #[allow(clippy::too_many_arguments)]
 pub fn build_snapshot(
-    physical_total: u64,
     system: &system::SystemMem,
     swap: SwapInfo,
-    pressure: Pressure,
-    thrash: Thrash,
+    pressure: Option<Pressure>,
+    thrash: Option<Thrash>,
     procs: &[ProcMem],
     fast_at: i64,
     deep_updated_at: Option<i64>,
@@ -377,10 +404,10 @@ pub fn build_snapshot(
     leaks: LeakReport,
 ) -> MemSnapshot {
     MemSnapshot {
-        physical_total,
-        physical_used_bytes: system.used_bytes(physical_total),
-        compressor_bytes: system.compressor_bytes(),
-        pages_free_bytes: system.pages_free_bytes(),
+        physical_total: system.total,
+        physical_used_bytes: system.used,
+        free_bytes: system.free,
+        compressor_bytes: system.compressor,
         swap,
         pressure,
         thrash,

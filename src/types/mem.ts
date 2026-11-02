@@ -1,7 +1,22 @@
 /** 与 prune-core 的 serde 结构一一对应（camelCase）。改这里必须同步 Rust 侧。 */
 
-export type MemSource = "footprint" | "rss";
+/** 深探口径：macOS footprint / Windows Private Bytes / 降级 RSS */
+export type MemSource = "footprint" | "private" | "rss";
+
+/** 读数来源的展示文案：两个平台拿到的是不同指标，不能合并写成「footprint」 */
+export function memSourceLabel(source: MemSource): string {
+  switch (source) {
+    case "footprint":
+      return "/usr/bin/footprint --swapped";
+    case "private":
+      return "Private Bytes（不含换出）";
+    default:
+      return "sysinfo RSS";
+  }
+}
 export type PressureLevel = "normal" | "warning" | "critical";
+/** 压力读数口径：kernel = macOS 内核综合信号；occupancy = Windows 占用率百分比 */
+export type PressureMetric = "kernel" | "occupancy";
 /** 工作区归属来源，置信度从高到低 */
 export type WorkspaceSource = "handle" | "label" | "inherited";
 
@@ -22,8 +37,9 @@ export interface WorkspaceMem {
 
 export interface Pressure {
   level: PressureLevel;
-  /** 原始 kern.memorystatus_vm_pressure_level（1/2/4） */
+  /** 原始值：kernel 口径为 1/2/4，occupancy 口径为 0–100 */
   raw: number;
+  metric: PressureMetric;
 }
 
 export interface Thrash {
@@ -35,8 +51,10 @@ export interface SwapInfo {
   total: number;
   used: number;
   free: number;
-  fileCount: number;
-  newToday: number;
+  /** macOS 的 swapfile 个数；null = 该平台无此口径（Windows），UI 隐藏 */
+  fileCount: number | null;
+  /** macOS 今日新增 swapfile；null = 该平台无此口径（Windows），UI 隐藏 */
+  newToday: number | null;
 }
 
 export interface ProcMem {
@@ -72,13 +90,17 @@ export interface FamilyMem {
 
 export interface MemSnapshot {
   physicalTotal: number;
-  /** 已用 = 总量 − 空闲 − 非活跃 − 预取（M4）；旧快照缺省 undefined，UI 按「未知」处理 */
+  /** 已用：macOS 排除可回收缓存 / Windows 为总量 − 可用；旧快照缺省 undefined，UI 按「未知」处理 */
   physicalUsedBytes?: number;
-  compressorBytes: number;
-  pagesFreeBytes: number;
+  /** 可用内存（macOS Pages free / Windows AvailPhys） */
+  freeBytes: number;
+  /** 压缩内存；null = 该平台无此口径（Windows），UI 隐藏该卡片 */
+  compressorBytes: number | null;
   swap: SwapInfo;
-  pressure: Pressure;
-  thrash: Thrash;
+  /** 内存压力；null = 读不到，UI 隐藏 */
+  pressure: Pressure | null;
+  /** 换页颠簸速率；null = 该平台没有换页计数，换出相关读数一并隐藏 */
+  thrash: Thrash | null;
   families: FamilyMem[];
   topSwapped: ProcMem[];
   fastAt: number;

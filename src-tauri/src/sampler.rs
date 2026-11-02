@@ -54,7 +54,8 @@ pub const EVENT_DEEP: &str = "mem://deep";
 struct DeepRow {
     start_time: u64,
     footprint: u64,
-    swapped: u64,
+    /// None = 该平台没有换出口径（Windows），UI 隐藏换出列
+    swapped: Option<u64>,
 }
 
 /// 工作区归属缓存行（同样按 start_time 校验，防 pid 复用后把新进程算到旧项目上）
@@ -218,12 +219,15 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
         *state.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot.clone());
 
         eprintln!(
-            "[m2-mem] 快照轮 {} ms · {} 进程 · swap {}/{} · 压力 {:?}",
+            "[m2-mem] 快照轮 {} ms · {} 进程 · swap {}/{} · 压力 {}",
             elapsed,
             snapshot.families.iter().map(|f| f.process_count).sum::<usize>(),
             snapshot.swap.used / 1024 / 1024,
             snapshot.swap.total / 1024 / 1024,
-            snapshot.pressure.level
+            snapshot
+                .pressure
+                .map(|p| format!("{:?}", p.level))
+                .unwrap_or_else(|| "不可用".to_string())
         );
         snapshot
     })
@@ -458,8 +462,8 @@ fn merge_deep(mut procs: Vec<ProcMem>, deep: &HashMap<i32, DeepRow>) -> Vec<Proc
         if let Some(row) = deep.get(&p.pid) {
             if row.start_time == p.start_time {
                 p.footprint = Some(row.footprint);
-                p.swapped = Some(row.swapped);
-                p.source = MemSource::Footprint;
+                p.swapped = row.swapped;
+                p.source = MemSource::deep();
             }
         }
     }
@@ -503,16 +507,10 @@ fn home_dir() -> PathBuf {
 /// 读系统侧数据并装配快照（两条轮次共用）
 fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
     let now = now_secs();
-    let system: SystemMem = system::read().unwrap_or(SystemMem {
-        page_size: 4096,
-        pages_free: 0,
-        pages_inactive: 0,
-        pages_speculative: 0,
-        pages_compressor: 0,
-        swapins_total: 0,
-        swapouts_total: 0,
-        pageins_total: 0,
-        pageouts_total: 0,
+    // 读不到就整体降级为「无口径」：宁可少显示，也不能拿 0 冒充真实读数
+    let system = system::read().unwrap_or_else(|e| {
+        eprintln!("[m2-mem] 系统内存读数失败（本轮回退为无口径）: {e}");
+        SystemMem::unavailable()
     });
     let pressure = system::read_pressure();
 
@@ -521,17 +519,18 @@ fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
     {
         let mut prev = state.prev.lock().unwrap_or_else(|e| e.into_inner());
         swap_info = swap::collect(prev.swap_file_count);
-        prev.swap_file_count = Some(swap_info.file_count);
-        thrash = mem::thrash_rate(
-            prev.swap_counters,
-            system.swapins_total,
-            system.swapouts_total,
-            now,
-        );
-        prev.swap_counters = Some((system.swapins_total, system.swapouts_total, now));
+        prev.swap_file_count = swap_info.file_count;
+        // 只有两个平台都给了计数器才有速率；Windows 恒为 None → UI 隐藏
+        thrash = match (system.swapins_total, system.swapouts_total) {
+            (Some(ins), Some(outs)) => {
+                let t = mem::thrash_rate(prev.swap_counters, ins, outs, now);
+                prev.swap_counters = Some((ins, outs, now));
+                Some(t)
+            }
+            _ => None,
+        };
     }
 
-    let physical_total = system::physical_total();
     let deep_available = *state
         .deep_available
         .lock()
@@ -547,7 +546,6 @@ fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
         .clone();
 
     mem::build_snapshot(
-        physical_total,
         &system,
         swap_info,
         pressure,
@@ -672,7 +670,7 @@ mod tests {
             FootprintSample {
                 pid: 1,
                 footprint: 1000,
-                swapped: 900,
+                swapped: Some(900),
             },
         );
         samples.insert(
@@ -680,7 +678,7 @@ mod tests {
             FootprintSample {
                 pid: 2,
                 footprint: 2000,
-                swapped: 1800,
+                swapped: Some(1800),
             },
         );
         // pid 2 已退出（本轮快照里没有它）
@@ -731,7 +729,7 @@ mod tests {
             DeepRow {
                 start_time: 111,
                 footprint: 1000,
-                swapped: 900,
+                swapped: Some(900),
             },
         );
         // pid 2 的 start_time 不匹配 → 视为复用，不应合并
@@ -740,12 +738,12 @@ mod tests {
             DeepRow {
                 start_time: 999,
                 footprint: 2000,
-                swapped: 1900,
+                swapped: Some(1900),
             },
         );
         let merged = merge_deep(procs, &deep);
         assert_eq!(merged[0].footprint, Some(1000));
-        assert_eq!(merged[0].source, MemSource::Footprint);
+        assert_eq!(merged[0].source, MemSource::deep());
         assert_eq!(merged[1].footprint, None);
         assert_eq!(merged[1].source, MemSource::Rss);
     }

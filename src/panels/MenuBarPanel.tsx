@@ -124,6 +124,8 @@ function AppsSection() {
 function MemSection() {
   const snapshot = useMemStore((s) => s.snapshot)!;
   const { swap, compressorBytes, pressure, thrash, topSwapped } = snapshot;
+  // 没有换页计数 = 该平台不提供换出读数：换出受害者与颠簸速率整块隐藏
+  const hasSwapMetrics = thrash != null;
 
   const ratio = swap.total > 0 ? swap.used / swap.total : 0;
   const tone = ratio >= 0.9 ? "danger" : ratio >= 0.75 ? "warn" : "accent";
@@ -134,11 +136,17 @@ function MemSection() {
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
           <span className="text-[11px] text-ink-dim">内存压力</span>
-          <PressureDot level={pressure.level} />
+          {pressure ? (
+            <PressureDot level={pressure.level} />
+          ) : (
+            <span className="text-[10px] text-ink-faint">不可用</span>
+          )}
         </div>
-        <div className="text-[10px] text-ink-faint">
-          压缩 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(compressorBytes)}</span>
-        </div>
+        {compressorBytes != null ? (
+          <div className="text-[10px] text-ink-faint">
+            压缩 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(compressorBytes)}</span>
+          </div>
+        ) : null}
       </div>
 
       <div className="mt-3.5">
@@ -155,37 +163,48 @@ function MemSection() {
         </div>
         <Meter ratio={ratio} tone={tone} className="mt-2" />
         <div className="mt-2 flex items-center justify-between text-[10px] text-ink-faint">
-          <span>↳ swapfile 占用 {formatBytes(swap.used)}（主窗口「存储」可查）</span>
-          <span>{swap.newToday > 0 ? `+${swap.newToday} 今日` : "今日 +0"}</span>
-        </div>
-        <div className="mt-1 flex items-center justify-between text-[10px] text-ink-faint">
           <span>
-            颠簸 in <span className="font-mono tabular-nums">{formatRate(thrash.swapinsPerSec)}</span>/s
+            {swap.fileCount != null
+              ? `↳ swapfile 占用 ${formatBytes(swap.used)}（主窗口「存储」可查）`
+              : `↳ pagefile 占用 ${formatBytes(swap.used)}`}
           </span>
-          <span>
-            out <span className="font-mono tabular-nums">{formatRate(thrash.swapoutsPerSec)}</span>/s
-          </span>
+          {swap.newToday != null ? (
+            <span>{swap.newToday > 0 ? `+${swap.newToday} 今日` : "今日 +0"}</span>
+          ) : null}
         </div>
+        {hasSwapMetrics ? (
+          <div className="mt-1 flex items-center justify-between text-[10px] text-ink-faint">
+            <span>
+              颠簸 in <span className="font-mono tabular-nums">{formatRate(thrash.swapinsPerSec)}</span>/s
+            </span>
+            <span>
+              out <span className="font-mono tabular-nums">{formatRate(thrash.swapoutsPerSec)}</span>/s
+            </span>
+          </div>
+        ) : null}
       </div>
 
-      <div className="mt-4 flex items-baseline justify-between border-t border-hairline-soft pt-3">
-        <h2 className="text-[11px] font-medium tracking-wide text-ink-dim">换出受害者</h2>
-        <span className="text-[10px] text-ink-faint">
-          {snapshot.deepAvailable ? "按已换出量 · 点开检视" : "暂无深探数据"}
-        </span>
-      </div>
-
-      {topSwapped.length === 0 ? (
-        <p className="mt-2 py-2 text-[11px] leading-relaxed text-ink-faint">
-          当前没有明显被换出的进程。
-        </p>
-      ) : (
-        <ul className="mt-1">
-          {topSwapped.map((p) => (
-            <VictimRow key={`${p.pid}-${p.startTime}`} proc={p} />
-          ))}
-        </ul>
-      )}
+      {hasSwapMetrics ? (
+        <>
+          <div className="mt-4 flex items-baseline justify-between border-t border-hairline-soft pt-3">
+            <h2 className="text-[11px] font-medium tracking-wide text-ink-dim">换出受害者</h2>
+            <span className="text-[10px] text-ink-faint">
+              {snapshot.deepAvailable ? "按已换出量 · 点开检视" : "暂无深探数据"}
+            </span>
+          </div>
+          {topSwapped.length === 0 ? (
+            <p className="mt-2 py-2 text-[11px] leading-relaxed text-ink-faint">
+              当前没有明显被换出的进程。
+            </p>
+          ) : (
+            <ul className="mt-1">
+              {topSwapped.map((p) => (
+                <VictimRow key={`${p.pid}-${p.startTime}`} proc={p} />
+              ))}
+            </ul>
+          )}
+        </>
+      ) : null}
 
       {/* 没有命中时也要区分「检查过没问题」和「数据不够/没在检查」 */}
       {leakFootnote(snapshot.leaks)}
@@ -271,7 +290,7 @@ function DomainHero() {
         className="group flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
         title="打开内存概况"
       >
-        <PressureDot level={snapshot?.pressure.level ?? "normal"} />
+        <PressureDot level={snapshot?.pressure?.level ?? "normal"} />
         <span className="text-[11px] font-medium text-ink-dim">内存</span>
         <span className="flex-1" />
         <span className="font-mono text-[15px] font-semibold tracking-tight tabular-nums text-ink">
