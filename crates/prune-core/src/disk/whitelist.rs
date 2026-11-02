@@ -1,9 +1,18 @@
-//! 可回收目录白名单（M1/T-302）。
+//! 可回收目录白名单（M1/T-302 → W1 平台化）。
 //!
 //! **这份表就是安全护栏的第一层**：`reclaim` 只接受落在这些根之内的路径，
 //! 任何不在表内的路径都会被 `ensure_in_whitelist` 拒绝。新增清理能力必须先在此登记。
 //!
-//! 来源：`docs/research/reclaim-scan.sh`（2026-10-22 实测清单）。
+//! 平台差异：
+//! - 每条登记项带 `os` 标记，`resolve` / `entry` / `is_whitelisted` 只认
+//!   「当前平台匹配」的条目 —— macOS 的 `Library/...` 规则不会出现在 Windows 报告里，
+//!   反之亦然（否则 Windows 上会白扫一堆不存在的路径，且 UI 口径含混）。
+//! - `rel` **一律相对 home**（测试可替换 home）。Windows 的可再生缓存都落在
+//!   `%LOCALAPPDATA%`，也就是 `~/AppData/Local/...`，因此同样用 home 相对路径表达；
+//!   仅当管理员改过 `LOCALAPPDATA` 时才需要额外解析，暂不覆盖（见 W1 说明）。
+//!
+//! 来源：`docs/research/reclaim-scan.sh`（macOS 实测清单）、
+//! Windows 侧依据各包管理器默认缓存位置（npm / pnpm / Yarn / pip / Cypress / Playwright / Electron）。
 //! 级别语义见 `docs/prune-feature-spec-v2.md` §7.1。
 
 use std::path::{Path, PathBuf};
@@ -40,6 +49,28 @@ impl Level {
     }
 }
 
+/// 条目适用的操作系统
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Os {
+    /// 两端通用（多为 home 下与平台无关的包管理器目录）
+    All,
+    /// 仅 macOS：`Library/` 布局、Xcode、Homebrew、Apple 容器
+    MacOnly,
+    /// 仅 Windows：`AppData/` 布局
+    WindowsOnly,
+}
+
+impl Os {
+    /// 当前平台是否适用
+    pub fn matches_here(self) -> bool {
+        match self {
+            Os::All => true,
+            Os::MacOnly => cfg!(target_os = "macos"),
+            Os::WindowsOnly => cfg!(target_os = "windows"),
+        }
+    }
+}
+
 /// 一条白名单登记项
 #[derive(Debug, Clone, Copy)]
 pub struct WhitelistEntry {
@@ -52,6 +83,8 @@ pub struct WhitelistEntry {
     pub level: Level,
     /// 是否为 A1 条目级判定对象（只有 Yarn v6 具备「目录名即平台元数据」的性质）
     pub a1_scope: bool,
+    /// 适用平台（见 [`Os`]）
+    pub os: Os,
 }
 
 /// 全部登记项（顺序即 UI 展示顺序）
@@ -63,6 +96,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/Yarn/v6",
         level: Level::L2,
         a1_scope: true,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "npm",
@@ -70,6 +104,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".npm/_cacache",
         level: Level::L2,
         a1_scope: false,
+        os: Os::All,
     },
     WhitelistEntry {
         key: "pnpm",
@@ -77,6 +112,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/pnpm/store",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "pnpm-legacy",
@@ -84,6 +120,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".local/share/pnpm/store",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "bun",
@@ -91,6 +128,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".bun/install/cache",
         level: Level::L2,
         a1_scope: false,
+        os: Os::All,
     },
     WhitelistEntry {
         key: "playwright",
@@ -98,6 +136,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/ms-playwright",
         level: Level::L3,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "cypress",
@@ -105,6 +144,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/Cypress",
         level: Level::L3,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "electron",
@@ -112,6 +152,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/electron",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     // ---------- 后端 / 其它包管理器 ----------
     WhitelistEntry {
@@ -120,6 +161,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".cargo/registry",
         level: Level::L2,
         a1_scope: false,
+        os: Os::All,
     },
     WhitelistEntry {
         key: "homebrew",
@@ -127,6 +169,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/Homebrew",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "cocoapods",
@@ -134,6 +177,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/CocoaPods",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "composer",
@@ -141,6 +185,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/composer",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "gradle",
@@ -148,6 +193,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".gradle/caches",
         level: Level::L2,
         a1_scope: false,
+        os: Os::All,
     },
     WhitelistEntry {
         key: "maven",
@@ -155,6 +201,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".m2/repository",
         level: Level::L3,
         a1_scope: false,
+        os: Os::All,
     },
     WhitelistEntry {
         key: "gomod",
@@ -162,6 +209,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "go/pkg/mod",
         level: Level::L2,
         a1_scope: false,
+        os: Os::All,
     },
     // ---------- Xcode ----------
     WhitelistEntry {
@@ -170,6 +218,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/Xcode/DerivedData",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "xcode-modulecache",
@@ -177,6 +226,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/Xcode/ModuleCache.noindex",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "xcode-previews",
@@ -184,6 +234,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/Xcode/UserData/Previews",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "xcode-cache",
@@ -191,6 +242,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Caches/com.apple.dt.Xcode",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "simulator-caches",
@@ -198,6 +250,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/CoreSimulator/Caches",
         level: Level::L2,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "simulator",
@@ -205,6 +258,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/CoreSimulator/Devices",
         level: Level::L3,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "xcode-devicesupport",
@@ -212,6 +266,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/Xcode/iOS DeviceSupport",
         level: Level::L3,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "xcode-archives",
@@ -219,6 +274,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Developer/Xcode/Archives",
         level: Level::L3,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     // ---------- 容器（L4：只读报告，永不执行） ----------
     WhitelistEntry {
@@ -227,6 +283,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Containers/com.docker.docker/Data/vms",
         level: Level::L4,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "orbstack",
@@ -234,6 +291,7 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: "Library/Group Containers/HUAQ24HBR6.dev.orbstack",
         level: Level::L4,
         a1_scope: false,
+        os: Os::MacOnly,
     },
     WhitelistEntry {
         key: "colima",
@@ -241,13 +299,100 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         rel: ".colima",
         level: Level::L4,
         a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // ---------- Windows（%LOCALAPPDATA% = ~/AppData/Local） ----------
+    WhitelistEntry {
+        key: "win-temp",
+        label: "临时文件（Temp）",
+        rel: "AppData/Local/Temp",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-npm",
+        label: "npm 缓存",
+        rel: "AppData/Local/npm-cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-pnpm",
+        label: "pnpm store",
+        rel: "AppData/Local/pnpm/store",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-yarn",
+        label: "Yarn 缓存",
+        rel: "AppData/Local/Yarn/Cache/v6",
+        level: Level::L2,
+        // 保守：Windows 侧尚未实测「目录名即平台元数据」语义，不参与 A1 判死
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-pip",
+        label: "pip 缓存",
+        rel: "AppData/Local/pip/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-nuget",
+        label: "NuGet 下载缓存",
+        rel: "AppData/Local/NuGet/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-electron",
+        label: "Electron 下载缓存",
+        rel: "AppData/Local/electron/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-crashdumps",
+        label: "崩溃转储",
+        rel: "AppData/Local/CrashDumps",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-playwright",
+        label: "Playwright 浏览器",
+        rel: "AppData/Local/ms-playwright",
+        level: Level::L3,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-cypress",
+        label: "Cypress 二进制",
+        rel: "AppData/Local/Cypress/Cache",
+        level: Level::L3,
+        a1_scope: false,
+        os: Os::WindowsOnly,
     },
 ];
 
+/// 当前平台适用的登记项
+fn here() -> impl Iterator<Item = &'static WhitelistEntry> {
+    ENTRIES.iter().filter(|e| e.os.matches_here())
+}
+
 /// 已存在的登记项（不存在的不进报告，避免 UI 出现一堆 0）
 pub fn resolve(home: &Path) -> Vec<(WhitelistEntry, PathBuf)> {
-    ENTRIES
-        .iter()
+    here()
         .filter_map(|e| {
             let p = home.join(e.rel);
             if p.is_dir() {
@@ -259,9 +404,9 @@ pub fn resolve(home: &Path) -> Vec<(WhitelistEntry, PathBuf)> {
         .collect()
 }
 
-/// 按 key 取登记项
+/// 按 key 取当前平台适用的登记项
 pub fn entry(key: &str) -> Option<&'static WhitelistEntry> {
-    ENTRIES.iter().find(|e| e.key == key)
+    here().find(|e| e.key == key)
 }
 
 /// 路径是否落在白名单内（护栏 1）。
@@ -272,7 +417,7 @@ pub fn is_whitelisted(path: &Path, home: &Path) -> bool {
     let Ok(target) = path.canonicalize() else {
         return false; // 不存在的路径不放行（避免 TOCTOU 后门）
     };
-    ENTRIES.iter().any(|e| {
+    here().any(|e| {
         let Ok(root) = home.join(e.rel).canonicalize() else {
             return false;
         };
@@ -295,11 +440,13 @@ mod tests {
     #[test]
     fn whitelist_rejects_traversal_and_symlink_escape() {
         let home = std::env::temp_dir().join(format!("prune-wl-{}", std::process::id()));
-        let cache = home.join("Library/Caches/Yarn/v6");
+        // 挑一条当前平台适用的条目做样本，避免在 Windows 上测 macOS 路径
+        let sample = here().next().expect("至少有一条当前平台条目");
+        let cache = home.join(sample.rel);
         let outside = home.join("Documents/important");
         std::fs::create_dir_all(&cache).unwrap();
         std::fs::create_dir_all(&outside).unwrap();
-        let inside = cache.join("npm-@next-swc-linux-x64-1.0.0-x");
+        let inside = cache.join("prune-test-child");
         std::fs::create_dir_all(&inside).unwrap();
 
         assert!(is_whitelisted(&inside, &home), "白名单内应放行");
@@ -332,5 +479,67 @@ mod tests {
         assert_eq!(got.len(), 1, "只应返回真实存在的登记项");
         assert_eq!(got[0].0.key, "npm");
         let _ = std::fs::remove_dir_all(&home);
+    }
+
+    #[test]
+    fn windows_entries_are_home_relative_appdata_paths() {
+        let win: Vec<&WhitelistEntry> = ENTRIES
+            .iter()
+            .filter(|e| e.os == Os::WindowsOnly)
+            .collect();
+        assert!(!win.is_empty(), "必须登记 Windows 规则，否则 Windows 上扫不出东西");
+        for e in win {
+            assert!(
+                !Path::new(e.rel).is_absolute(),
+                "{} 的 rel 必须是 home 相对路径",
+                e.key
+            );
+            assert!(
+                e.rel.starts_with("AppData/"),
+                "{} 应落在 %LOCALAPPDATA%（~/AppData/Local）之下，实际 {}",
+                e.key,
+                e.rel
+            );
+            assert!(
+                !e.rel.contains('\\'),
+                "{} 的 rel 用正斜杠分隔，Windows API 同样接受，避免转义问题",
+                e.key
+            );
+        }
+    }
+
+    #[test]
+    fn macos_entries_are_home_relative() {
+        for e in ENTRIES.iter().filter(|e| e.os == Os::MacOnly) {
+            assert!(!Path::new(e.rel).is_absolute(), "{} 的 rel 必须相对 home", e.key);
+            assert!(!e.rel.starts_with("AppData/"), "{} 是 macOS 条目", e.key);
+        }
+    }
+
+    #[test]
+    fn entries_are_filtered_by_platform() {
+        let applicable = here().count();
+        assert!(applicable > 0);
+        assert!(applicable < ENTRIES.len(), "两端条目应有交集也有专属项");
+
+        #[cfg(target_os = "macos")]
+        {
+            assert_eq!(here().filter(|e| e.os == Os::WindowsOnly).count(), 0);
+            assert!(here().any(|e| e.os == Os::MacOnly));
+        }
+        #[cfg(target_os = "windows")]
+        {
+            assert_eq!(here().filter(|e| e.os == Os::MacOnly).count(), 0);
+            assert!(here().any(|e| e.os == Os::WindowsOnly));
+        }
+    }
+
+    #[test]
+    fn keys_are_unique() {
+        let mut keys: Vec<&str> = ENTRIES.iter().map(|e| e.key).collect();
+        let total = keys.len();
+        keys.sort_unstable();
+        keys.dedup();
+        assert_eq!(keys.len(), total, "key 不能重复（IPC 按 key 定位）");
     }
 }

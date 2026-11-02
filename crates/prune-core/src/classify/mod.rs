@@ -155,13 +155,22 @@ pub fn classify(platform: Option<Platform>, arch: Arch, has_rosetta: bool) -> Ve
 }
 
 /// 运行时取本机架构（不用 `cfg!`：交叉编译时编译期常量会说谎）
+///
+/// 先试 `uname -m`（macOS/Linux）；Windows 没有 uname，退回运行中二进制的
+/// `ARCH` 常量——Windows 上没有 Rosetta 这类「翻译层」歧义，二进制架构即本机架构。
 pub fn host_arch() -> Arch {
-    match std::process::Command::new("/usr/bin/uname").arg("-m").output() {
-        Ok(out) if out.status.success() => match String::from_utf8_lossy(&out.stdout).trim() {
-            "arm64" | "aarch64" => Arch::Arm64,
-            "x86_64" | "amd64" => Arch::X64,
-            _ => Arch::Unknown,
-        },
+    if let Ok(out) = std::process::Command::new("/usr/bin/uname").arg("-m").output() {
+        if out.status.success() {
+            return match String::from_utf8_lossy(&out.stdout).trim() {
+                "arm64" | "aarch64" => Arch::Arm64,
+                "x86_64" | "amd64" => Arch::X64,
+                _ => Arch::Unknown,
+            };
+        }
+    }
+    match std::env::consts::ARCH {
+        "aarch64" => Arch::Arm64,
+        "x86_64" => Arch::X64,
         _ => Arch::Unknown,
     }
 }

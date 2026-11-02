@@ -15,6 +15,7 @@ use tauri::{
     AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent,
 };
 
+#[cfg(target_os = "macos")]
 use crate::popover;
 
 /// tray 图标唯一 ID

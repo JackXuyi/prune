@@ -495,11 +495,9 @@ fn merge_workspace(mut procs: Vec<ProcMem>, ws: &HashMap<i32, WsRow>) -> Vec<Pro
     procs
 }
 
-/// 用户主目录（归属解析的基准路径；取不到时退化为 `/`，后续解析会全部判为噪声）
+/// 用户主目录（归属解析的基准路径；取不到时退化为平台根，后续解析会全部判为噪声）
 fn home_dir() -> PathBuf {
-    std::env::var("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from("/"))
+    prune_core::paths::home_dir_or_root()
 }
 
 /// 读系统侧数据并装配快照（两条轮次共用）

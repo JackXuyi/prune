@@ -9,12 +9,14 @@
 //! - `classify/` ✅ M1：跨平台二进制判定（杀手功能 A1）；进程家族归类在 `mem/process.rs`
 //! - `reclaim/`  ✅ M1：安全删除：路径白名单 + 废纸篓（trash）+ dry-run 前置 + >20GB 熔断
 //! - `leak/`     ✅ M3：B5 泄漏**嫌疑**判定（单进程序列回归 + 阶梯排除 + 良性名单）
+//! - `paths/`    ✅ W1：平台路径口径（home / 配置目录 / 系统根），跨平台唯一出处
 
 pub mod classify;
 pub mod db;
 pub mod disk;
 pub mod leak;
 pub mod mem;
+pub mod paths;
 pub mod reclaim;
 pub mod swap;
 

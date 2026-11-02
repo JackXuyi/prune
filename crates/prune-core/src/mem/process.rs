@@ -151,6 +151,45 @@ impl Scanner {
     }
 }
 
+/// 结束进程（跨平台）。
+///
+/// - macOS / Linux：`force = false` 发 SIGTERM（给应用保存数据的机会），`true` 发 SIGKILL。
+/// - Windows：没有 SIGTERM 语义（`TerminateProcess` 相当于强杀），两种模式走同一条路径；
+///   GUI 应用的「优雅关闭」需要 WM_CLOSE，属于后续增强，不在 W1 范围。
+///
+/// 调用方负责护栏（不杀系统关键进程 / 不杀自身），这里只做平台分派与错误翻译。
+pub fn kill(pid: i32, force: bool) -> Result<(), String> {
+    if pid <= 0 {
+        return Err(format!("无效 pid：{pid}"));
+    }
+    #[cfg(unix)]
+    {
+        let sig = if force { libc::SIGKILL } else { libc::SIGTERM };
+        let rc = unsafe { libc::kill(pid, sig) };
+        if rc != 0 {
+            let e = std::io::Error::last_os_error();
+            return Err(match e.kind() {
+                std::io::ErrorKind::PermissionDenied => "没有权限结束该进程".to_string(),
+                std::io::ErrorKind::NotFound => "进程已退出".to_string(),
+                _ => format!("结束进程失败: {e}"),
+            });
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        let _ = force;
+        let pid = Pid::from_u32(pid as u32);
+        let mut sys = System::new();
+        sys.refresh_processes(ProcessesToUpdate::Some(&[pid]), true);
+        match sys.process(pid) {
+            Some(p) if p.kill() => Ok(()),
+            Some(_) => Err("结束进程失败：权限不足（可能需要管理员身份）".to_string()),
+            None => Err("进程已退出".to_string()),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

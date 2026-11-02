@@ -153,6 +153,9 @@ pub fn parse_workspace_json(content: &str) -> Option<String> {
 }
 
 /// `file:///Users/xuyi/Desktop/git/AI` → `/Users/xuyi/Desktop/git/AI`
+///
+/// Windows 的 VS Code 写的是 `file:///c%3A/Users/...`，解码后是 `/c:/Users/...`，
+/// 多出来的前导斜杠会让 `Path::is_dir()` 判定失败，因此要把盘符前的斜杠去掉。
 pub fn file_uri_to_path(uri: &str) -> Option<String> {
     let rest = uri.strip_prefix("file://")?;
     // file://<host>/path —— 本机 host 为空
@@ -161,7 +164,15 @@ pub fn file_uri_to_path(uri: &str) -> Option<String> {
         Some(i) => &rest[i..],
         None => return None,
     };
-    Some(percent_decode(path))
+    let path = percent_decode(path);
+    #[cfg(windows)]
+    {
+        let b = path.as_bytes();
+        if b.len() >= 3 && b[0] == b'/' && b[1].is_ascii_alphabetic() && b[2] == b':' {
+            return Some(path[1..].to_string());
+        }
+    }
+    Some(path)
 }
 
 fn percent_decode(s: &str) -> String {
@@ -193,11 +204,9 @@ pub fn known_workspaces(home: &Path) -> Vec<KnownWorkspace> {
         ("VSCodium", "VSCodium"),
     ];
     let mut out = Vec::new();
+    let config_root = crate::paths::config_dir_in(home);
     for (dir, app) in sups {
-        let root = home
-            .join("Library/Application Support")
-            .join(dir)
-            .join("User/workspaceStorage");
+        let root = config_root.join(dir).join("User/workspaceStorage");
         let Ok(entries) = std::fs::read_dir(&root) else {
             continue;
         };
@@ -288,7 +297,10 @@ fn find_dir_named(root: &Path, name: &str, depth: usize) -> Option<String> {
     None
 }
 
-/// 这些路径参与「项目目录」推断时会被忽略（系统/缓存/依赖）
+/// 这些路径参与「项目目录」推断时会被忽略（系统/缓存/依赖）。
+///
+/// Windows 的路径分隔符是 `\`，因此匹配前统一归一化为 `/`，
+/// 否则所有规则在 Windows 上都会静默失效（噪声目录会被当成项目目录）。
 fn path_is_noise(p: &str, home: &str) -> bool {
     const NOISE: &[&str] = &[
         "/Library/",
@@ -303,8 +315,15 @@ fn path_is_noise(p: &str, home: &str) -> bool {
         "/Workspace Storage/",
         "/.cursor/extensions/",
         "/.vscode/extensions/",
+        // Windows 侧系统/缓存目录
+        "/AppData/",
+        "/Windows/",
+        "/Program Files/",
+        "/ProgramData/",
     ];
-    if !p.starts_with(home) {
+    let p = p.replace('\\', "/");
+    let home = home.replace('\\', "/");
+    if !p.starts_with(home.as_str()) {
         return true;
     }
     NOISE.iter().any(|n| p.contains(n))
@@ -335,7 +354,8 @@ pub fn common_project_root(paths: &[String], home: &Path) -> Option<String> {
 
     let home_depth = home.components().count();
     let split = |s: &str| -> Vec<String> {
-        s.split('/')
+        // 同时按 `/` 与 `\` 切分：Windows 路径是反斜杠，混用的字符串也能处理
+        s.split(['/', '\\'])
             .filter(|x| !x.is_empty())
             .map(|x| x.to_string())
             .collect()
@@ -355,23 +375,40 @@ pub fn common_project_root(paths: &[String], home: &Path) -> Option<String> {
     if common.len() <= home_depth + 1 {
         return None;
     }
-    Some(format!("/{}", common.join("/")))
+    let joined = common.join("/");
+    // unix 需要补前导 `/`（绝对路径）；Windows 保留盘符形式（`C:/Users/...`）
+    Some(if cfg!(windows) {
+        joined
+    } else {
+        format!("/{joined}")
+    })
 }
 
-/// 读某个进程打开的文件路径（`lsof -Fn` 的 `n` 行）
+/// 读某个进程打开的文件路径（`lsof -Fn` 的 `n` 行）。
+///
+/// macOS/Linux 走 `lsof`；Windows 没有 `lsof`，直接返回空表
+/// （上层按「归属不可用」处理，见 W2 说明）。
 pub fn open_file_paths(pid: i32) -> Vec<String> {
-    let out = Command::new("/usr/sbin/lsof")
-        .args(["-w", "-n", "-P", "-p", &pid.to_string(), "-Fn"])
-        .output();
-    let Ok(out) = out else {
-        return Vec::new();
-    };
-    String::from_utf8_lossy(&out.stdout)
-        .lines()
-        .filter_map(|l| l.strip_prefix('n'))
-        .filter(|p| p.starts_with('/'))
-        .map(|p| p.to_string())
-        .collect()
+    #[cfg(not(windows))]
+    {
+        let out = Command::new("/usr/sbin/lsof")
+            .args(["-w", "-n", "-P", "-p", &pid.to_string(), "-Fn"])
+            .output();
+        let Ok(out) = out else {
+            return Vec::new();
+        };
+        String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .filter_map(|l| l.strip_prefix('n'))
+            .filter(|p| Path::new(p).is_absolute())
+            .map(|p| p.to_string())
+            .collect()
+    }
+    #[cfg(windows)]
+    {
+        let _ = pid;
+        Vec::new()
+    }
 }
 
 /// 一批进程的工作区归属（深探轮调用，自建线程池并发跑 lsof）
@@ -519,32 +556,47 @@ mod tests {
         assert_eq!(parse_workspace_json("{}"), None);
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn file_uri_strips_leading_slash_before_drive() {
+        // VS Code 在 Windows 上写的是 file:///c%3A/...，解码后不能留前导斜杠
+        assert_eq!(
+            file_uri_to_path("file:///c%3A/Users/xuyi/git/AI").as_deref(),
+            Some("c:/Users/xuyi/git/AI")
+        );
+    }
+
     #[test]
     fn common_root_picks_project_and_rejects_ambiguous() {
-        let home = Path::new("/Users/xuyi");
+        // 用平台对应的 home 构造样本，Windows 上同样要能收敛到项目根
+        let home = if cfg!(windows) {
+            PathBuf::from("C:\\Users\\xuyi")
+        } else {
+            PathBuf::from("/Users/xuyi")
+        };
+        let norm = |p: PathBuf| p.to_string_lossy().replace('\\', "/");
+        let proj = home.join("Desktop/git/AI");
+
         // 同一项目下的多个文件 → 收敛到项目根
         let paths = vec![
-            "/Users/xuyi/Desktop/git/AI/.cursor/hooks.json".to_string(),
-            "/Users/xuyi/Desktop/git/AI/docs/a.md".to_string(),
+            norm(proj.join(".cursor/hooks.json")),
+            norm(proj.join("docs/a.md")),
         ];
-        assert_eq!(
-            common_project_root(&paths, home),
-            Some("/Users/xuyi/Desktop/git/AI".to_string())
-        );
+        assert_eq!(common_project_root(&paths, &home), Some(norm(proj.clone())));
 
         // 跨两个项目 → 公共祖先只是 git/，不能瞎猜
         let paths = vec![
-            "/Users/xuyi/Desktop/git/AI/a.md".to_string(),
-            "/Users/xuyi/Desktop/git/prune/b.md".to_string(),
+            norm(proj.join("a.md")),
+            norm(home.join("Desktop/git/prune/b.md")),
         ];
-        assert_eq!(common_project_root(&paths, home), None);
+        assert_eq!(common_project_root(&paths, &home), None);
 
         // 只有缓存/依赖噪声 → 不归属
         let paths = vec![
-            "/Users/xuyi/Library/Application Support/Cursor/x.db".to_string(),
-            "/Users/xuyi/Desktop/git/AI/node_modules/react/index.js".to_string(),
+            norm(home.join("Library/Application Support/Cursor/x.db")),
+            norm(proj.join("node_modules/react/index.js")),
         ];
-        assert_eq!(common_project_root(&paths, home), None);
+        assert_eq!(common_project_root(&paths, &home), None);
     }
 
     #[test]
@@ -554,6 +606,25 @@ mod tests {
         assert!(path_is_noise("/Users/xuyi/Desktop/git/AI/node_modules/a.js", home));
         assert!(path_is_noise("/Users/xuyi/Desktop/git/AI/.git/FETCH_HEAD", home));
         assert!(!path_is_noise("/Users/xuyi/Desktop/git/AI/src/main.ts", home));
+    }
+
+    #[test]
+    fn noise_paths_handle_windows_separators() {
+        // 反斜杠路径必须同样命中规则，否则 Windows 上缓存目录会被当成项目
+        let home = "C:\\Users\\xuyi";
+        assert!(path_is_noise(
+            "C:\\Users\\xuyi\\Desktop\\git\\AI\\node_modules\\a.js",
+            home
+        ));
+        assert!(path_is_noise(
+            "C:\\Users\\xuyi\\AppData\\Local\\Temp\\x.log",
+            home
+        ));
+        assert!(path_is_noise("C:\\Windows\\System32\\drivers\\x.sys", home));
+        assert!(!path_is_noise(
+            "C:\\Users\\xuyi\\Desktop\\git\\AI\\src\\main.ts",
+            home
+        ));
     }
 
     fn proc(pid: i32, family: &str, name: &str, rss: u64, cmd: Vec<String>) -> ProcMem {
@@ -579,7 +650,7 @@ mod tests {
         let tmp = std::env::temp_dir().join(format!("prune-ws-{}", std::process::id()));
         let proj = tmp.join("Desktop/git/AI");
         std::fs::create_dir_all(&proj).unwrap();
-        let ws = tmp.join("Library/Application Support/Cursor/User/workspaceStorage/hash1");
+        let ws = crate::paths::config_dir_in(&tmp).join("Cursor/User/workspaceStorage/hash1");
         std::fs::create_dir_all(&ws).unwrap();
         std::fs::write(
             ws.join("workspace.json"),

@@ -77,6 +77,7 @@ pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>) {
 }
 
 /// 结束进程：默认 SIGTERM（给应用保存数据、优雅退出的机会），`force` 时 SIGKILL。
+/// Windows 没有 SIGTERM 语义，两者都走 TerminateProcess（见 `prune_core::mem::process::kill`）。
 /// 护栏：不杀 1 号进程（launchd）与 Prune 自身——误杀任一都会破坏宿主环境。
 #[tauri::command]
 pub fn kill_process(pid: i32, force: bool) -> Result<(), String> {
@@ -86,39 +87,60 @@ pub fn kill_process(pid: i32, force: bool) -> Result<(), String> {
     if pid == std::process::id() as i32 {
         return Err("不能结束 Prune 自身".into());
     }
-    let sig = if force { libc::SIGKILL } else { libc::SIGTERM };
-    let rc = unsafe { libc::kill(pid, sig) };
-    if rc != 0 {
-        let e = std::io::Error::last_os_error();
-        return Err(match e.kind() {
-            std::io::ErrorKind::PermissionDenied => "没有权限结束该进程".into(),
-            std::io::ErrorKind::NotFound => "进程已退出".into(),
-            _ => format!("结束进程失败: {e}"),
-        });
-    }
-    eprintln!("[ipc] kill pid={pid} sig={}", if force { "SIGKILL" } else { "SIGTERM" });
+    prune_core::mem::process::kill(pid, force)?;
+    eprintln!("[ipc] kill pid={pid} force={force}");
     Ok(())
 }
 
-/// 在 Finder 中定位路径：目录直接打开，文件则选中（`open -R`）。
+/// 在文件管理器中定位路径：目录直接打开，文件则选中。
+/// - macOS：`open` / `open -R`（Finder）
+/// - Windows：`explorer` / `explorer /select,`（资源管理器）
 ///
 /// 只做「展示」不做修改，因此不做白名单校验；但要求路径真实存在，
-/// 免得 Finder 弹一个空窗口。
+/// 免得弹一个空窗口。
 #[tauri::command]
 pub fn reveal_path(path: String) -> Result<(), String> {
     let p = std::path::Path::new(&path);
     if !p.exists() {
         return Err(format!("路径不存在：{path}"));
     }
+    reveal_impl(p)
+        .map_err(|e| format!("打开文件管理器失败：{e}"))
+}
+
+#[cfg(target_os = "macos")]
+fn reveal_impl(p: &std::path::Path) -> std::io::Result<()> {
     let mut cmd = std::process::Command::new("open");
     if p.is_dir() {
-        cmd.arg(&path);
+        cmd.arg(p);
     } else {
-        cmd.arg("-R").arg(&path);
+        cmd.arg("-R").arg(p);
     }
-    cmd.spawn()
-        .map(|_| ())
-        .map_err(|e| format!("打开 Finder 失败：{e}"))
+    cmd.spawn().map(|_| ())
+}
+
+#[cfg(target_os = "windows")]
+fn reveal_impl(p: &std::path::Path) -> std::io::Result<()> {
+    // `/select,<path>` 必须是同一个参数，且路径带空格时不能加引号分隔——
+    // explorer 自己的解析规则很脆，用原始命令行拼接最稳。
+    if p.is_dir() {
+        std::process::Command::new("explorer").arg(p).spawn().map(|_| ())
+    } else {
+        std::process::Command::new("explorer")
+            .raw_arg(format!("/select,\"{}\"", p.display()))
+            .spawn()
+            .map(|_| ())
+    }
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn reveal_impl(p: &std::path::Path) -> std::io::Result<()> {
+    let target = if p.is_dir() {
+        p.to_path_buf()
+    } else {
+        p.parent().unwrap_or(p).to_path_buf()
+    };
+    std::process::Command::new("xdg-open").arg(target).spawn().map(|_| ())
 }
 
 fn now_secs() -> i64 {

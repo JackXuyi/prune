@@ -86,8 +86,9 @@ impl DiskState {
     }
 }
 
+/// 用户主目录：统一走 `prune_core::paths`（Windows 上取 USERPROFILE）
 pub fn home_dir() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()))
+    prune_core::paths::home_dir_or_root()
 }
 
 fn now_secs() -> i64 {

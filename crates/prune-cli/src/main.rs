@@ -146,7 +146,7 @@ fn main() {
 }
 
 fn home_dir() -> PathBuf {
-    PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+    prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 // ---------------------------------------------------------------- 通用输出

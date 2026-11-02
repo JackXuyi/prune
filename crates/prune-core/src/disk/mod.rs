@@ -152,7 +152,11 @@ pub struct VolumeInfo {
     pub user_available_bytes: u64,
 }
 
-/// 取 `path` 所在卷的容量；statvfs 失败返回 None（调用方降级为无容量上下文）。
+/// 取 `path` 所在卷的容量。
+///
+/// - unix：`statvfs`（`user_available` 用 `f_bavail`，区别于含 purgeable 的 `f_bfree`）
+/// - Windows：`sysinfo::Disks`，没有 bfree/bavail 之分，两者取同一个值
+/// - 失败返回 None（调用方降级为无容量上下文）
 pub fn volume_info(path: &Path) -> Option<VolumeInfo> {
     #[cfg(unix)]
     {
@@ -171,8 +175,19 @@ pub fn volume_info(path: &Path) -> Option<VolumeInfo> {
     }
     #[cfg(not(unix))]
     {
-        let _ = path;
-        None
+        // 取挂载点最长（最具体）的那块盘：C:\ 与 D:\ 都可能匹配，需选最贴近 path 的
+        let disks = sysinfo::Disks::new_with_refreshed_list();
+        let best = disks
+            .list()
+            .iter()
+            .filter(|d| path.starts_with(d.mount_point()))
+            .max_by_key(|d| d.mount_point().as_os_str().len())?;
+        let available = best.available_space();
+        Some(VolumeInfo {
+            total_bytes: best.total_space(),
+            available_bytes: available,
+            user_available_bytes: available,
+        })
     }
 }
 

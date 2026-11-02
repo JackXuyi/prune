@@ -12,7 +12,7 @@
 //! 编解码与工具分发拆成纯函数（`handle_message` / `run_tool`），可直接单测。
 
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{json, Value};
 
@@ -26,9 +26,9 @@ pub const SERVER_NAME: &str = "prune";
 
 /// GUI 采样的序列库路径（与 src-tauri/lib.rs 的 db 路径保持一致）
 pub fn default_db_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    Path::new(&home)
-        .join("Library/Application Support/com.xuyi.prune/prune.db")
+    prune_core::paths::config_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("com.xuyi.prune/prune.db")
 }
 
 /// 处理一行 JSON-RPC 消息。通知（无 id）返回 None，其余返回响应行。
@@ -212,7 +212,7 @@ fn tool_mem_leaks(since_hours: f64) -> Value {
 }
 
 fn tool_disk_report() -> Value {
-    let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()));
+    let home = prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let report = disk::scan(&home, None);
     serde_json::to_value(report).unwrap_or(Value::Null)
 }
