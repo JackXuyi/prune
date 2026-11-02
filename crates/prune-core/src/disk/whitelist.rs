@@ -457,10 +457,10 @@ mod tests {
         let traversal = cache.join("../../../../Documents/important");
         assert!(!is_whitelisted(&traversal, &home));
 
-        // symlink 指向白名单外
-        let link = cache.join("escape");
+        // symlink 指向白名单外（Windows 建符号链接需要开发者模式，故仅 unix 验证）
         #[cfg(unix)]
         {
+            let link = cache.join("escape");
             std::os::unix::fs::symlink(&outside, &link).unwrap();
             assert!(
                 !is_whitelisted(&link, &home),

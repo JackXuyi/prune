@@ -121,16 +121,17 @@ fn reveal_impl(p: &std::path::Path) -> std::io::Result<()> {
 
 #[cfg(target_os = "windows")]
 fn reveal_impl(p: &std::path::Path) -> std::io::Result<()> {
-    // `/select,<path>` 必须是同一个参数，且路径带空格时不能加引号分隔——
-    // explorer 自己的解析规则很脆，用原始命令行拼接最稳。
+    // explorer 的解析规则很脆：`/select,<path>` 必须整体作为一条原始命令行片段传入。
+    // `arg()` 会给含空格的路径套一层引号、把 `/select,` 和路径拆成两半，explorer 就认不出来；
+    // `raw_arg` 是 `std::os::windows::process::CommandExt` 的 trait 方法，必须显式引入。
+    use std::os::windows::process::CommandExt;
+    let mut cmd = std::process::Command::new("explorer");
     if p.is_dir() {
-        std::process::Command::new("explorer").arg(p).spawn().map(|_| ())
+        cmd.raw_arg(format!("\"{}\"", p.display()));
     } else {
-        std::process::Command::new("explorer")
-            .raw_arg(format!("/select,\"{}\"", p.display()))
-            .spawn()
-            .map(|_| ())
+        cmd.raw_arg(format!("/select,\"{}\"", p.display()));
     }
+    cmd.spawn().map(|_| ())
 }
 
 #[cfg(all(unix, not(target_os = "macos")))]

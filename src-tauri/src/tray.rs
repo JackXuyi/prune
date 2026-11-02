@@ -23,7 +23,12 @@ pub const TRAY_ID: &str = "prune-tray";
 /// 面板窗口 label（与 tauri.conf.json windows 数组一致）
 pub const PANEL_LABEL: &str = "panel";
 /// 面板尺寸（与 tauri.conf.json 一致，popover 内容尺寸同源）
+///
+/// 只有 macOS 的 NSPopover 需要显式尺寸（Windows 由窗口配置决定），
+/// 因此加 cfg 门，避免 Windows 侧出现「定义未使用」告警。
+#[cfg(target_os = "macos")]
 pub const PANEL_W: f64 = 380.0;
+#[cfg(target_os = "macos")]
 pub const PANEL_H: f64 = 560.0;
 /// 面板与菜单栏图标的间距（逻辑像素）
 const MARGIN: f64 = 8.0;

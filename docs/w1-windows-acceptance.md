@@ -13,11 +13,13 @@
 | 路径口径 | `paths::tests` 4 个用例 | ✅ |
 | 噪声判定（反斜杠） | `noise_paths_handle_windows_separators` | ✅ |
 | Windows 规则结构 | `windows_entries_are_home_relative_appdata_paths` | ✅ |
-| **Windows 交叉编译** | `scripts/check-windows.sh` | ⚠️ **未执行**（mingw-w64 安装被取消） |
+| **Windows 交叉编译** | `scripts/check-windows.sh`（llvm-mingw 工具链） | ✅ **0 error / 0 warning**（仅剩 2 条历史 example 警告） |
+| **Windows 真链接** | `scripts/check-windows.sh --build` | ✅ 产出 `prune.exe`（PE32+ x86-64，48 MB debug） |
 
-> ⚠️ 是本轮唯一的缺口：`cargo check --target x86_64-pc-windows-gnu` 需要
-> `x86_64-w64-mingw32-gcc`（rusqlite bundled 要在本机编 SQLite）。
-> 补跑方式：`brew install mingw-w64 && RUSTUP_DIST_SERVER=https://rsproxy.cn scripts/check-windows.sh`。
+> W0 补跑结论见 §5。`cargo check --target x86_64-pc-windows-gnu` 需要
+> `x86_64-w64-mingw32-gcc`（rusqlite bundled 要在本机编 SQLite）；
+> 本机用 llvm-mingw 20261020（ucrt，macOS universal）跑通，
+> 复现命令：`MINGW_BIN=/path/to/llvm-mingw/bin scripts/check-windows.sh --build`。
 
 ## 2. 改动清单
 
@@ -49,8 +51,47 @@
 
 | 项 | 阶段 |
 |---|---|
-| Windows 交叉编译实跑（等 mingw 就绪） | W0 收尾 |
 | 内存口径（vm_stat → GlobalMemoryStatusEx、footprint → Private Bytes） | W2 |
 | 托盘定位 / 透明面板 / 失焦隐藏在 Windows 实测 | W3 |
 | NSIS 安装包 + CI | W4 |
 | `%LOCALAPPDATA%` 非默认位置 | 后续增强 |
+
+## 5. W0 补跑记录（2026-11-02）
+
+### 5.1 工具链
+
+`brew install mingw-w64` 在本机不可用（`formulae.brew.sh` SSL 握手失败，
+且 brew 的 locks 目录出现 `Operation not permitted`），改用自包含的
+**llvm-mingw 20261020（ucrt / macos-universal）**，解压即用、无额外依赖。
+
+llvm-mingw 与 GNU mingw-w64 的差异需要在脚本里补一层：它用 compiler-rt 替代
+GCC 运行库，不提供 `libgcc.a` / `libgcc_eh.a`，而 rustc 的 windows-gnu target
+会硬链接 `-lgcc -lgcc_eh`。`check-windows.sh` 因此做一次**真实链接探针**，
+失败时自动生成 shim（`libgcc.a → libclang_rt.builtins`、
+`libgcc_eh.a → libunwind.a`）并注入 `CARGO_TARGET_..._RUSTFLAGS=-L <shim>`。
+
+> 踩坑：不能用 `gcc -print-libgcc-file-name` 判断——llvm-mingw 的 gcc wrapper
+> 会把它谎报成 `libclang_rt.builtins-x86_64.a`（文件确实存在，但库名不叫 gcc），
+> 于是「检测通过、链接失败」。只有真链一次才可信。
+
+### 5.2 交叉编译抓到的真实缺陷
+
+| 缺陷 | 位置 | 说明 | 修复 |
+|---|---|---|---|
+| `raw_arg` 不是固有方法 | `src-tauri/src/commands.rs` `reveal_impl` | 它是 `std::os::windows::process::CommandExt` 的 trait 方法，没 `use` 就直接 `E0599`。**这是 mac 上永远发现不了的错误**，静态审计也没抓到 | 函数内 `use std::os::windows::process::CommandExt;`，并统一用 `raw_arg` 传原始命令行片段 |
+| 平台专属 import 告警 | `mem/footprint.rs`、`mem/workspace.rs`、`tray.rs`、`disk/whitelist.rs` | `Command`/`Stdio`/`Instant`/`AtomicU64`/`PathBuf`/`SEQ`/`temp_json_path`/`PANEL_W`/`PANEL_H` 在 Windows 侧无消费者 | 逐个加 `#[cfg(target_os = "macos")]` / `#[cfg(unix)]`；测试里的 symlink 变量移进 cfg 块 |
+| cdylib 导出上限 | `src-tauri`（`crate-type` 含 `cdylib`） | windows-gnu 下链接报 `too many exported symbols (got 123591, max 65535)` | **不修**：GNU 链接器限制，真实 Windows 构建走 MSVC 无此问题；`--build` 只链 CLI |
+
+### 5.3 结果
+
+| 命令 | 结果 |
+|---|---|
+| `cargo check --workspace --all-targets --target x86_64-pc-windows-gnu` | ✅ exit 0，0 error，0 新增 warning |
+| `cargo build --target x86_64-pc-windows-gnu -p prune-cli` | ✅ `target/x86_64-pc-windows-gnu/debug/prune.exe`，`file` 识别为 `PE32+ executable (console) x86-64` |
+| `cargo test --workspace`（macOS 回归） | ✅ 142 passed / 0 failed |
+| `cargo check --workspace --all-targets`（macOS 回归） | ✅ 0 error |
+
+**含义**：壳层 + 核心库 + CLI 的 `cfg(windows)` 分支全部可编译，且 C 依赖
+（bundled SQLite）与 Windows 系统库（`winapi`/`ntapi`/`userenv`/`ws2_32`/`dbghelp`）
+能真链接。**这不等于 Windows 上功能可用**——内存口径与磁盘规则仍是 macOS 视角，
+归 W2/W3。

@@ -37,12 +37,34 @@ Windows 上原本编译不过的两处：
 交叉编译脚本：`scripts/check-windows.sh`
 
 ```bash
-brew install mingw-w64            # rusqlite bundled 需要 C 工具链
-RUSTUP_DIST_SERVER=https://rsproxy.cn scripts/check-windows.sh
+# 工具链二选一（脚本自动探测，也可用 MINGW_BIN 指定）
+brew install mingw-w64
+# 或下载自包含的 llvm-mingw（无依赖，国内网络更稳）
+
+RUSTUP_DIST_SERVER=https://rsproxy.cn scripts/check-windows.sh          # 只做编译检查
+scripts/check-windows.sh --build                                       # 额外真链接 CLI，产出 .exe
 ```
 
 > 用 `x86_64-pc-windows-gnu` 而不是 `msvc`：macOS 上没有 MSVC 工具链，
 > rusqlite 的 bundled SQLite 需要本地 C 编译器才能完成 check 阶段。
+
+### 实测结果（2026-11-02）
+
+工具链 llvm-mingw 20261020（ucrt/macos-universal），`check` 与 `--build` 均通过，
+`prune.exe` 被 `file` 识别为 `PE32+ executable (console) x86-64`。
+
+交叉编译抓到一处**静态审计漏掉、macOS 上永远编译得过**的缺陷：
+`commands.rs` 的 `reveal_impl` 直接调用 `Command::raw_arg`，但它其实是
+`std::os::windows::process::CommandExt` 的 trait 方法 → Windows 侧 `E0599`。
+已改为函数内 `use` + 统一用 `raw_arg` 传 `/select,"<path>"`。
+
+另外三件工具链/构建事实（详见 `docs/w1-windows-acceptance.md` §5）：
+
+- llvm-mingw 用 compiler-rt，没有 `libgcc.a`/`libgcc_eh.a`，而 rustc 的 windows-gnu
+  target 会硬链接它们 → 脚本自动生成 shim 目录并注入 `-L`。
+- `gcc -print-libgcc-file-name` 在 llvm-mingw 下谎报，必须用真实链接探针判断。
+- `src-tauri` 的 `cdylib` 在 windows-gnu 上撞 65535 导出上限（GNU 链接器限制），
+  真实 Windows 走 MSVC 不受影响，故 `--build` 只链 CLI。
 
 ## 4. W1 改动清单
 

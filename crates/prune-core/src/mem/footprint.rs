@@ -12,12 +12,19 @@
 //! 唯一成功判据是「JSON 文件产出 + 必需字段完整」，**不看退出码**。
 
 use std::collections::HashMap;
+#[cfg(target_os = "macos")]
 use std::io::ErrorKind;
+#[cfg(target_os = "macos")]
 use std::path::PathBuf;
+#[cfg(target_os = "macos")]
 use std::process::{Command, Stdio};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+#[cfg(target_os = "macos")]
+use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 /// 单次深探超时（3 s：实测 0.09 s，留足异常余量）
 pub const DEFAULT_TIMEOUT: Duration = Duration::from_secs(3);
@@ -60,8 +67,11 @@ impl std::fmt::Display for ProbeError {
 
 impl std::error::Error for ProbeError {}
 
+/// 临时 JSON 文件名序号（仅 macOS 的 footprint 深探使用）
+#[cfg(target_os = "macos")]
 static SEQ: AtomicU64 = AtomicU64::new(0);
 
+#[cfg(target_os = "macos")]
 fn temp_json_path(pid: i32) -> PathBuf {
     let seq = SEQ.fetch_add(1, Ordering::Relaxed);
     let nanos = std::time::SystemTime::now()

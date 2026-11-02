@@ -15,6 +15,8 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+// lsof 句柄扫描只在 unix 存在；Windows 走 cfg(windows) 的空表分支
+#[cfg(unix)]
 use std::process::Command;
 
 use serde::{Deserialize, Serialize};
