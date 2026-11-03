@@ -67,6 +67,66 @@ jobs:
           fi
           echo "OK: v$V_PKG"
 
+      # macOS 签名材料自检：宁可在这里 2 秒失败，也不要等三平台各编 2 分钟 Rust
+      # 才倒在 codesign 前面。openssl 能验完 CI 真正关心的三件事：
+      # 是不是合法 PKCS#12、密码对不对、有没有私钥。
+      - name: Preflight macOS signing secrets
+        shell: bash
+        env:
+          CERT_B64: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+        run: |
+          set -uo pipefail
+
+          if [[ -z "${CERT_B64}" ]]; then
+            echo "::notice::未配置 APPLE_CERTIFICATE → macOS 走 ad-hoc 签名"
+            if [[ -n "${SIGN_IDENTITY}" ]]; then
+              echo "::warning::APPLE_SIGNING_IDENTITY 已配置但 APPLE_CERTIFICATE 为空，签名会退化为 ad-hoc"
+            fi
+            exit 0
+          fi
+
+          fail=0
+          if [[ -z "${CERT_PASSWORD}" ]]; then
+            echo "::error::APPLE_CERTIFICATE_PASSWORD 未配置"
+            fail=1
+          fi
+          if [[ -z "${SIGN_IDENTITY}" ]]; then
+            echo "::error::APPLE_SIGNING_IDENTITY 未配置，要填证书名，如 Developer ID Application: XXX (TEAMID)"
+            fail=1
+          fi
+          [[ ${fail} -eq 1 ]] && exit 1
+
+          # tauri 解 p12 时不接受空白字符，base64 一旦折行就解不开
+          if printf '%s' "${CERT_B64}" | grep -qE '[[:space:]]'; then
+            echo "::error::APPLE_CERTIFICATE 含空白字符（base64 被折行了）。重新生成: openssl base64 -A -in cert.p12 | pbcopy"
+            exit 1
+          fi
+
+          p12="${RUNNER_TEMP}/signing.p12"
+          printf '%s' "${CERT_B64}" | base64 -d > "${p12}"
+          echo "p12 解码后 $(wc -c < "${p12}") 字节"
+
+          # openssl 3 默认拒收 RC2/3DES 老格式的 p12，失败回退 -legacy 再试一次
+          if openssl pkcs12 -info -noout -in "${p12}" -passin env:CERT_PASSWORD >/dev/null 2>&1; then
+            legacy=""
+          elif openssl pkcs12 -info -noout -legacy -in "${p12}" -passin env:CERT_PASSWORD >/dev/null 2>&1; then
+            legacy="-legacy"
+          else
+            echo "::error::APPLE_CERTIFICATE 不是合法 .p12，或者密码不对。常见原因：放的是 .cer/.pem 的 base64（没有私钥、不是 PKCS#12）"
+            openssl pkcs12 -info -noout -in "${p12}" -passin env:CERT_PASSWORD 2>&1 | tail -5 || true
+            exit 1
+          fi
+
+          # 没有私钥的 p12 签不了名，早报早省事
+          if ! openssl pkcs12 -nocerts -nodes ${legacy} -in "${p12}" -passin env:CERT_PASSWORD 2>/dev/null | grep -q "PRIVATE KEY"; then
+            echo "::error::p12 里没有私钥。回钥匙串重新导出：必须同时选中证书和它的私钥，格式选 .p12"
+            exit 1
+          fi
+
+          echo "OK: p12 合法 / 密码正确 / 含私钥 / identity=${SIGN_IDENTITY}"
+
       - name: Typecheck & build frontend
         run: pnpm build
 
@@ -124,20 +184,74 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
 
+      # macOS 签名：三件套（证书 + 密码 + identity）齐全才启用，否则显式降级 ad-hoc。
+      #
+      # 为什么用 GITHUB_ENV 动态注入，而不是在 build step 里写 secrets.X || ''：
+      # tauri-bundler 的 keychain() 用的是
+      #   var_os("APPLE_CERTIFICATE") + var_os("APPLE_CERTIFICATE_PASSWORD")
+      # 空字符串也算「存在」，照样会去 import 一个空文件，于是照样炸在
+      #   SecKeychainItemImport: Unable to decode the provided data
+      # 唯一可靠的做法是 ad-hoc 模式下让这两个变量彻底不存在。
+      #
+      # 另外 tauri 会校验「证书里的身份」是否包含 APPLE_SIGNING_IDENTITY，
+      # 所以 identity 必须是证书全名，配 '-' 会报 does not match provided identity。
+      - name: Resolve macOS signing mode
+        if: matrix.platform == 'macos-latest'
+        id: signing
+        shell: bash
+        env:
+          CERT_B64: ${{ secrets.APPLE_CERTIFICATE }}
+          CERT_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          SIGN_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+          KC_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          NOTARY_ID: ${{ secrets.APPLE_ID }}
+          NOTARY_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          NOTARY_TEAM: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          set -euo pipefail
+
+          if [[ -z "${CERT_B64}" || -z "${CERT_PASSWORD}" || -z "${SIGN_IDENTITY}" ]]; then
+            echo "APPLE_SIGNING_IDENTITY=-" >> "$GITHUB_ENV"
+            echo "mode=adhoc" >> "$GITHUB_OUTPUT"
+            echo "::warning::签名三件套不全 → 使用 ad-hoc 签名。产物未公证，用户首次打开需右键 → 打开（或 xattr -cr /Applications/Prune.app）"
+            exit 0
+          fi
+
+          {
+            echo "APPLE_SIGNING_IDENTITY=${SIGN_IDENTITY}"
+            echo "APPLE_CERTIFICATE=${CERT_B64}"
+            echo "APPLE_CERTIFICATE_PASSWORD=${CERT_PASSWORD}"
+          } >> "$GITHUB_ENV"
+
+          if [[ -n "${KC_PASSWORD}" ]]; then
+            echo "KEYCHAIN_PASSWORD=${KC_PASSWORD}" >> "$GITHUB_ENV"
+          fi
+
+          # 公证只在正式签名下有意义：ad-hoc 签名提交 notarytool 必被拒，
+          # 而且报错是凭据相关的，很容易误判成 secret 配错。
+          if [[ -n "${NOTARY_ID}" && -n "${NOTARY_PASSWORD}" && -n "${NOTARY_TEAM}" ]]; then
+            {
+              echo "APPLE_ID=${NOTARY_ID}"
+              echo "APPLE_PASSWORD=${NOTARY_PASSWORD}"
+              echo "APPLE_TEAM_ID=${NOTARY_TEAM}"
+            } >> "$GITHUB_ENV"
+            echo "公证: 已启用（${NOTARY_ID}）"
+          else
+            echo "::notice::APPLE_ID / APPLE_PASSWORD / APPLE_TEAM_ID 未配全 → 跳过公证"
+          fi
+
+          echo "mode=signed" >> "$GITHUB_OUTPUT"
+          echo "正式签名: ${SIGN_IDENTITY}"
+
       - name: Build & upload to release
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # macOS 未配置正式证书时用 ad-hoc 签名（Apple Silicon 上必须签名，
-          # 否则用户看到「应用已损坏」）。配好证书后，在仓库 Secrets 添加
-          # APPLE_SIGNING_IDENTITY 即可自动切换为正式签名。
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          # 签名/公证变量由上面的 "Resolve macOS signing mode" 动态注入：
+          #   三件套齐全 → 正式签名（含可选公证）
+          #   缺任意一项 → 只有 APPLE_SIGNING_IDENTITY=-（ad-hoc）
+          # 不要在这里写 ${{ secrets.X || '' }} 兜底：空字符串仍然算「变量存在」，
+          # tauri 会照样去 import 空 p12，把发版挂掉（v0.1.0 首次运行的真实失败原因）。
         with:
           tagName: v__VERSION__
           releaseName: 'Prune v__VERSION__'
