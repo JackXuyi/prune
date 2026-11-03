@@ -266,6 +266,13 @@ pub fn reclaim(paths: &[PathBuf]) -> Result<ReclaimReport> {
 > WKWebView 搬入 popover、Transient 收起、原生箭头；`tray.rect()` 缺失时自动降级旧窗口路径。
 > 见 `docs/ns-popover-plan.md` / `docs/ns-popover-acceptance.md`。
 
+**M6 更新：托盘 CPU 动画**（`docs/m6-tray-anim-plan.md`）：4 帧剪刀开合图（编译期内嵌），
+按整机 CPU 档位换帧——`<10%` 静止 / `10–40%` 2 fps / `40–70%` 5 fps / `>70%` 10 fps；
+读不到 CPU = 永远静止。macOS 换帧必须走 `set_icon_with_as_template(icon, true)`
+（先 set 再改 template 会渲染两次闪烁）；动画循环与采样循环解耦，tokio spawn。
+开关在右键菜单，持久化到 `config_dir()/settings.json` 的 `trayCpuAnim` 键；
+tooltip 每轮更新为 `Prune · CPU 12%`（动画关闭时保留）。
+
 ---
 
 ## 7. ⚠️ WebView 内存：本方案最大代价与解法
