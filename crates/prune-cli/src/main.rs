@@ -18,6 +18,7 @@ use prune_core::disk::{self, CacheGroup};
 use prune_core::disk::whitelist::Level;
 use prune_core::leak;
 use prune_core::mem;
+use prune_core::net;
 use prune_core::reclaim::{self, Limits, ReclaimError};
 use prune_core::swap;
 
@@ -28,6 +29,8 @@ pub enum Command {
     Scan { json: bool },
     Reclaim { yes: bool },
     Mem { swapped: bool, json: bool, watch: Option<u64> },
+    /// `prune port` 列关注层；`prune port 3000` 查单个端口；`--all` 含内部 IPC
+    Port { port: Option<u16>, json: bool, all: bool },
     Mcp,
     Version,
 }
@@ -96,6 +99,25 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             }
             Ok(Command::Mem { swapped, json, watch })
         }
+        "port" => {
+            let mut json = false;
+            let mut all = false;
+            let mut port: Option<u16> = None;
+            for a in it {
+                match a.as_str() {
+                    "--json" => json = true,
+                    "--all" | "-a" => all = true,
+                    other => match other.parse::<u16>() {
+                        Ok(p) if port.is_none() => port = Some(p),
+                        Ok(_) => return Err("port 只接受一个端口号".into()),
+                        Err(_) => {
+                            return Err(format!("port 不认识参数 {other:?}\n{}", usage()));
+                        }
+                    },
+                }
+            }
+            Ok(Command::Port { port, json, all })
+        }
         other => Err(format!("不认识子命令 {other:?}\n{}", usage())),
     }
 }
@@ -114,6 +136,7 @@ fn usage() -> String {
   prune reclaim [--level green]       预览零风险清理项（默认 dry-run；--yes 才真删）
   prune mem [--swapped] [--json]      一次性内存读数（footprint 口径）
   prune mem --watch [--interval N]    持续采样并输出泄漏嫌疑判定（默认 10s）
+  prune port [PORT] [--json] [--all]  谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
   prune mcp                           启动 MCP stdio server（AI Agent 查询入口）
   prune --version | --help"
         .into()
@@ -140,9 +163,9 @@ fn main() {
             Some(interval) => cmd_watch(interval),
             None => cmd_mem(swapped, json),
         },
+        Command::Port { port, json, all } => cmd_port(port, json, all),
         Command::Mcp => cmd_mcp(),
-    };
-    std::process::exit(code);
+    };    std::process::exit(code);
 }
 
 fn home_dir() -> PathBuf {
@@ -402,6 +425,205 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
     0
 }
 
+// ---------------------------------------------------------------- port
+
+/// `prune port [PORT]`：谁占着这个端口。
+///
+/// 口径纪律（docs/m7-port-plan.md §3.2）：
+/// - 「没查到」≠「端口空闲」：查不到时把内核口径与不可见条数一起说出来；
+/// - TIME_WAIT 不是占用：单独一行解释，且没有「结束」建议；
+/// - 双栈不重复：内核里 v4/v6 各一条 fd，这里只输出一行。
+fn cmd_port(only: Option<u16>, json: bool, all: bool) -> i32 {
+    let snap = net::ports::scan(None);
+
+    if json {
+        let entries: Vec<&net::PortEntry> = snap
+            .entries
+            .iter()
+            .filter(|e| only.map(|p| e.port == p).unwrap_or(all || e.watched))
+            .collect();
+        let doc = serde_json::json!({
+            "port": only,
+            "entries": entries,
+            "coverage": snap.coverage,
+            "timeWait": snap.time_wait,
+            "timeWaitPorts": snap.time_wait_ports,
+            "scanMs": snap.scan_ms,
+        });
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        return 0;
+    }
+
+    // 单端口查询：给出完整解释（持有者 + 项目 + 连接 + 暴露面）
+    if let Some(port) = only {
+        let hits: Vec<&net::PortEntry> = snap.entries.iter().filter(|e| e.port == port).collect();
+        if hits.is_empty() {
+            println!("端口 {port}：当前用户可见范围内没有进程监听。");
+            if let Some(note) = &snap.coverage.note {
+                println!("  ⚠️ {note}");
+            }
+            let invisible = snap.coverage.invisible();
+            if invisible > 0 {
+                println!(
+                    "  内核报告 {} 个监听，其中 {invisible} 个无法归属到进程（可能是别的用户的进程）。",
+                    snap.coverage.listen_total
+                );
+            }
+            if snap.time_wait_ports.contains(&port) {
+                println!(
+                    "  该端口出现在 TIME_WAIT 里（{} 条）：内核保留期内会让新服务拿到 EADDRINUSE，约 2 分钟后消失。",
+                    snap.time_wait.unwrap_or(0)
+                );
+            }
+            println!("  自查：sudo lsof -nP -iTCP:{port} -sTCP:LISTEN");
+            return 0;
+        }
+        for e in hits {
+            println!(
+                "{}/{}  {}",
+                e.port,
+                proto_cn(e.proto),
+                exposure_cn(e.exposure)
+            );
+            for b in &e.listeners {
+                let pid = b.pid.map(|p| p.to_string()).unwrap_or_else(|| "内核持有".into());
+                println!("  持有者  {} (pid {})  绑定 {}", b.comm, pid, b.addr);
+                if let (Some(label), Some(path)) = (&b.project_label, &b.project) {
+                    println!("  项目    {label}\n          {path}");
+                }
+            }
+            if let Some(n) = e.conns {
+                println!("  连接    {n} 条 ESTABLISHED");
+            }
+            if let Some(note) = &e.note {
+                println!("  说明    {note}");
+            }
+        }
+        return 0;
+    }
+
+    // 列表：关注层在前，折叠层只报条数
+    let (watched, folded): (Vec<&net::PortEntry>, Vec<&net::PortEntry>) =
+        snap.entries.iter().partition(|e| e.watched);
+    println!(
+        "{}{}{}{}{}{}",
+        pad("端口", 7),
+        pad("协议", 7),
+        pad("暴露面", 11),
+        pad("进程(pid)", 25),
+        pad("项目", 27),
+        pad("连接", 4)
+    );
+    let print_rows = |rows: &[&net::PortEntry]| {
+        for e in rows {
+            let b = e.primary();
+            let proc_text = b
+                .map(|b| match b.pid {
+                    Some(pid) => format!("{} ({})", b.comm, pid),
+                    None => format!("{} (内核)", b.comm),
+                })
+                .unwrap_or_else(|| "—".into());
+            let project = b
+                .and_then(|b| b.project_label.clone())
+                .unwrap_or_else(|| "—".into());
+            println!(
+                "{}{}{}{}{}{}",
+                pad(&e.port.to_string(), 7),
+                pad(proto_cn(e.proto), 7),
+                pad(exposure_cn(e.exposure), 11),
+                pad(&truncate(&proc_text, 23), 25),
+                pad(&truncate(&project, 25), 27),
+                e.conns.map(|n| n.to_string()).unwrap_or_else(|| "—".into())
+            );
+        }
+    };
+    print_rows(&watched);
+
+    if all && !folded.is_empty() {
+        println!();
+        println!("其他 {} 个端口（内部 IPC / 系统服务）：", folded.len());
+        print_rows(&folded);
+    } else if !folded.is_empty() {
+        println!();
+        println!(
+            "另有 {} 个内部 IPC / 系统服务端口（--all 展开）。",
+            folded.len()
+        );
+    }
+
+    println!();
+    let invisible = snap.coverage.invisible();
+    print!(
+        "覆盖：内核 {} 个监听 · 可归属 {} 个",
+        snap.coverage.listen_total, snap.coverage.attributed
+    );
+    if invisible > 0 {
+        print!("（{invisible} 个不可见，可能是别的用户的进程）");
+    }
+    println!(" · 扫描 {} ms", snap.scan_ms);
+    if let Some(note) = &snap.coverage.note {
+        println!("⚠️ {note}");
+    }
+    if let Some(tw) = snap.time_wait {
+        println!(
+            "TIME_WAIT {tw} 条（内核保留期，无持有者，不占进程）：{}",
+            snap.time_wait_ports
+                .iter()
+                .take(6)
+                .map(|p| p.to_string())
+                .collect::<Vec<_>>()
+                .join(" / ")
+        );
+    }
+    0
+}
+
+fn proto_cn(p: net::Proto) -> &'static str {
+    match p {
+        net::Proto::Tcp => "tcp",
+        net::Proto::Udp => "udp",
+    }
+}
+
+fn exposure_cn(s: net::BindScope) -> &'static str {
+    match s {
+        net::BindScope::Any => "全部网卡",
+        net::BindScope::Interface => "指定网卡",
+        net::BindScope::Loopback => "仅本机",
+        net::BindScope::Unknown => "未知",
+    }
+}
+
+/// 按终端显示宽度左对齐补空格（中文占 2 列，`{:<N}` 只数字符，会把表格撑歪）
+fn pad(s: &str, width: usize) -> String {
+    let w: usize = s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+    let mut out = s.to_string();
+    for _ in w..width {
+        out.push(' ');
+    }
+    out
+}
+
+/// 终端表格按字符宽度截断（中文 2 列宽，这里只做粗略处理，够用）
+fn truncate(s: &str, max: usize) -> String {
+    let width: usize = s.chars().map(|c| if c.is_ascii() { 1 } else { 2 }).sum();
+    if width <= max {
+        return s.to_string();
+    }
+    let mut out = String::new();
+    let mut w = 0;
+    for c in s.chars() {
+        let cw = if c.is_ascii() { 1 } else { 2 };
+        if w + cw > max.saturating_sub(1) {
+            out.push('…');
+            break;
+        }
+        out.push(c);
+        w += cw;
+    }
+    out
+}
+
 // ---------------------------------------------------------------- watch
 
 fn cmd_watch(interval: u64) -> i32 {
@@ -561,6 +783,43 @@ mod tests {
     fn help_is_error_exit_path_not_panic() {
         let msg = parse_args(&[s("--help")]).unwrap_err();
         assert!(msg.contains("prune scan"));
+    }
+
+    #[test]
+    fn parses_port_subcommand() {
+        assert_eq!(
+            parse_args(&[s("port")]).unwrap(),
+            Command::Port { port: None, json: false, all: false }
+        );
+        assert_eq!(
+            parse_args(&[s("port"), s("3000")]).unwrap(),
+            Command::Port { port: Some(3000), json: false, all: false }
+        );
+        assert_eq!(
+            parse_args(&[s("port"), s("3000"), s("--json"), s("--all")]).unwrap(),
+            Command::Port { port: Some(3000), json: true, all: true }
+        );
+        // 端口 0 是通配 fd，不是服务：命令行上接受但扫描层会丢掉
+        assert!(parse_args(&[s("port"), s("0")]).is_ok());
+        // 越界 / 非数字 / 两个端口号都要拒绝，否则会静默查错端口
+        assert!(parse_args(&[s("port"), s("70000")]).is_err());
+        assert!(parse_args(&[s("port"), s("abc")]).is_err());
+        assert!(parse_args(&[s("port"), s("3000"), s("8080")]).is_err());
+    }
+
+    #[test]
+    fn truncate_counts_cjk_as_two() {
+        assert_eq!(truncate("prune", 10), "prune");
+        assert_eq!(truncate("meetily/frontend", 8), "meetily…");
+        // 中文按 2 列算：4 个汉字 = 8 列 > 6 → 截断并补省略号
+        assert_eq!(truncate("全部网卡", 6), "全部…");
+    }
+
+    #[test]
+    fn pad_aligns_by_display_width() {
+        assert_eq!(pad("tcp", 7), "tcp    ");
+        // 「仅本机」6 列 → 补到 11 列只需 5 个空格
+        assert_eq!(pad("仅本机", 11), "仅本机     ");
     }
 
     #[test]

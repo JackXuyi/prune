@@ -110,6 +110,24 @@ fn tool_defs() -> Value {
             "name": "disk_report",
             "description": "全盘磁盘浪费扫描（约 15 秒，不要高频调用）：跨平台二进制死重（A1）、包管理器缓存、项目 node_modules、Docker。返回分层可回收统计。",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "port_listeners",
+            "description": "端口监听反查（只读，约 40-140 ms）：谁占着某个端口，含持有进程的 pid、绑定地址（全部网卡/仅本机）、cwd 归属的项目目录与 ESTABLISHED 连接数。不传 port 时返回关注层（开发/数据库端口 + 有项目归属的端口）。coverage 说明可见性：listenTotal 是内核口径，attributed 是能归属到进程的条数，差额是权限看不到的部分——「没查到」不等于端口空闲。timeWait 是内核残留连接，没有持有进程。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "number",
+                        "description": "只看这个端口（如 3000）。不传则返回关注层全部。"
+                    },
+                    "all": {
+                        "type": "boolean",
+                        "description": "是否包含应用内部 IPC / 系统服务的折叠层，默认 false",
+                        "default": false
+                    }
+                }
+            }
         }
     ])
 }
@@ -127,6 +145,7 @@ pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
             Ok(tool_mem_leaks(since_hours))
         }
         "disk_report" => Ok(tool_disk_report()),
+        "port_listeners" => Ok(tool_port_listeners(args)),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -215,6 +234,49 @@ fn tool_disk_report() -> Value {
     let home = prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let report = disk::scan(&home, None);
     serde_json::to_value(report).unwrap_or(Value::Null)
+}
+
+/// 端口反查（只读）。**不暴露任何结束进程的工具**——Agent 拿到 pid 只用于解释与建议。
+fn tool_port_listeners(args: &Value) -> Value {
+    let port = args
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .filter(|p| *p > 0 && *p <= 65535)
+        .map(|p| p as u16);
+    let all = args.get("all").and_then(|v| v.as_bool()).unwrap_or(false);
+
+    let snap = prune_core::net::ports::scan(None);
+    let entries: Vec<&prune_core::net::PortEntry> = snap
+        .entries
+        .iter()
+        .filter(|e| port.map(|p| e.port == p).unwrap_or(all || e.watched))
+        .collect();
+
+    // 单端口查询时只回该端口的 TIME_WAIT 命中：整张 128 条端口列表是纯噪音
+    let time_wait_ports: Vec<u16> = match port {
+        Some(p) => snap
+            .time_wait_ports
+            .iter()
+            .copied()
+            .filter(|x| *x == p)
+            .collect(),
+        None => snap.time_wait_ports.clone(),
+    };
+
+    json!({
+        "port": port,
+        // 空数组 ≠ 端口空闲：coverage 才是判断依据
+        "entries": entries,
+        "coverage": snap.coverage,
+        "timeWait": snap.time_wait,
+        "timeWaitPorts": time_wait_ports,
+        "scanMs": snap.scan_ms,
+        "hint": if entries.is_empty() {
+            "没有可见的监听进程。先看 coverage：listenTotal 与 attributed 的差额是权限看不到的部分；若 timeWaitPorts 含该端口，则是内核保留期内的 TIME_WAIT 残留，不是进程占用。"
+        } else {
+            "exposure=any 表示绑定在全部网卡，局域网可达；project 来自进程 cwd，是该服务所在的项目目录。"
+        },
+    })
 }
 
 /// L4 Docker 组的命令提示（A6：只给命令，永不执行）
@@ -346,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_defs_have_three_readonly_tools() {
+    fn tool_defs_have_four_readonly_tools() {
         let defs = tool_defs();
         let names: Vec<&str> = defs
             .as_array()
@@ -354,7 +416,10 @@ mod tests {
             .iter()
             .map(|t| t["name"].as_str().unwrap())
             .collect();
-        assert_eq!(names, ["mem_snapshot", "mem_leaks", "disk_report"]);
+        assert_eq!(
+            names,
+            ["mem_snapshot", "mem_leaks", "disk_report", "port_listeners"]
+        );
         for t in defs.as_array().unwrap() {
             assert!(t["description"].as_str().unwrap().len() > 10);
             assert!(t["inputSchema"].is_object());
