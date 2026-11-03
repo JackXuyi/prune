@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
- * Gitee 一键发版：bump → 构建当前平台安装包 → 打 tag 推送 → 创建/更新 Gitee Release 并上传产物
+ * Gitee 一键发版：bump → 构建当前平台安装包 → 打 tag 推送（Gitee + GitHub）→ 创建/更新 Gitee Release 并上传产物
  *
  * 用法：
  *   pnpm release                # patch 递增（0.1.0 → 0.1.1）
  *   pnpm release minor          # 0.1.0 → 0.2.0
  *   pnpm release 0.2.0          # 指定版本
  *   pnpm release --no-push      # 只构建+本地打 tag，不推送
+ *   pnpm release --no-github    # 只推 Gitee，不推 GitHub（不触发 GitHub Actions）
  *   pnpm release --skip-build   # 跳过构建，直接上传已有产物（用于补传另一个平台的包）
  *   pnpm release --dry-run      # 只打印将要执行的动作
  *
@@ -15,6 +16,9 @@
  *
  * 跨平台：在 macOS 上跑产出 .dmg，在 Windows 上跑产出 .msi/.exe，
  * 两次执行同一个 tag 会把产物追加到同一个 Release（幂等）。
+ *
+ * 远程：按 host 自动识别 —— gitee.com 的远程用于 Release 上传，github.com 的远程用于
+ * 推送 tag 触发 .github/workflows/release.yml 自动构建双平台安装包。
  */
 import { execFileSync, execSync } from 'node:child_process'
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs'
@@ -40,15 +44,34 @@ function git(cmd) {
   return execSync(`git ${cmd}`, { cwd: root, encoding: 'utf8' }).trim()
 }
 
-const remoteUrl = git('remote get-url origin')
-const m = remoteUrl.match(/gitee\.com[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/)
-if (!m) {
-  console.error(`无法从 origin 解析 Gitee 仓库：${remoteUrl}`)
+// origin 现在指向 GitHub（双平台打包走 GitHub Actions），Gitee 是独立远程。
+// 这里不写死 origin，而是按 host 自动匹配远程，避免改远程名就把发版推错地方。
+function pickRemote(hostRe, preferred) {
+  const names = git('remote').split('\n').map((s) => s.trim()).filter(Boolean)
+  const ordered = [preferred, ...names.filter((n) => n !== preferred)]
+  for (const name of ordered) {
+    const url = git(`remote get-url ${name}`)
+    const match = url.match(hostRe)
+    if (match) return { name, url, owner: match[1], repo: match[2] }
+  }
+  return null
+}
+
+const GITEE_RE = /gitee\.com[^:/]*[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/
+const GITHUB_RE = /github\.com[^:/]*[:/]([^/]+)\/([^/.]+?)(?:\.git)?$/
+
+const giteeRemote = pickRemote(GITEE_RE, 'gitee')
+if (!giteeRemote) {
+  console.error('未找到指向 gitee.com 的远程，请先添加：')
+  console.error('  git remote add gitee git@gitee.com:<owner>/<repo>.git')
   process.exit(1)
 }
-const [, OWNER, REPO] = m
+const githubRemote = pickRemote(GITHUB_RE, 'origin')
+const OWNER = giteeRemote.owner
+const REPO = giteeRemote.repo
 const API = 'https://gitee.com/api/v5'
-log(`仓库：${OWNER}/${REPO}`)
+log(`仓库：${OWNER}/${REPO}（远程 ${giteeRemote.name}）`)
+if (githubRemote) log(`GitHub：${githubRemote.owner}/${githubRemote.repo}（远程 ${githubRemote.name}）`)
 log(`平台：${process.platform} / ${process.arch}`)
 
 // ---------------------------------------------------------------- 1. 版本号
@@ -133,10 +156,19 @@ if (!SKIP_BUILD && !DRY) {
   execSync(`git tag -f ${tag}`, { cwd: root, stdio: 'inherit' })
   ok(`tag ${tag} 已创建`)
   if (NO_PUSH) {
-    warn('--no-push：未推送，请手动 git push origin master --tags')
+    warn(`--no-push：未推送，请手动 git push ${giteeRemote.name} master --tags`)
   } else {
-    execSync('git push origin HEAD --tags', { cwd: root, stdio: 'inherit' })
-    ok('已推送到 Gitee')
+    execSync(`git push ${giteeRemote.name} HEAD --tags`, { cwd: root, stdio: 'inherit' })
+    ok(`已推送到 Gitee（${giteeRemote.name}）`)
+    // 顺手推 GitHub：tag 一落地，GitHub Actions 就会自动构建 macOS + Windows 安装包
+    if (githubRemote && !flags.has('--no-github')) {
+      try {
+        execSync(`git push ${githubRemote.name} HEAD --tags`, { cwd: root, stdio: 'inherit' })
+        ok(`已推送到 GitHub（${githubRemote.name}），Actions 将自动构建双平台安装包`)
+      } catch {
+        warn('GitHub 推送失败，跳过（不影响 Gitee 发版）')
+      }
+    }
   }
 }
 

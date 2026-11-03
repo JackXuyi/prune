@@ -75,5 +75,12 @@ pnpm release 0.1.1 --skip-build   # 跳过 bump/构建，仅上传已有 msi/exe
 
 ## 与 GitHub Actions 方案的关系
 
-仓库主战场在 Gitee，`.workflow/prune-ci.yml` + `scripts/release.mjs` 已可覆盖日常发版；
-若后续需要「push tag 全自动双平台」，再考虑镜像仓到 GitHub 用 `tauri-action`，两者不冲突。
+现在两条链路并存，各管一个 Release 平台：
+
+| 链路 | 谁构建 | 产物去处 | 适用 |
+|---|---|---|---|
+| GitHub Actions `.github/workflows/release.yml` | GitHub 托管 runner（macOS + Windows） | GitHub Draft Release | tag 一推就自动出双平台包，见 `docs/release-github.md` |
+| `pnpm release`（本文）+ Gitee Go 校验 | 你自己的 mac / win 机器 | Gitee Release | 国内下载、给 Gitee 用户 |
+
+`scripts/release.mjs` 不再写死 `origin`：它按 host 自动识别远程 —— gitee.com 的远程用来传 Release，
+github.com 的远程用来推 tag 触发 Actions。所以推 tag 时会同时更新两边，不想触发 Actions 加 `--no-github`。

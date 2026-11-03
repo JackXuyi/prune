@@ -1,0 +1,154 @@
+name: Release Desktop
+
+# 触发：
+#   - push tag（v0.1.1 之类）：三平台并行构建，产物挂到 Draft Release
+#   - 手动 workflow_dispatch：用当前版本号构建，同样产出 Draft Release（不会自动改版本号）
+#
+# 版本号由 scripts/bump-version.mjs 统一维护（package.json / tauri.conf.json / src-tauri/Cargo.toml），
+# 因此打 tag 前请先 pnpm bump，否则 verify 任务会直接失败。
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# 同一个 ref 的构建串行执行，避免两次 tag 构建争抢同一个 Release
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  # 统一 Node / pnpm 版本，与本地开发保持一致
+  NODE_VERSION: '22'
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 快速门禁：版本号三处一致 + tsc 类型检查 + 前端构建（约 1 分钟）
+  # 放在前面，避免版本号写错还白跑三个平台的 Rust 编译
+  # ---------------------------------------------------------------------------
+  verify:
+    name: Verify version & frontend
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # pnpm 版本对齐 .workflow/prune-ci.yml（Gitee Go 用 pnpm@9）
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Check version consistency
+        run: |
+          V_PKG=$(node -p "require('./package.json').version")
+          V_TAURI=$(node -p "require('./src-tauri/tauri.conf.json').version")
+          V_CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+          echo "package.json=$V_PKG tauri.conf.json=$V_TAURI Cargo.toml=$V_CARGO"
+          if [ "$V_PKG" != "$V_TAURI" ] || [ "$V_PKG" != "$V_CARGO" ]; then
+            echo "::error::版本号不一致，请先执行 pnpm bump <patch|minor|major|x.y.z>"
+            exit 1
+          fi
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "v$V_PKG" ]]; then
+            echo "::error::tag $GITHUB_REF_NAME 与版本号 v$V_PKG 不匹配"
+            exit 1
+          fi
+          echo "OK: v$V_PKG"
+
+      - name: Typecheck & build frontend
+        run: pnpm build
+
+  # ---------------------------------------------------------------------------
+  # 三平台打包
+  #   macOS arm64 / macOS x64 都在 macos-latest（Apple Silicon）上交叉编译，
+  #   不依赖已下线的 macos-13 Intel runner。
+  #   Windows 走 MSVC，产出 .msi + NSIS .exe。
+  # ---------------------------------------------------------------------------
+  bundle:
+    name: Bundle ${{ matrix.label }}
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: macOS arm64 (Apple Silicon)
+            platform: macos-latest
+            target: aarch64-apple-darwin
+            args: --target aarch64-apple-darwin
+          - label: macOS x64 (Intel)
+            platform: macos-latest
+            target: x86_64-apple-darwin
+            args: --target x86_64-apple-darwin
+          - label: Windows x64
+            platform: windows-latest
+            target: x86_64-pc-windows-msvc
+            args: --target x86_64-pc-windows-msvc
+
+    runs-on: ${{ matrix.platform }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+
+      # Rust 工作区根在仓库根目录（members = src-tauri / crates/*），产物在 ./target
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          shared-key: ${{ matrix.target }}
+
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build & upload to release
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # macOS 未配置正式证书时用 ad-hoc 签名（Apple Silicon 上必须签名，
+          # 否则用户看到「应用已损坏」）。配好证书后，在仓库 Secrets 添加
+          # APPLE_SIGNING_IDENTITY 即可自动切换为正式签名。
+          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY || '-' }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        with:
+          tagName: v__VERSION__
+          releaseName: 'Prune v__VERSION__'
+          releaseBody: |
+            下载对应平台安装包：
+
+            | 平台 | 文件 |
+            |---|---|
+            | macOS Apple Silicon | `Prune_*_aarch64.dmg` |
+            | macOS Intel | `Prune_*_x64.dmg` |
+            | Windows x64 | `Prune_*_x64-setup.exe`（推荐） / `Prune_*_x64_en-US.msi` |
+
+            macOS 首次打开若提示未验证开发者：右键 → 打开，或 `xattr -cr /Applications/Prune.app`。
+          releaseDraft: true
+          prerelease: false
+          args: ${{ matrix.args }}

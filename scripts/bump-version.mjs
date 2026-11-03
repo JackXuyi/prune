@@ -98,5 +98,6 @@ if (results.length === 0) {
   console.log(`\n下一步:`)
   console.log(`  git add -A && git commit -m "chore: bump version to ${target}"`)
   console.log(`  git tag v${target}`)
-  console.log(`  git push origin main --tags`)
+  console.log(`  git push origin master --tags   # GitHub：触发 Actions 自动构建 mac + windows`)
+  console.log(`  git push gitee master --tags    # Gitee：同步代码与 tag`)
 }
