@@ -26,11 +26,12 @@ stages:
       - step: build@nodejs
         name: verify_frontend
         displayName: 版本一致性 + 前端构建
-        nodeVersion: '20'
+        nodeVersion: '22'
         commands:
           - set -e
           - npm config set registry https://registry.npmmirror.com
-          - npm i -g pnpm@9
+          # pnpm 必须 >= 10：pnpm-workspace.yaml 只有 allowBuilds、没有 packages 字段，pnpm 9 直接报错
+          - npm i -g pnpm@11
           - pnpm install --frozen-lockfile
           # 三处版本号必须一致，否则各平台产物版本会错乱
           - |
@@ -60,7 +61,7 @@ stages:
   #     - step: build@nodejs
   #       name: bundle_win
   #       displayName: tauri build (msvc)
-  #       nodeVersion: '20'
+  #       nodeVersion: '22'
   #       commands:
-  #         - npm i -g pnpm@9 && pnpm install --frozen-lockfile
+  #         - npm i -g pnpm@11 && pnpm install --frozen-lockfile
   #         - pnpm tauri build --target x86_64-pc-windows-msvc

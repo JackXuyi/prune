@@ -36,10 +36,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      # pnpm 版本对齐 .workflow/prune-ci.yml（Gitee Go 用 pnpm@9）
+      # pnpm 必须 >= 10：pnpm-workspace.yaml 里只有 allowBuilds（pnpm 10+ 才认的配置键），
+      # 没有 packages 字段，pnpm 9 会直接报 "packages field missing or empty" 并中止。
+      # 版本对齐 .workflow/prune-ci.yml（Gitee Go 同样用 pnpm@11）。
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
 
       - uses: actions/setup-node@v4
         with:
@@ -101,7 +103,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: 9
+          version: 11
 
       - uses: actions/setup-node@v4
         with:

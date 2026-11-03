@@ -29,7 +29,7 @@ verify (ubuntu, ~1 min)          bundle (3 个并行 job, ~8-15 min)
 | `verify` 先行，`bundle` 依赖它 | 版本号写错/类型挂掉时 1 分钟失败，不必白跑三个平台的 Rust 编译（lto 下每个 job 8 分钟起） |
 | macOS x64 也在 Apple Silicon runner 上交叉编译 | Intel runner（`macos-13` 系列）已被 GitHub 陆续下线，`macos-15-intel` 也不保证长期存在；Rust 交叉编译 x86_64 官方支持，产物完整 |
 | `swatinem/rust-cache` 的 `workspaces: . -> target` | 本仓库 Rust 工作区根在**仓库根目录**（`members = src-tauri, crates/*`），target 目录是 `./target`；写成 `src-tauri` 会缓存错目录，等于没缓存 |
-| pnpm 固定 9 | 与 `.workflow/prune-ci.yml`（Gitee Go）保持一致，避免两套 CI 装出不同依赖树 |
+| pnpm 固定 11 | `pnpm-workspace.yaml` 里只有 `allowBuilds`（pnpm 10+ 才识别的键）、没有 `packages` 字段，**pnpm 9 会直接报 `packages field missing or empty` 并中止**；11 与本地出包的版本一致，也和 `.workflow/prune-ci.yml`（Gitee Go）对齐，避免两套 CI 装出不同依赖树 |
 | 不加 `--bundles` 限制 | `tauri.conf.json` 是 `targets: "all"`，Windows 会同时产出 `.msi` + NSIS `.exe`，多一个包不亏 |
 
 ## 三、产物清单
@@ -89,6 +89,7 @@ Windows 目前未签名，SmartScreen 会提示「未知发布者」，需要 EV
 | 现象 | 原因 / 处理 |
 |---|---|
 | `verify` 报版本号不一致 | 忘了 `pnpm bump`，或只改了 `package.json` |
+| 装依赖报 `packages field missing or empty` | pnpm 版本低于 10。本仓库 `pnpm-workspace.yaml` 只有 `allowBuilds` 没有 `packages`，pnpm 9 会硬失败；工作流已固定 `pnpm/action-setup@v4` + `version: 11`，不要降回去 |
 | `verify` 报 tag 与版本号不匹配 | 先 bump 再打 tag，顺序不能反 |
 | Windows job 在 `cargo build` 处挂 | 大概率是 `cfg(windows)` 分支没在本机验证过（本机无 MSVC 工具链），看日志定位；`docs/windows-support-plan.md` 有背景 |
 | macOS 产物被 Gatekeeper 拦 | 预期行为，未公证；右键 → 打开，或 `xattr -cr /Applications/Prune.app` |
