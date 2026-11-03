@@ -74,11 +74,11 @@ struct WsRow {
 /// 定时器轮与手动刷新共用。否则用户点「刷新」时若正撞上 5 min 轮，
 /// 会有两轮 footprint 并行（并发翻倍、缓存互相覆盖），既浪费也是数据抖动源。
 /// Drop 时自动释放，异常路径（超时/panic）也不会把闸门永久卡住。
-struct DeepInFlight<'a>(&'a AtomicBool);
+pub(crate) struct DeepInFlight<'a>(&'a AtomicBool);
 
 impl<'a> DeepInFlight<'a> {
     /// 抢到闸门返回守卫；已有一轮在跑则返回 None（调用方直接跳过本轮）
-    fn acquire(flag: &'a AtomicBool) -> Option<Self> {
+    pub(crate) fn acquire(flag: &'a AtomicBool) -> Option<Self> {
         flag.compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
             .ok()
             .map(|_| Self(flag))

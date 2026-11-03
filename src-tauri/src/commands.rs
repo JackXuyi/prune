@@ -16,9 +16,11 @@ use std::sync::Arc;
 use prune_core::db::Point;
 use prune_core::disk::DiskReport;
 use prune_core::mem::{MemSnapshot, ProcMem};
+use prune_core::net::PortSnapshot;
 use prune_core::reclaim::{self, Limits, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport};
 use tauri::{AppHandle, Emitter, Manager, State};
 
+use crate::port_sampler::PortState;
 use crate::sampler::{self, MemState};
 use crate::scan::{self, DiskState};
 
@@ -149,6 +151,27 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------- 端口（M7）
+
+#[tauri::command]
+pub fn port_snapshot(state: State<'_, Arc<PortState>>) -> Option<PortSnapshot> {
+    state.snapshot()
+}
+
+/// 手动刷新：用户点了就该扫（给 `force`，绕开定时器的 30 s 间隔）。
+/// 单飞闸门仍在——撞上正在跑的一轮时直接返回旧快照。
+#[tauri::command]
+pub async fn port_refresh(app: AppHandle) -> Result<(), String> {
+    crate::port_sampler::port_round(&app, true).await
+}
+
+/// 可见性门控：主窗口切进/切出端口 tab 时调用。
+/// `active = false` 时定时器不采样，常驻开销为 0（验收 §12-9）。
+#[tauri::command]
+pub fn port_set_active(state: State<'_, Arc<PortState>>, active: bool) {
+    state.set_active(active);
 }
 
 // ---------------------------------------------------------------- 磁盘（M1）
