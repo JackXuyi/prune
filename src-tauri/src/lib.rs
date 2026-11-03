@@ -80,6 +80,12 @@ pub fn run() {
                 scan::run_background(disk_handle).await;
             });
 
+            // 托盘 CPU 动画（M6-T2）：与采样循环解耦，读 MemState 共享状态驱动换帧
+            let anim_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                tray::run_anim(anim_handle).await;
+            });
+
             // 面板失焦即隐藏（技术方案 §6）
             if let Some(panel) = app.get_webview_window("panel") {
                 tray::attach_blur_to_hide(&panel);

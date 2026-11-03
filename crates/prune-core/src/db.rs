@@ -192,6 +192,8 @@ mod tests {
             start_time: 7,
             cmd: Vec::new(),
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         }
     }
 

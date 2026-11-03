@@ -4,11 +4,12 @@
 //! 未命中时从 exe 路径里找 `X.app` 取应用名，最后才退回进程名本身。
 //! 这样「Cursor Helper (Renderer)」这类子进程不会各占一行。
 
+use std::collections::HashSet;
 use std::path::Path;
 
-use sysinfo::{Pid, ProcessesToUpdate, System};
+use sysinfo::{CpuRefreshKind, Pid, ProcessesToUpdate, System};
 
-use super::{MemSource, ProcMem};
+use super::{CpuLoad, MemSource, ProcMem};
 
 /// 内置规则表：`(家族名, 关键词)`，按顺序匹配，命中即停。
 ///
@@ -81,9 +82,26 @@ fn app_bundle_name(exe: &str) -> Option<String> {
     Some(name)
 }
 
+/// 一轮扫描的产出：进程表 + 整机 CPU 读数（M5）
+#[derive(Debug, Clone)]
+pub struct ScanResult {
+    pub procs: Vec<ProcMem>,
+    /// 整机 CPU 使用率（0–100，每核平均）。None = 首轮（差分窗口未建立）或采集失败
+    pub cpu_usage: Option<f32>,
+    /// 逻辑核数
+    pub cores: u32,
+    /// 1/5/15 min 排队长度。None = 平台不支持（Windows）
+    pub load: Option<CpuLoad>,
+}
+
 /// 持久的进程枚举器：复用 `System`，避免每轮重建开销。
 pub struct Scanner {
     sys: System,
+    /// 上一轮见过的 `(pid, start_time)`。sysinfo 的进程 CPU 是差分值，新进程
+    /// 首次刷新恒为 0——必须区分「首见」（→ None）与「真的 0%」（→ Some(0.0)）。
+    seen: HashSet<(i32, u64)>,
+    /// 首轮不产出整机 CPU：`new_all` 的初值是初始化时刻的采样，不是 10 s 窗口均值。
+    cpu_warmed: bool,
 }
 
 impl Default for Scanner {
@@ -98,15 +116,23 @@ impl Scanner {
         // 只在启动时执行一次，后续轮次走 refresh_processes
         Self {
             sys: System::new_all(),
+            seen: HashSet::new(),
+            cpu_warmed: false,
         }
     }
 
-    /// 枚举全量进程（RSS / ppid / exe / 启动时间），按 RSS 降序。
+    /// 枚举全量进程（RSS / CPU / ppid / exe / 启动时间），按 RSS 降序。
     ///
     /// 深探字段（footprint / swapped）此轮为 None，由 sampler 用上一轮 deep 结果合并。
-    pub fn scan(&mut self) -> Vec<ProcMem> {
+    pub fn scan(&mut self) -> ScanResult {
+        // 整机 CPU 先刷（0.1 ms 级，实测见 m5-cpu-plan.md §2.2），差分窗口与进程轮一致
+        self.sys
+            .refresh_cpu_specifics(CpuRefreshKind::nothing().with_cpu_usage());
+        // sysinfo 0.39 的 refresh_processes 默认 ProcessRefreshKind 带 with_cpu()，
+        // macOS 上 RSS 与 CPU 累计时间来自同一次 proc_pidinfo，不增加 syscall
         self.sys.refresh_processes(ProcessesToUpdate::All, true);
 
+        let prev_seen = std::mem::take(&mut self.seen);
         let mut out: Vec<ProcMem> = self
             .sys
             .processes()
@@ -125,8 +151,16 @@ impl Scanner {
                 } else {
                     Vec::new()
                 };
+                let pid = p.pid().as_u32() as i32;
+                let start_time = p.start_time();
+                // 上轮见过 → 差分有效；首见 → None（它可能正在满核编译，0 是假事实）
+                let cpu = if prev_seen.contains(&(pid, start_time)) {
+                    Some(p.cpu_usage())
+                } else {
+                    None
+                };
                 ProcMem {
-                    pid: p.pid().as_u32() as i32,
+                    pid,
                     ppid: p.parent().map(|x: Pid| x.as_u32() as i32).unwrap_or(0),
                     family,
                     name,
@@ -135,15 +169,45 @@ impl Scanner {
                     footprint: None,
                     swapped: None,
                     source: MemSource::Rss,
-                    start_time: p.start_time(),
+                    start_time,
                     cmd,
                     workspace: None,
+                    cpu,
+                    cpu_time_ms: p.accumulated_cpu_time(),
                 }
             })
             .collect();
+        // 用本轮集合整体替换（而非累积）：退出进程不留在表里，集合大小有界
+        self.seen = out.iter().map(|p| (p.pid, p.start_time)).collect();
+
+        let cpu_usage = if self.cpu_warmed {
+            Some(self.sys.global_cpu_usage())
+        } else {
+            None
+        };
+        self.cpu_warmed = true;
+        let cores = self.sys.cpus().len().max(1) as u32;
+        // Windows 的 load_average 恒为 0（假事实）→ Rust 侧直接转 None，UI 隐藏
+        #[cfg(windows)]
+        let load = None;
+        #[cfg(not(windows))]
+        let load = {
+            // sysinfo 0.39 的 load_average 是关联函数（不依赖 System 实例）
+            let la = System::load_average();
+            Some(CpuLoad {
+                one: la.one,
+                five: la.five,
+                fifteen: la.fifteen,
+            })
+        };
 
         out.sort_by_key(|p| std::cmp::Reverse(p.rss));
-        out
+        ScanResult {
+            procs: out,
+            cpu_usage,
+            cores,
+            load,
+        }
     }
 
     pub fn total_memory(&self) -> u64 {
@@ -242,13 +306,39 @@ mod tests {
     #[test]
     fn scanner_enumerates_self() {
         let mut s = Scanner::new();
-        let procs = s.scan();
-        assert!(!procs.is_empty(), "至少应枚举到当前进程");
+        let result = s.scan();
+        assert!(!result.procs.is_empty(), "至少应枚举到当前进程");
         assert!(s.total_memory() > 0);
         // 当前测试进程应当在列表里
         let me = std::process::id() as i32;
-        assert!(procs.iter().any(|p| p.pid == me), "枚举结果应包含自身 pid");
+        assert!(result.procs.iter().any(|p| p.pid == me), "枚举结果应包含自身 pid");
         // RSS 降序
-        assert!(procs.windows(2).all(|w| w[0].rss >= w[1].rss));
+        assert!(result.procs.windows(2).all(|w| w[0].rss >= w[1].rss));
+        // 整机核数
+        assert!(result.cores >= 1);
+    }
+
+    #[test]
+    fn cpu_semantics_first_round_null_then_value() {
+        // P0 正确性：首轮整机/进程 CPU 必须是 None（差分窗口未建立），第二轮才有值
+        let mut s = Scanner::new();
+        let first = s.scan();
+        assert_eq!(first.cpu_usage, None, "首轮整机 CPU 是初始化采样，必须标 None");
+        let me = std::process::id() as i32;
+        let first_self = first.procs.iter().find(|p| p.pid == me).unwrap();
+        assert_eq!(first_self.cpu, None, "首轮自身进程 CPU 差分无效，必须标 None");
+
+        std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+        let second = s.scan();
+        assert!(second.cpu_usage.is_some(), "第二轮整机 CPU 应有读数");
+        let second_self = second.procs.iter().find(|p| p.pid == me).unwrap();
+        assert!(
+            second_self.cpu.is_some(),
+            "第二轮起进程 CPU 差分有效；真实 0% 是 Some(0.0)，不是 None"
+        );
+        assert!(
+            second_self.cpu_time_ms > 0 || second_self.cpu == Some(0.0),
+            "累计 CPU 时间应为非负事实值"
+        );
     }
 }

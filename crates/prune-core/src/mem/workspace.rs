@@ -643,6 +643,8 @@ mod tests {
             start_time: 0,
             cmd,
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         }
     }
 

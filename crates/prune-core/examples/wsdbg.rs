@@ -1,7 +1,7 @@
 use prune_core::mem::process::Scanner;
 fn main() {
     let mut s = Scanner::new();
-    let procs = s.scan();
+    let procs = s.scan().procs;
     // 最大的几个 renderer 的完整 argv
     let mut r: Vec<_> = procs.iter().filter(|p| p.name.contains("Renderer")).collect();
     r.sort_by_key(|p| std::cmp::Reverse(p.rss));

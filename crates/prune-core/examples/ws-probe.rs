@@ -10,7 +10,7 @@ use prune_core::mem::workspace;
 fn main() {
     let home = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| "/".into()));
     let mut scanner = Scanner::new();
-    let procs = scanner.scan();
+    let procs = scanner.scan().procs;
 
     let known = workspace::known_workspaces(&home);
     println!("== 已知工作区 {} 个（workspaceStorage）==", known.len());

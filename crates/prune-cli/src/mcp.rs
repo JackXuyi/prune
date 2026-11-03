@@ -160,7 +160,7 @@ fn probe_top(procs: &mut [prune_core::mem::ProcMem], top: usize) {
 
 fn tool_mem_snapshot() -> Value {
     let mut scanner = Scanner::new();
-    let mut procs = scanner.scan();
+    let mut procs = scanner.scan().procs;
     probe_top(&mut procs, 20);
 
     let swap = prune_core::swap::collect(None);
@@ -272,7 +272,7 @@ impl Default for SeriesAccum {
 /// watch 一轮采样：scan + 深探 Top N，返回可并入序列的进程
 pub fn watch_round(top: usize) -> Vec<prune_core::mem::ProcMem> {
     let mut scanner = Scanner::new();
-    let mut procs = scanner.scan();
+    let mut procs = scanner.scan().procs;
     probe_top(&mut procs, top);
     procs
 }
@@ -381,6 +381,8 @@ mod tests {
             start_time: st,
             cmd: Vec::new(),
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         };
         let mut acc = SeriesAccum::new();
         acc.push(&[mk(1, 100, 10)], 1000);
@@ -409,6 +411,8 @@ mod tests {
             start_time: 1,
             cmd: Vec::new(),
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         };
         let mut acc = SeriesAccum::new();
         acc.push(&[p], 1000);

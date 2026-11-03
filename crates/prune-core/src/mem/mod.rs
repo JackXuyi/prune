@@ -108,6 +108,12 @@ pub struct ProcMem {
     pub cmd: Vec<String>,
     /// 工作区归属（M2.5）；None = 未归属（UI 必须显示「未归属」而不是猜一个）
     pub workspace: Option<WorkspaceRef>,
+    /// 近 10 s 均值 CPU（单核口径，可 >100%）；None = 首见/采集失败（**不是 0**，UI 显示「—」）
+    #[serde(default)]
+    pub cpu: Option<f32>,
+    /// 累计 CPU 时间（CPU-ms，多线程下可大于墙钟时长）
+    #[serde(default)]
+    pub cpu_time_ms: u64,
 }
 
 impl ProcMem {
@@ -137,6 +143,9 @@ pub struct WorkspaceMem {
     pub rss: u64,
     /// 与家族同口径：已深探用 footprint，未深探用 RSS 补位
     pub footprint: Option<u64>,
+    /// 组内 CPU 之和（单核口径）；None = 全部成员未知
+    #[serde(default)]
+    pub cpu: Option<f32>,
 }
 
 impl WorkspaceMem {
@@ -164,6 +173,12 @@ pub struct FamilyMem {
     pub ws_unattributed_count: usize,
     /// 未能归属部分的总量（同口径）
     pub ws_unattributed_footprint: Option<u64>,
+    /// 成员 CPU 之和（单核口径，可 >100%）；None = 全部成员未知；部分未知时是**下界**
+    #[serde(default)]
+    pub cpu: Option<f32>,
+    /// 有 CPU 读数的成员数。`< process_count` 时 `cpu` 为下界（对齐 deep_covered 语义）
+    #[serde(default)]
+    pub cpu_covered: usize,
 }
 
 impl FamilyMem {
@@ -182,6 +197,34 @@ impl FamilyMem {
             _ => None,
         }
     }
+}
+
+/// 1/5/15 min 排队长度（macOS `getloadavg`；Windows 无此口径）
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuLoad {
+    pub one: f64,
+    pub five: f64,
+    pub fifteen: f64,
+}
+
+/// 整机 CPU 读数（M5）。与内存口径解耦，不塞进 `SystemMem`。
+///
+/// 注意：`usage` 是**每核平均**（0–100）；进程/家族的 CPU 是单核口径（可 >100%），
+/// 两者口径不同、不守恒，UI 绝不能并排呈现让用户做减法。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CpuInfo {
+    /// 整机 CPU 使用率（0–100，每核平均）；首轮为 None（`new_all` 的初值是初始化采样）
+    pub usage: f32,
+    /// 逻辑核数
+    pub cores: u32,
+    /// 1/5/15 min 排队长度。None = 平台不支持（Windows）；load 含 I/O，不能换算成使用率
+    pub load: Option<CpuLoad>,
+    /// 最近 60 点整机 CPU（10 min @10 s），sparkline 用
+    pub history: Vec<f32>,
+    /// 本次读数时间（Unix 秒）
+    pub at: i64,
 }
 
 /// 一次采样产出的完整快照
@@ -215,6 +258,9 @@ pub struct MemSnapshot {
     pub deep_available: bool,
     /// B5 泄漏嫌疑判定（M3）。无库/数据不足时是**显式状态**，不是空结果
     pub leaks: LeakReport,
+    /// 整机 CPU 读数（M5）。None = 首轮 / 采集失败；旧快照反序列化为 None，UI 自动隐藏
+    #[serde(default)]
+    pub cpu: Option<CpuInfo>,
 }
 
 /// B4：取 swapped 最高的前 N 个进程
@@ -245,6 +291,8 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
         fp_probed: u64,
         rss_unprobed: u64,
         has_footprint: bool,
+        cpu: f32,
+        has_cpu: bool,
     }
 
     #[derive(Default)]
@@ -259,6 +307,8 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
         swapped: u64,
         has_footprint: bool,
         has_swapped: bool,
+        cpu: f32,
+        cpu_covered: usize,
         ws: std::collections::BTreeMap<String, WsAcc>,
         ws_unattributed_count: usize,
         ws_unattributed_fp: u64,
@@ -290,6 +340,11 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
             a.swapped = a.swapped.saturating_add(sw);
             a.has_swapped = true;
         }
+        // CPU 只累加已知成员：部分未知时结果是**下界**（对齐 footprint 下界的语言）
+        if let Some(c) = p.cpu {
+            a.cpu += c;
+            a.cpu_covered += 1;
+        }
 
         // 工作区分组（M2.5）：未归属的单独计数，不用历史记录兜底
         match &p.workspace {
@@ -310,6 +365,10 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
                         w.has_footprint = true;
                     }
                     None => w.rss_unprobed = w.rss_unprobed.saturating_add(p.rss),
+                }
+                if let Some(c) = p.cpu {
+                    w.cpu += c;
+                    w.has_cpu = true;
                 }
             }
             None => {
@@ -341,6 +400,7 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
                     footprint: w
                         .has_footprint
                         .then_some(w.fp_probed.saturating_add(w.rss_unprobed)),
+                    cpu: w.has_cpu.then_some(w.cpu),
                 })
                 .collect();
             workspaces.sort_by_key(|w| std::cmp::Reverse(w.total()));
@@ -361,6 +421,8 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
                 ws_unattributed_footprint: a
                     .has_footprint
                     .then_some(a.ws_unattributed_fp.saturating_add(a.ws_unattributed_rss)),
+                cpu: (a.cpu_covered > 0).then_some(a.cpu),
+                cpu_covered: a.cpu_covered,
             }
         })
         .collect();
@@ -402,6 +464,7 @@ pub fn build_snapshot(
     deep_updated_at: Option<i64>,
     deep_available: bool,
     leaks: LeakReport,
+    cpu: Option<CpuInfo>,
 ) -> MemSnapshot {
     MemSnapshot {
         physical_total: system.total,
@@ -417,6 +480,7 @@ pub fn build_snapshot(
         deep_updated_at,
         deep_available,
         leaks,
+        cpu,
     }
 }
 
@@ -442,7 +506,40 @@ mod tests {
             start_time: 0,
             cmd: Vec::new(),
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         }
+    }
+
+    #[test]
+    fn aggregate_sums_cpu_and_marks_lower_bound() {
+        let mut a = proc(1, "Cursor", 100, Some(1000), None);
+        a.cpu = Some(12.0);
+        let mut b = proc(2, "Cursor", 50, Some(500), None);
+        b.cpu = Some(30.0);
+        // 成员 c 的 CPU 未知 → 家族合计是下界
+        let c = proc(3, "Cursor", 20, None, None);
+        let mut d = proc(4, "Chrome", 300, None, None);
+        d.cpu = Some(0.0);
+
+        let fams = aggregate(&[a, b, c, d]);
+        let cursor = &fams[0];
+        assert_eq!(cursor.cpu, Some(42.0));
+        assert_eq!(cursor.cpu_covered, 2);
+        assert!(cursor.cpu_covered < cursor.process_count, "部分覆盖必须能被识别为下界");
+
+        // Chrome：唯一成员已知且为真实 0.0 → Some(0.0)，不是 None
+        let chrome = &fams[1];
+        assert_eq!(chrome.cpu, Some(0.0));
+        assert_eq!(chrome.cpu_covered, 1);
+    }
+
+    #[test]
+    fn aggregate_all_unknown_cpu_is_none() {
+        let procs = vec![proc(1, "A", 10, None, None), proc(2, "A", 10, None, None)];
+        let fams = aggregate(&procs);
+        assert_eq!(fams[0].cpu, None, "全部成员未知时必须是 None，不能冒充 0");
+        assert_eq!(fams[0].cpu_covered, 0);
     }
 
     #[test]

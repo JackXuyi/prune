@@ -30,6 +30,17 @@ export function formatPercent(ratio: number | null): string {
   return `${Math.round(ratio * 100)}%`;
 }
 
+/**
+ * CPU 百分比（单核口径，可 >100%）。null → "—"（首见/采集失败不是 0）；
+ * ≥100% 时附「约 N 核」换算，帮助用户理解多线程进程的读数。
+ */
+export function formatCpu(v: number | null | undefined): string {
+  if (v == null || !Number.isFinite(v)) return "—";
+  if (v < 1) return "<1%";
+  if (v < 100) return `${Math.round(v)}%`;
+  return `${Math.round(v)}%（约 ${(v / 100).toFixed(1)} 核）`;
+}
+
 /** 数字不带单位（swap 已用/上限共用一个单位时用） */
 export function numOf(bytes: number): string {
   return splitBytes(bytes).value;

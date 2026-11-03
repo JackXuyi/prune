@@ -9,7 +9,9 @@
 //!
 //! 运行 `pnpm tauri dev` 后观察 stdout 的 `[m0-tray]` 日志，并目测面板落点。
 
-use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
+use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
     AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent,
@@ -18,10 +20,24 @@ use tauri::{
 #[cfg(target_os = "macos")]
 use crate::popover;
 
+use crate::sampler::{MemState, FAST_INTERVAL_SECS};
+
 /// tray 图标唯一 ID
 pub const TRAY_ID: &str = "prune-tray";
 /// 面板窗口 label（与 tauri.conf.json windows 数组一致）
 pub const PANEL_LABEL: &str = "panel";
+/// 「CPU 动画」右键菜单项 ID（M6-T3）
+pub const MENU_TOGGLE_CPU_ANIM: &str = "toggle-cpu-anim";
+/// 设置文件名与键名（config_dir()/settings.json，多模块共享，只改本键）
+const SETTINGS_FILE: &str = "settings.json";
+const SETTING_CPU_ANIM: &str = "trayCpuAnim";
+/// LAST_FRAME 的「静态原图」哨兵值
+const FRAME_STATIC: usize = usize::MAX;
+
+/// CPU 动画开关（M6-T3）：默认开，启动时从 settings.json 加载
+static CPU_ANIM_ENABLED: AtomicBool = AtomicBool::new(true);
+/// 最近设置的帧索引；相同帧跳过 set（往返节拍里 f1/f2 会出现两次，省 ~30% 主线程跳转）
+static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 /// 面板尺寸（与 tauri.conf.json 一致，popover 内容尺寸同源）
 ///
 /// 只有 macOS 的 NSPopover 需要显式尺寸（Windows 由窗口配置决定），
@@ -47,11 +63,31 @@ fn now_ms() -> u64 {
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
+    // 开关持久化状态先行加载（决定菜单勾选态与动画行为）
+    let anim_on = load_cpu_anim_setting(app);
+    CPU_ANIM_ENABLED.store(anim_on, Ordering::Relaxed);
+    // create 里刚设置静态原图，与哨兵一致，避免动画首轮重复 set
+    LAST_FRAME.store(FRAME_STATIC, Ordering::Relaxed);
+
     let open_main = MenuItem::with_id(app, "open-main", "打开主窗口", true, None::<&str>)?;
+    let cpu_anim = CheckMenuItem::with_id(
+        app,
+        MENU_TOGGLE_CPU_ANIM,
+        "CPU 动画",
+        true,
+        anim_on,
+        None::<&str>,
+    )?;
     let quit = MenuItem::with_id(app, "quit", "退出 Prune", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
-        &[&open_main, &PredefinedMenuItem::separator(app)?, &quit],
+        &[
+            &open_main,
+            &PredefinedMenuItem::separator(app)?,
+            &cpu_anim,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
     )?;
 
     let tray = TrayIconBuilder::with_id(TRAY_ID)
@@ -61,6 +97,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id().as_ref() {
             "open-main" => show_main(app),
+            MENU_TOGGLE_CPU_ANIM => toggle_cpu_anim(app),
             "quit" => app.exit(0),
             _ => {}
         })
@@ -95,6 +132,175 @@ fn tray_icon() -> tauri::image::Image<'static> {
     {
         tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
             .expect("内置应用图标损坏")
+    }
+}
+
+// ---- M6 · CPU 动画（docs/m6-tray-anim-plan.md）----
+
+/// 动画帧（编译期内嵌，OnceLock 启动时解析一次）。
+/// macOS 用 48×48 黑色模板帧，其他平台用 32×32 品牌色帧（W3 教训）。
+fn anim_frames() -> &'static [tauri::image::Image<'static>; 4] {
+    static FRAMES: std::sync::OnceLock<Box<[tauri::image::Image<'static>; 4]>> =
+        std::sync::OnceLock::new();
+    FRAMES.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let bytes: [&[u8]; 4] = [
+            include_bytes!("../icons/tray-anim/macos/f0.png"),
+            include_bytes!("../icons/tray-anim/macos/f1.png"),
+            include_bytes!("../icons/tray-anim/macos/f2.png"),
+            include_bytes!("../icons/tray-anim/macos/f3.png"),
+        ];
+        #[cfg(not(target_os = "macos"))]
+        let bytes: [&[u8]; 4] = [
+            include_bytes!("../icons/tray-anim/win/f0.png"),
+            include_bytes!("../icons/tray-anim/win/f1.png"),
+            include_bytes!("../icons/tray-anim/win/f2.png"),
+            include_bytes!("../icons/tray-anim/win/f3.png"),
+        ];
+        Box::new(std::array::from_fn(|i| {
+            tauri::image::Image::from_bytes(bytes[i]).expect("内置托盘动画帧损坏")
+        }))
+    })
+}
+
+/// 档位映射（方案 §3.1，整机 CPU 近 10 s 均值）→ 帧间隔 ms。
+/// None = 静止档：CPU 未知（**绝不拿未知值驱动动画**）或 <10%。
+fn anim_beat_ms(usage: Option<f32>) -> Option<u64> {
+    match usage {
+        None => None,
+        Some(u) if u < 10.0 => None,
+        Some(u) if u < 40.0 => Some(500), // 2 fps · 慢
+        Some(u) if u < 70.0 => Some(200), // 5 fps · 中
+        Some(_) => Some(100),             // 10 fps · 快
+    }
+}
+
+/// 从共享采样状态读整机 CPU（T0：不新增 IPC、不新增事件）
+fn current_cpu_usage(app: &AppHandle) -> Option<f32> {
+    let state = app.try_state::<Arc<MemState>>()?;
+    let guard = state.snapshot.lock().unwrap_or_else(|e| e.into_inner());
+    guard.as_ref().and_then(|s| s.cpu.as_ref()).map(|c| c.usage)
+}
+
+/// 换帧。macOS 必须用组合 API 原子换帧——先 `set_icon` 再
+/// `set_icon_as_template` 会渲染两次导致可见闪烁（tauri 文档明示）；
+/// 其他平台该 API 内部自动降级为 `set_icon`。
+fn set_icon_frame(
+    tray: &tauri::tray::TrayIcon,
+    icon: tauri::image::Image<'static>,
+) -> tauri::Result<()> {
+    tray.set_icon_with_as_template(Some(icon), true)
+}
+
+/// 切到指定帧（None = 回静态原图）。失败只记日志，不 panic、不中断循环；
+/// 相同帧跳过 set。
+fn set_frame(app: &AppHandle, frame: Option<usize>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let target = frame.unwrap_or(FRAME_STATIC);
+    if LAST_FRAME.load(Ordering::Relaxed) == target {
+        return;
+    }
+    let icon = match frame {
+        Some(i) => anim_frames()[i].clone(),
+        None => tray_icon(),
+    };
+    match set_icon_frame(&tray, icon) {
+        Ok(()) => LAST_FRAME.store(target, Ordering::Relaxed),
+        Err(e) => eprintln!("[m6-tray] 换帧失败（不中断动画）: {e}"),
+    }
+}
+
+/// CPU 动画循环（T2）：tokio spawn 于 setup，与采样循环解耦——
+/// 采样失败不影响图标，图标失败不影响采样（方案 §4.2 约束 4）。
+///
+/// 帧序列 f0→f1→f2→f3→f2→f1（6 拍往返）；每播完一个周期重读一次 CPU，
+/// 周期内不换速，避免视觉撕裂（约束 5）。静止档只随 10 s 快照轮醒来，不空转。
+pub async fn run_anim(app: AppHandle) {
+    const CYCLE: [usize; 6] = [0, 1, 2, 3, 2, 1];
+    loop {
+        if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) {
+            set_frame(&app, None); // 关闭：回静态原图
+            tokio::time::sleep(std::time::Duration::from_secs(FAST_INTERVAL_SECS)).await;
+            continue;
+        }
+        match anim_beat_ms(current_cpu_usage(&app)) {
+            None => {
+                // 静止档：闭合帧 + 睡到下一个快照轮（验收 #1：无任何定时器空转）
+                set_frame(&app, Some(0));
+                tokio::time::sleep(std::time::Duration::from_secs(FAST_INTERVAL_SECS)).await;
+            }
+            Some(beat_ms) => {
+                for &beat in &CYCLE {
+                    if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) {
+                        break;
+                    }
+                    set_frame(&app, Some(beat));
+                    tokio::time::sleep(std::time::Duration::from_millis(beat_ms)).await;
+                }
+            }
+        }
+    }
+}
+
+/// 每个快照轮调用（fast_round 发出事件后）：tooltip 升级为 `Prune · CPU 12%`。
+/// 动画关闭时数字仍然更新——图标给量感，tooltip 给精确值，两通道各司其职。
+pub fn update_tooltip(app: &AppHandle, usage: Option<f32>) {
+    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let tip = match usage {
+        Some(u) => format!("Prune · CPU {u:.0}%"),
+        None => "Prune".to_string(),
+    };
+    if let Err(e) = tray.set_tooltip(Some(tip)) {
+        eprintln!("[m6-tray] tooltip 更新失败: {e}");
+    }
+}
+
+// ---- M6-T3 · 开关持久化 ----
+
+fn settings_path(app: &AppHandle) -> Option<std::path::PathBuf> {
+    app.path().config_dir().ok().map(|d| d.join(SETTINGS_FILE))
+}
+
+/// 读开关状态；文件不存在/缺键/解析失败一律默认开
+fn load_cpu_anim_setting(app: &AppHandle) -> bool {
+    let Some(path) = settings_path(app) else {
+        return true;
+    };
+    std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .and_then(|v| v.get(SETTING_CPU_ANIM).and_then(|x| x.as_bool()))
+        .unwrap_or(true)
+}
+
+/// 只改本键，保留 settings.json 里其它模块的键
+fn save_cpu_anim_setting(app: &AppHandle, enabled: bool) -> Result<(), String> {
+    let path = settings_path(app).ok_or_else(|| "config_dir 不可用".to_string())?;
+    let mut root: serde_json::Value = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_else(|| serde_json::json!({}));
+    root[SETTING_CPU_ANIM] = serde_json::Value::Bool(enabled);
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let body = serde_json::to_string_pretty(&root).map_err(|e| e.to_string())?;
+    std::fs::write(&path, body).map_err(|e| e.to_string())
+}
+
+fn toggle_cpu_anim(app: &AppHandle) {
+    let next = !CPU_ANIM_ENABLED.load(Ordering::Relaxed);
+    CPU_ANIM_ENABLED.store(next, Ordering::Relaxed);
+    if let Err(e) = save_cpu_anim_setting(app, next) {
+        eprintln!("[m6-tray] ⚠️ 设置持久化失败（本次会话内仍生效）: {e}");
+    }
+    if next {
+        eprintln!("[m6-tray] CPU 动画已开启");
+    } else {
+        // 立即回静态原图，不等循环醒来；LAST_FRAME 不预置哨兵，
+        // 让 set_frame 真正执行一次 set（当前停在动画帧上）
+        set_frame(app, None);
+        eprintln!("[m6-tray] CPU 动画已关闭");
     }
 }
 

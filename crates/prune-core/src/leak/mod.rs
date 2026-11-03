@@ -393,6 +393,8 @@ mod tests {
             start_time,
             cmd: Vec::new(),
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         }
     }
 

@@ -14,7 +14,7 @@
 //! - 缓存更新是**整体替换**，清扫/重建不在锁内分步进行，读侧永远看到完整表；
 //! - 任何 footprint 失败都只降级该进程到 RSS 口径，绝不伪造数值。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -23,7 +23,9 @@ use std::time::{Duration, Instant};
 use prune_core::db::Store;
 use prune_core::leak::{self, LeakReport};
 use prune_core::mem::process::Scanner;
-use prune_core::mem::{self, MemSnapshot, MemSource, ProcMem, WorkspaceRef};
+use prune_core::mem::{
+    self, CpuInfo, CpuLoad, MemSnapshot, MemSource, ProcMem, WorkspaceRef,
+};
 use prune_core::mem::system::{self, SystemMem};
 use prune_core::mem::workspace;
 use prune_core::swap::{self, SwapInfo};
@@ -31,6 +33,8 @@ use tauri::{AppHandle, Emitter, Manager};
 
 /// 10 s：全量 RSS 快照
 pub const FAST_INTERVAL_SECS: u64 = 10;
+/// 整机 CPU 环形缓冲上限：60 点 × 10 s = 10 min（M5 §5.2，不入库）
+pub const CPU_HISTORY_CAP: usize = 60;
 /// 5 min：footprint 深探
 pub const DEEP_INTERVAL_SECS: u64 = 300;
 /// 深探候选：单个子进程 RSS 门槛（低于此值的 helper 不单独探测，按 RSS 计入）
@@ -115,6 +119,10 @@ pub struct MemState {
     /// 最近两轮耗时（ms），供性能预算校验
     pub last_fast_ms: Mutex<u64>,
     pub last_deep_ms: Mutex<u64>,
+    /// 整机 CPU 环形缓冲（60 点 = 10 min）；只在 fast 轮推进，deep 轮复用最近读数
+    cpu_hist: Mutex<VecDeque<f32>>,
+    /// 最近一次整机 CPU 读数。deep 轮重建快照时复用（进程 CPU 本就来自上一 fast 轮，口径一致）
+    cpu_last: Mutex<Option<CpuInfo>>,
 }
 
 impl MemState {
@@ -140,6 +148,8 @@ impl MemState {
             leaks: Mutex::new(leaks),
             last_fast_ms: Mutex::new(0),
             last_deep_ms: Mutex::new(0),
+            cpu_hist: Mutex::new(VecDeque::with_capacity(CPU_HISTORY_CAP)),
+            cpu_last: Mutex::new(None),
         }
     }
 
@@ -206,12 +216,13 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
     let outcome = tauri::async_runtime::spawn_blocking(move || {
         let started = Instant::now();
 
-        let procs = {
+        let scan = {
             let mut scanner = state.scanner.lock().unwrap_or_else(|e| e.into_inner());
             scanner.scan()
         };
-        let merged = merge_workspace(merge_deep(procs, &state.lock_deep()), &state.lock_ws());
-        let snapshot = assemble(&state, &merged);
+        let merged = merge_workspace(merge_deep(scan.procs, &state.lock_deep()), &state.lock_ws());
+        let cpu = build_cpu_info(&state, scan.cpu_usage, scan.cores, scan.load);
+        let snapshot = assemble(&state, &merged, cpu.clone());
 
         let elapsed = started.elapsed().as_millis() as u64;
         *state.last_fast_ms.lock().unwrap_or_else(|e| e.into_inner()) = elapsed;
@@ -219,7 +230,7 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
         *state.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot.clone());
 
         eprintln!(
-            "[m2-mem] 快照轮 {} ms · {} 进程 · swap {}/{} · 压力 {}",
+            "[m2-mem] 快照轮 {} ms · {} 进程 · swap {}/{} · 压力 {} · CPU {}",
             elapsed,
             snapshot.families.iter().map(|f| f.process_count).sum::<usize>(),
             snapshot.swap.used / 1024 / 1024,
@@ -227,7 +238,12 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
             snapshot
                 .pressure
                 .map(|p| format!("{:?}", p.level))
-                .unwrap_or_else(|| "不可用".to_string())
+                .unwrap_or_else(|| "不可用".to_string()),
+            snapshot
+                .cpu
+                .as_ref()
+                .map(|c| format!("{:.1}%", c.usage))
+                .unwrap_or_else(|| "预热中".to_string())
         );
         snapshot
     })
@@ -235,6 +251,8 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
     .map_err(|e| format!("spawn_blocking 失败: {e}"))?;
 
     let _ = app.emit(EVENT_SNAPSHOT, &outcome);
+    // 托盘 tooltip 携带精确 CPU 读数（M6-T2 顺手项；动画关闭时数字仍在）
+    crate::tray::update_tooltip(&app, outcome.cpu.as_ref().map(|c| c.usage));
     Ok(())
 }
 
@@ -354,7 +372,7 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
             *probe_state.leaks.lock().unwrap_or_else(|e| e.into_inner()) = report;
         }
 
-        let snapshot = assemble(&probe_state, &merged);
+        let snapshot = assemble(&probe_state, &merged, probe_state.last_cpu());
         *probe_state
             .processes
             .lock()
@@ -504,8 +522,11 @@ fn home_dir() -> PathBuf {
     prune_core::paths::home_dir_or_root()
 }
 
-/// 读系统侧数据并装配快照（两条轮次共用）
-fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
+/// 读系统侧数据并装配快照（两条轮次共用）。
+///
+/// `cpu`：fast 轮传入本轮新读数；deep 轮复用最近一次读数
+/// （进程 CPU 本就来自上一 fast 轮，快照内部口径保持一致）。
+fn assemble(state: &MemState, procs: &[ProcMem], cpu: Option<CpuInfo>) -> MemSnapshot {
     let now = now_secs();
     // 读不到就整体降级为「无口径」：宁可少显示，也不能拿 0 冒充真实读数
     let system = system::read().unwrap_or_else(|e| {
@@ -555,7 +576,44 @@ fn assemble(state: &MemState, procs: &[ProcMem]) -> MemSnapshot {
         deep_updated_at,
         deep_available,
         leaks,
+        cpu,
     )
+}
+
+/// 组装整机 CPU 读数并推进环形缓冲（只在 fast 轮调用，deep 轮走 `last_cpu`）。
+///
+/// 首轮 `cpu_usage = None` → 返回 None，绝不拿 `new_all` 的初始化采样冒充窗口均值。
+fn build_cpu_info(
+    state: &MemState,
+    usage: Option<f32>,
+    cores: u32,
+    load: Option<CpuLoad>,
+) -> Option<CpuInfo> {
+    let usage = usage?;
+    let mut hist = state.cpu_hist.lock().unwrap_or_else(|e| e.into_inner());
+    hist.push_back(usage);
+    while hist.len() > CPU_HISTORY_CAP {
+        hist.pop_front();
+    }
+    let info = CpuInfo {
+        usage,
+        cores,
+        load,
+        history: hist.iter().copied().collect(),
+        at: now_secs(),
+    };
+    *state.cpu_last.lock().unwrap_or_else(|e| e.into_inner()) = Some(info.clone());
+    Some(info)
+}
+
+impl MemState {
+    /// 最近一次整机 CPU 读数（deep 轮重建快照时复用；不推进环形缓冲）
+    fn last_cpu(&self) -> Option<CpuInfo> {
+        self.cpu_last
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
 }
 
 /// B5：深探落库后重算泄漏嫌疑。
@@ -592,6 +650,8 @@ mod tests {
             start_time,
             cmd: Vec::new(),
             workspace: None,
+            cpu: None,
+            cpu_time_ms: 0,
         }
     }
 

@@ -33,6 +33,8 @@ export interface WorkspaceMem {
   processCount: number;
   rss: number;
   footprint: number | null;
+  /** 组内 CPU 之和（单核口径）；null = 全部成员未知 */
+  cpu?: number | null;
 }
 
 export interface Pressure {
@@ -70,6 +72,10 @@ export interface ProcMem {
   startTime: number;
   /** 工作区归属（M2.5）；null = 未归属，UI 必须如实显示 */
   workspace: WorkspaceRef | null;
+  /** 近 10 s 均值 CPU（单核口径，可 >100%）；null = 首见/采集失败（**不是 0**，UI 显示「—」） */
+  cpu?: number | null;
+  /** 累计 CPU 时间（CPU-ms，多线程下可大于墙钟时长） */
+  cpuTimeMs?: number;
 }
 
 export interface FamilyMem {
@@ -86,6 +92,31 @@ export interface FamilyMem {
   wsUnattributedCount: number;
   /** 未归属部分的总量（同 footprint 口径） */
   wsUnattributedFootprint: number | null;
+  /** 成员 CPU 之和（单核口径，可 >100%）；null = 全部成员未知；部分未知时是下界（见 cpuCovered） */
+  cpu?: number | null;
+  /** 有 CPU 读数的成员数；< processCount 时 cpu 为下界 */
+  cpuCovered?: number;
+}
+
+/** 1/5/15 min 排队长度（macOS；Windows 无此口径） */
+export interface CpuLoad {
+  one: number;
+  five: number;
+  fifteen: number;
+}
+
+/**
+ * 整机 CPU 读数（M5）。usage 是每核平均（0–100），与进程/家族的单核口径
+ * 不同且不守恒——UI 绝不能把两者并排呈现让用户做减法。
+ */
+export interface CpuInfo {
+  usage: number;
+  cores: number;
+  /** null = 平台不支持（Windows）；load 含 I/O，不能换算成使用率 */
+  load: CpuLoad | null;
+  /** 最近 60 点整机 CPU（10 min @10 s），sparkline 用 */
+  history: number[];
+  at: number;
 }
 
 export interface MemSnapshot {
@@ -108,6 +139,8 @@ export interface MemSnapshot {
   deepAvailable: boolean;
   /** B5 泄漏嫌疑判定（M3）。note 非空 = 无法判定，不能当成「没有泄漏」 */
   leaks: LeakReport;
+  /** 整机 CPU（M5）；null = 首轮/采集失败，旧快照缺省 undefined，UI 自动隐藏 */
+  cpu?: CpuInfo | null;
 }
 
 /** 一个命中进程的证据。只有事实字段，没有结论性形容词 */
