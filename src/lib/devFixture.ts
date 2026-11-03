@@ -8,6 +8,7 @@ import type {
   ReclaimPreview,
 } from "../types/disk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
+import type { PortBinding, PortEntry, PortSnapshot, Proto } from "../types/net";
 
 /**
  * 仅开发态使用（import.meta.env.DEV && 非 Tauri）：让 UI 可以脱离桌面端
@@ -404,5 +405,95 @@ export function devDiskPreview(): ReclaimPreview {
     totalBytes: items.reduce((sum, i) => sum + i.bytes, 0),
     needsConfirm: false,
     notes: ["3 个 darwin-x64 条目依赖 Rosetta，已保留在清单之外"],
+  };
+}
+
+// ---------------------------------------------------------------- 端口（M7）
+
+/**
+ * 27 条监听端口的浏览器态样本（形态取自实机：19 条是 Electron / 微信 /
+ * Cursor 的内部 IPC，只有 8 条是开发者真会看的）。用来在浏览器里调关注度分层。
+ */
+export function devPortSnapshot(): PortSnapshot {
+  const bind = (
+    port: number,
+    addr: string,
+    pid: number | null,
+    comm: string,
+    opts: { v6?: boolean; project?: [string, string]; proto?: Proto } = {},
+  ): PortBinding => ({
+    port,
+    proto: opts.proto ?? "tcp",
+    scope: addr === "*" || addr === "0.0.0.0" || addr === "::" ? "any" : addr.startsWith("127.") || addr === "::1" ? "loopback" : "interface",
+    addr,
+    v6: opts.v6 ?? false,
+    pid,
+    comm,
+    startTime: 1_700_003_000,
+    project: opts.project?.[1] ?? null,
+    projectLabel: opts.project?.[0] ?? null,
+  });
+
+  const row = (
+    port: number,
+    listeners: PortBinding[],
+    extra: { conns?: number | null; note?: string | null; watched?: boolean } = {},
+  ): PortEntry => ({
+    port,
+    proto: listeners[0].proto,
+    listeners,
+    conns: extra.conns ?? 0,
+    exposure: listeners.some((b) => b.scope === "any")
+      ? "any"
+      : listeners.some((b) => b.scope === "interface")
+        ? "interface"
+        : "loopback",
+    watched: extra.watched ?? true,
+    note: extra.note ?? null,
+  });
+
+  const GIT = "/Users/dev/Desktop/git";
+
+  const entries: PortEntry[] = [
+    // AirPlay 假占用：方案 §3.4 的高价值场景，必须在浏览器里也能看到
+    row(5000, [bind(5000, "127.0.0.1", 629, "ControlCenter"), bind(5000, "::1", 629, "ControlCenter", { v6: true })], {
+      note: "AirPlay 接收器 · 系统设置 → 通用 → 隔空投送与接力 可关闭",
+    }),
+    row(7000, [bind(7000, "127.0.0.1", 629, "ControlCenter"), bind(7000, "::1", 629, "ControlCenter", { v6: true })], {
+      note: "AirPlay 接收器 · 系统设置 → 通用 → 隔空投送与接力 可关闭",
+    }),
+    row(1430, [bind(1430, "127.0.0.1", 3310, "cargo", { project: ["prune", `${GIT}/prune`] })], { conns: 1 }),
+    row(3118, [bind(3118, "*", 4187, "node", { project: ["meetily/frontend", `${GIT}/meetily/frontend`] })], { conns: 3 }),
+    row(3000, [bind(3000, "*", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { conns: 6 }),
+    row(4173, [bind(4173, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })]),
+    row(5173, [bind(5173, "127.0.0.1", 6021, "node", { project: ["admin-web", `${GIT}/oa/admin-web`] })], { conns: 2 }),
+    row(5432, [bind(5432, "127.0.0.1", 812, "postgres"), bind(5432, "::1", 812, "postgres", { v6: true })], { conns: 4 }),
+    row(6379, [bind(6379, "127.0.0.1", 820, "redis-server")], { conns: 2 }),
+    row(27017, [bind(27017, "127.0.0.1", 840, "mongod")], { conns: 1 }),
+    row(9229, [bind(9229, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })]),
+    row(22, [bind(22, "*", 1, "launchd")], { conns: 0 }),
+    row(631, [bind(631, "127.0.0.1", 588, "cupsd")], { conns: 0 }),
+    row(53, [bind(53, "*", 210, "mDNSResponder", { proto: "udp" })], { conns: null }),
+
+    // 折叠层：内部 IPC / 系统服务（实机占 70%）
+    row(58578, [bind(58578, "*", 402, "rapportd")], { watched: false }),
+    row(50272, [bind(50272, "127.0.0.1", 7301, "Cursor Helper")], { watched: false }),
+    row(53412, [bind(53412, "127.0.0.1", 7302, "Cursor Helper (Renderer)")], { watched: false }),
+    row(62661, [bind(62661, "127.0.0.1", 626, "WeChat")], { watched: false }),
+    row(49380, [bind(49380, "127.0.0.1", 4400, "Slack Helper")], { watched: false }),
+    row(61203, [bind(61203, "127.0.0.1", 4401, "Slack Helper (GPU)")], { watched: false }),
+    row(50109, [bind(50109, "127.0.0.1", 3311, "Code Helper")], { watched: false }),
+    row(55320, [bind(55320, "127.0.0.1", 3312, "Code Helper (Plugin)")], { watched: false }),
+    row(56666, [bind(56666, "::1", 9001, "node", { v6: true })], { watched: false }),
+    row(56789, [bind(56789, "127.0.0.1", 9002, "Bun")], { watched: false }),
+  ];
+
+  return {
+    entries,
+    coverage: { listenTotal: 30, attributed: entries.reduce((n, e) => n + e.listeners.length, 0), note: null },
+    timeWait: 326,
+    timeWaitPorts: [56569, 56601, 49312, 50287, 51220],
+    at: Math.floor(Date.now() / 1000),
+    scanMs: 38,
   };
 }

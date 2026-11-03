@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
+import { PortBoard } from "../components/PortList";
 import { ReclaimBoard } from "../components/ReclaimBoard";
 import { Sparkline } from "../components/Sparkline";
 import {
@@ -17,6 +18,7 @@ import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, nu
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
+import { usePortStore } from "../stores/portStore";
 import {
   isExact,
   memSourceLabel,
@@ -26,8 +28,9 @@ import {
   type ProcMem,
   type WorkspaceSource,
 } from "../types/mem";
+import { exposureMeta, portsOfPid } from "../types/net";
 
-type MainTab = "apps" | "overview" | "disk";
+type MainTab = "apps" | "overview" | "disk" | "ports";
 
 /** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
@@ -54,6 +57,13 @@ export function MainWindow() {
   const refresh = useMemStore((s) => s.refresh);
   const diskScanning = useDiskStore((s) => s.scanning);
   const refreshDisk = useDiskStore((s) => s.refresh);
+  const portRefreshing = usePortStore((s) => s.refreshing);
+  const ports = usePortStore((s) => s.snapshot);
+  const initPorts = usePortStore((s) => s.init);
+  const refreshPorts = usePortStore((s) => s.refresh);
+  const setPortActive = usePortStore((s) => s.setActive);
+  const setPortFocus = usePortStore((s) => s.setFocus);
+  const hydratePorts = usePortStore((s) => s.hydrate);
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [killTarget, setKillTarget] = useState<KillTarget | null>(null);
@@ -63,12 +73,13 @@ export function MainWindow() {
     setKillTarget({ pid: proc.pid, name: proc.name, mem: formatBytes(totalOf(proc)), x, y });
   };
 
-  // 面板点「可回收」→ 主窗口直接切到对应 tab（open_main 会让 Rust 侧广播 ui://tab）
+  // 面板点「可回收」/「端口」→ 主窗口直接切到对应 tab（open_main 会让 Rust 侧广播 ui://tab）
   useEffect(() => {
     if (!isTauri()) return;
     const un = listen<string>("ui://tab", (e) => {
-      if (e.payload === "apps" || e.payload === "overview" || e.payload === "disk") {
-        setTab(e.payload);
+      const t = e.payload === "port" ? "ports" : e.payload;
+      if (t === "apps" || t === "overview" || t === "disk" || t === "ports") {
+        setTab(t);
       }
     });
     return () => {
@@ -76,11 +87,52 @@ export function MainWindow() {
     };
   }, []);
 
+  /**
+   * 端口 tab 的可见性门控（方案 §5.2）：只要用户不在这个 tab 上，
+   * 定时器就完全不扫——常驻开销 0 是验收项。
+   */
+  useEffect(() => {
+    if (tab !== "ports") {
+      void setPortActive(false);
+      return;
+    }
+    void initPorts();
+    void setPortActive(true);
+    return () => {
+      void setPortActive(false);
+    };
+  }, [tab, initPorts, setPortActive]);
+
+  // 应用列表要挂端口徽标，但只读已有快照：不为了一枚徽标在启动时跑 lsof
+  useEffect(() => {
+    if (tab === "apps") void hydratePorts();
+  }, [tab, hydratePorts]);
+
   const families = snapshot?.families ?? [];
   const selected = useMemo(
     () => processes.find((p) => p.pid === selectedPid) ?? null,
     [processes, selectedPid],
   );
+
+  // 刷新按钮按 tab 分流：三个域的采样代价与语义都不同，不能混用一个 loading
+  const busy = tab === "disk" ? diskScanning : tab === "ports" ? portRefreshing : refreshing;
+  const onRefresh = () => {
+    if (tab === "disk") void refreshDisk();
+    else if (tab === "ports") void refreshPorts();
+    else void refresh();
+  };
+  const refreshLabel =
+    tab === "disk"
+      ? diskScanning
+        ? "扫描中"
+        : "重新扫描"
+      : tab === "ports"
+        ? portRefreshing
+          ? "扫描中"
+          : "扫描端口"
+        : refreshing
+          ? "采样中"
+          : "刷新";
 
   return (
     <div className="flex h-screen flex-col bg-surface text-ink">
@@ -96,37 +148,36 @@ export function MainWindow() {
             { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
             { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
             { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
+            { id: "ports", label: "端口", hint: "谁占着 3000：按端口反查持有进程" },
           ]}
         />
         <div className="flex-1" />
-        {snapshot ? (
-          snapshot.deepAvailable ? (
-            <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
-              footprint 口径
-            </Badge>
-          ) : (
-            <Badge tone="warn" title="footprint 不可用，全部读数退回 RSS，不含换出量">
-              RSS 口径 · 不含换出量
-            </Badge>
-          )
+        {tab !== "ports" ? (
+          <>
+            {snapshot ? (
+              snapshot.deepAvailable ? (
+                <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
+                  footprint 口径
+                </Badge>
+              ) : (
+                <Badge tone="warn" title="footprint 不可用，全部读数退回 RSS，不含换出量">
+                  RSS 口径 · 不含换出量
+                </Badge>
+              )
+            ) : null}
+            <span className="text-[10px] text-ink-faint">
+              上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}
+            </span>
+          </>
         ) : null}
-        <span className="text-[10px] text-ink-faint">
-          上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}
-        </span>
         <button
           type="button"
-          onClick={() => void (tab === "disk" ? refreshDisk() : refresh())}
-          disabled={tab === "disk" ? diskScanning : refreshing}
+          onClick={onRefresh}
+          disabled={busy}
           className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
         >
-          <RefreshIcon size={12} className={(tab === "disk" ? diskScanning : refreshing) ? "animate-spin" : ""} />
-          {tab === "disk"
-            ? diskScanning
-              ? "扫描中"
-              : "重新扫描"
-            : refreshing
-              ? "采样中"
-              : "刷新"}
+          <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
+          {refreshLabel}
         </button>
       </header>
 
@@ -136,7 +187,23 @@ export function MainWindow() {
         </div>
       ) : null}
 
-      {tab === "disk" ? (
+      {tab === "ports" ? (
+        <PortBoard
+          onOpenProcess={(pid) => {
+            select(pid);
+            setTab("overview");
+          }}
+          onKill={(binding, port, x, y) => {
+            setKillTarget({
+              pid: binding.pid ?? 0,
+              name: binding.comm,
+              mem: `端口 ${port}`,
+              x,
+              y,
+            });
+          }}
+        />
+      ) : tab === "disk" ? (
         <ReclaimBoard />
       ) : tab === "apps" ? (
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -172,9 +239,14 @@ export function MainWindow() {
               families={families}
               processes={processes}
               leaks={snapshot?.leaks}
+              ports={ports}
               onOpen={(pid) => {
                 select(pid);
                 setTab("overview");
+              }}
+              onOpenPorts={(port) => {
+                setPortFocus(String(port));
+                setTab("ports");
               }}
             />
           </div>
@@ -485,6 +557,11 @@ function VictimRow({
 function ProcessInspector({ proc }: { proc: ProcMem }) {
   const points = useMemHistory(proc.pid, 240);
   const snapshot = useMemStore((s) => s.snapshot);
+  const ports = usePortStore((s) => s.snapshot);
+  const listenPorts = useMemo(
+    () => (ports ? portsOfPid(ports.entries, proc.pid) : []),
+    [ports, proc.pid],
+  );
   // B5：该进程被判定为「疑似泄漏」时展示证据（pid 相同即可，startTime 也需一致才对上同一进程）
   const leak =
     snapshot?.leaks.items.find(
@@ -516,6 +593,38 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
           <Badge tone="accent" title="footprint 含被换出到磁盘的部分">footprint 口径</Badge>
         )}
       </div>
+
+      <section className="border-b border-hairline-soft pb-4">
+        <div className="mb-2 flex items-baseline justify-between">
+          <span className="text-[11px] font-medium text-ink-dim">监听端口</span>
+          <span className="text-[10px] text-ink-faint">
+            {ports ? `端口快照 ${formatClock(ports.at)}` : "尚未扫描端口"}
+          </span>
+        </div>
+        {!ports ? (
+          <p className="text-[10.5px] leading-relaxed text-ink-faint">
+            还没扫过端口。这里为空不代表该进程没有监听——打开「端口」tab 扫一轮再看。
+          </p>
+        ) : listenPorts.length === 0 ? (
+          <p className="text-[10.5px] leading-relaxed text-ink-faint">
+            最近一次扫描里没有该进程的监听端口。
+          </p>
+        ) : (
+          <ul className="flex flex-wrap gap-1.5">
+            {listenPorts.map((e) => {
+              const exposure = exposureMeta(e.exposure);
+              return (
+                <li key={`${e.port}-${e.proto}`}>
+                  <Badge tone={exposure.tone} title={`${exposure.label} · ${exposure.hint}`}>
+                    <span className="font-mono tabular-nums">{e.port}</span>
+                    <span className="text-[9px] uppercase opacity-70">{e.proto}</span>
+                  </Badge>
+                </li>
+              );
+            })}
+          </ul>
+        )}
+      </section>
 
       <section className="border-b border-hairline-soft pb-4">
         <div className="mb-3 flex items-baseline justify-between">
@@ -627,6 +736,7 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
   const [err, setErr] = useState<string | null>(null);
   const refresh = useMemStore((s) => s.refresh);
   const select = useMemStore((s) => s.select);
+  const refreshPorts = usePortStore((s) => s.refresh);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -647,6 +757,8 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
       await killProcess(target.pid, force);
       select(null);
       await refresh();
+      // 从端口 tab 结束进程后，端口必须重扫——否则用户会看到一个已死的 pid 还占着 3000
+      await refreshPorts();
       onClose();
     } catch (e) {
       setErr(String(e));

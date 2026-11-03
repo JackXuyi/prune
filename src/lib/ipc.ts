@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport } from "../types/disk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
+import type { PortSnapshot } from "../types/net";
 
 /** 浏览器里跑 vite 时没有任何 Tauri 注入，需要显式兜底而不是静默失败 */
 export function isTauri(): boolean {
@@ -26,7 +27,10 @@ export function memRefresh(): Promise<void> {
 }
 
 /** 打开主窗口；传 pid 时主窗口会自动选中该进程，传 tab 时直接切到对应 tab */
-export function openMain(pid?: number, tab?: "apps" | "overview" | "disk"): Promise<void> {
+export function openMain(
+  pid?: number,
+  tab?: "apps" | "overview" | "disk" | "ports",
+): Promise<void> {
   return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null });
 }
 
@@ -64,4 +68,21 @@ export function reclaimChildren(path: string): Promise<ReclaimChild[]> {
 /** 执行清理（走废纸篓）；成功后 Rust 侧会自动重扫并发 disk://done */
 export function reclaimExecute(items: ReclaimItem[], confirmed: boolean): Promise<ReclaimReport> {
   return invoke<ReclaimReport>("reclaim_execute", { items, confirmed });
+}
+
+// ---------------------------------------------------------------- 端口（M7）
+
+/** 最新一轮端口快照；null = 还没扫过（**不是「没有端口」**） */
+export function portSnapshot(): Promise<PortSnapshot | null> {
+  return invoke<PortSnapshot | null>("port_snapshot");
+}
+
+/** 手动刷新（用户点了就该扫，绕过 30 s 定时；单飞闸门仍在） */
+export function portRefresh(): Promise<void> {
+  return invoke<void>("port_refresh");
+}
+
+/** 可见性门控：false 时定时器完全不采样，常驻开销 0 */
+export function portSetActive(active: boolean): Promise<void> {
+  return invoke<void>("port_set_active", { active });
 }

@@ -1,11 +1,11 @@
-import { useState, type ReactNode } from "react";
-
+import { useEffect, useState, type ReactNode } from "react";
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { LeakBanner } from "../components/LeakCard";
 import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { openMain } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
+import { usePortStore } from "../stores/portStore";
 import { swappedRatio, type FamilyMem, type MemSnapshot, type ProcMem } from "../types/mem";
 import { ChevronRightIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge, Meter, PressureDot } from "../components/primitives";
@@ -102,6 +102,14 @@ function AppsSection() {
   const families = useMemStore((s) => s.snapshot?.families ?? EMPTY_FAMILIES);
   const processes = useMemStore((s) => s.processes ?? EMPTY_PROCESSES);
   const leaks = useMemStore((s) => s.snapshot?.leaks);
+  // 只读已有端口快照：面板不做端口扫描（lsof 40 ms 起，面板打开频率太高）
+  const ports = usePortStore((s) => s.snapshot);
+  const hydratePorts = usePortStore((s) => s.hydrate);
+  const setPortFocus = usePortStore((s) => s.setFocus);
+
+  useEffect(() => {
+    void hydratePorts();
+  }, [hydratePorts]);
 
   return (
     <section>
@@ -114,7 +122,12 @@ function AppsSection() {
           families={families}
           processes={processes}
           leaks={leaks}
+          ports={ports}
           onOpen={(pid) => void openMain(pid)}
+          onOpenPorts={(port) => {
+            setPortFocus(String(port));
+            void openMain(undefined, "ports");
+          }}
         />
       </div>
     </section>

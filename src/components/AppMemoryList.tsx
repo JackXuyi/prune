@@ -14,6 +14,7 @@ import {
   type WorkspaceSource,
 } from "../types/mem";
 import { Meter } from "./primitives";
+import type { PortSnapshot } from "../types/net";
 
 /** 口径说明：精确 / 部分深探 / 纯 RSS */
 function coverageLabel(f: FamilyMem): string {
@@ -67,17 +68,23 @@ export function AppMemoryList({
   families,
   processes,
   leaks,
+  ports,
   limit,
   compact = false,
   onOpen,
+  onOpenPorts,
 }: {
   families: FamilyMem[];
   processes: ProcMem[];
   /** B5 判定结果：命中的家族行加「疑似泄漏」标记（措辞见 LeakCard 顶部注释） */
   leaks?: LeakReport;
+  /** 端口快照（M7）：给「这个应用占着 3000」这类问题一个入口。null = 还没扫 */
+  ports?: PortSnapshot | null;
   limit?: number;
   compact?: boolean;
   onOpen?: (pid: number) => void;
+  /** 点端口徽标 → 跳到端口 tab 并定位该端口 */
+  onOpenPorts?: (port: number) => void;
 }) {
   const rows = useMemo(
     () => (limit ? families.slice(0, limit) : families),
@@ -98,6 +105,30 @@ export function AppMemoryList({
 
   const hasEstimate = rows.some((f) => f.footprint != null && !isExact(f));
 
+  /**
+   * 家族 → 关注层端口。只认 watched：把 Electron 的内部 IPC 端口挂在应用行上
+   * 等于给每一行都加噪音，反而让「谁占着 3000」更难找。
+   */
+  const portsByFamily = useMemo(() => {
+    const map = new Map<string, number[]>();
+    if (!ports) return map;
+    const familyOf = new Map<number, string>();
+    for (const p of processes) familyOf.set(p.pid, p.family);
+    for (const e of ports.entries) {
+      if (!e.watched) continue;
+      for (const b of e.listeners) {
+        if (b.pid == null) continue;
+        const family = familyOf.get(b.pid);
+        if (!family) continue;
+        const list = map.get(family) ?? [];
+        if (!list.includes(e.port)) list.push(e.port);
+        map.set(family, list);
+      }
+    }
+    for (const list of map.values()) list.sort((a, b) => a - b);
+    return map;
+  }, [ports, processes]);
+
   if (rows.length === 0) {
     return <p className="px-1 py-3 text-[11px] text-ink-faint">暂无应用数据</p>;
   }
@@ -112,6 +143,7 @@ export function AppMemoryList({
           const ratio = swappedRatio(f);
           const familyLeaks = leaksOfFamily(leaks, f.name);
           const leakGrowth = totalGrowth(familyLeaks);
+          const familyPorts = portsByFamily.get(f.name) ?? [];
           const tone =
             f.footprint == null ? "neutral" : exact ? "accent" : "warn";
 
@@ -159,6 +191,21 @@ export function AppMemoryList({
                       <span className="shrink-0 text-[10px] text-ink-faint">
                         {f.processCount} 进程
                         {exact ? "" : f.footprint == null ? " · RSS" : " · ≈"}
+                        {familyPorts.length > 0 ? (
+                          <span
+                            role={onOpenPorts ? "button" : undefined}
+                            onClick={(e) => {
+                              if (!onOpenPorts) return;
+                              e.stopPropagation();
+                              onOpenPorts(familyPorts[0]);
+                            }}
+                            title={familyPorts.map((p) => `:${p}`).join(" ")}
+                            className={onOpenPorts ? "text-accent hover:underline" : ""}
+                          >
+                            {" · "}
+                            {familyPorts.length} 端口
+                          </span>
+                        ) : null}
                       </span>
                     </div>
                   </>
@@ -187,6 +234,22 @@ export function AppMemoryList({
                           ? ` · ${f.workspaces.length} 个项目`
                           : ""}
                         {ratio != null ? ` · ${formatPercent(ratio)} 在磁盘` : ""}
+                        {familyPorts.length > 0 ? (
+                          <span
+                            role={onOpenPorts ? "button" : undefined}
+                            onClick={(e) => {
+                              if (!onOpenPorts) return;
+                              e.stopPropagation();
+                              onOpenPorts(familyPorts[0]);
+                            }}
+                            title={`监听端口 ${familyPorts.map((p) => `:${p}`).join(" ")}`}
+                            className={onOpenPorts ? "text-accent hover:underline" : ""}
+                          >
+                            {" · "}
+                            {familyPorts.slice(0, 2).map((p) => `:${p}`).join(" ")}
+                            {familyPorts.length > 2 ? ` +${familyPorts.length - 2}` : ""}
+                          </span>
+                        ) : null}
                       </span>
                     </span>
                     <Meter ratio={total / max} tone={tone} height={4} />
