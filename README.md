@@ -35,6 +35,7 @@
 | 显示进程**真实**内存占用（phys_footprint 口径，含换出量） | 全盘扫描、用户文档、照片去重             |
 | Swap 仪表盘：内存压力正在吃掉多少磁盘                  | 任何不在白名单内的删除                |
 | 「疑似内存泄漏」判定（概率 + 曲线 + 克制措辞）             | 提升任何权限（root / 全盘访问 / 辅助功能） |
+| 端口反查：谁占着 3000 / 3118，以及它属于哪个项目       | 防火墙、抓包、网络流量监控            |
 
 ## 首屏长什么样
 
@@ -86,10 +87,12 @@ prune scan [--json]                 # 全盘扫描：主数字 / A1 明细 / A3 
 prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run；--yes 才真删，走废纸篓）
 prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
 prune mem --watch [--interval N]    # 持续采样，每 60s 输出泄漏嫌疑判定（序列不落盘）
+prune port [PORT] [--json] [--all]  # 谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
 prune mcp                           # MCP stdio server（AI Agent 查询入口）
 ```
 
-MCP 工具：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）。
+MCP 工具：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）/
+`port_listeners`（端口反查，只读；`coverage` 说明权限可见范围，`timeWait` 说明内核残留连接）。
 安全底线：`reclaim` 不带 `--yes` 绝不删除；白名单 + 20GB 熔断在 prune-core 代码层兜底。
 
 ## 开发

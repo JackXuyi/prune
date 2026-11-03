@@ -87,6 +87,7 @@ node [22325]: 64-bit    Footprint: 3432 MB
 │  │  ├ disk/    ignore+rayon 并行扫描            │      │
 │  │  ├ classify/ 跨平台二进制 / 家族归类          │      │
 │  │  ├ reclaim/  安全删除（废纸篓 + 白名单）      │      │
+│  │  ├ net/     端口反查（lsof -F / iphlpapi）    │      │
 │  │  └ db/      rusqlite 时间序列                │      │
 │  └────────────────────────────────────────────┘      │
 │  sampler 线程：10s RSS / 5min footprint              │

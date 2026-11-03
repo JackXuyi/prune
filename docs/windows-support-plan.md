@@ -152,7 +152,25 @@ UI 呈现统一按「隐藏」处理：由前端根据 `null` 字段决定是否
 7. `explorer /select,` 对含空格路径定位正确。
 8. `AppData/Local/Temp` 等白名单扫描出数且可删除（普通权限）。
 
-## 7. 风险
+## 7. 端口（M7）平台差异
+
+端口反查不走 `lsof`（Windows 没有），走 `iphlpapi` 的 owner-pid 表，见
+`crates/prune-core/src/net/win_ports.rs`。两个平台的**可见性口径完全不同**，UI 文案必须跟着变：
+
+| 项 | macOS | Windows |
+|---|---|---|
+| 数据源 | `lsof -nP -iTCP -sTCP:LISTEN` + `netstat -anv` 交叉校验 | `GetExtendedTcpTable(TCP_TABLE_OWNER_PID_LISTENER)` / `GetExtendedUdpTable` |
+| 覆盖率 | **非 root 会静默跳过别的用户的进程** → `coverage.attributed < listenTotal`，必须显示「N 个不可见」并给 `sudo lsof` 兜底命令 | 普通权限即可拿到全部监听与 pid（`listenTotal == attributed`），`coverage.note` 恒为 null |
+| 进程名 | `lsof` 的 `c` 行直出，零额外成本 | 表里只有 pid，名字从内存轮的全量进程表借（`scan(Some(&names))`）；借不到就留空，**不猜** |
+| cwd → 项目归属 | 可用（实测 20 ms/进程，带 TTL 缓存） | 不可用（需读 PEB，代价与风险都不值）→ `project` 恒为 null；Windows 的项目归属只走内存侧的工作区判定 |
+| 双栈 | 同一端口 v4/v6 各一条 fd，必须按 `(port, proto)` 合并 | 同样是两条记录（`MIB_TCPROW_OWNER_PID` / `MIB_TCP6ROW_OWNER_PID`），同样合并 |
+| TIME_WAIT | `netstat -anv -p tcp` 计数；`lsof` 看不到（内核态无 fd） | `TCP_TABLE_OWNER_PID_ALL` 里状态为 `TIME_WAIT` 的行计数 |
+| 系统进程净名单 | ControlCenter / rapportd / sharingd … | `svchost.exe` / `System` / `lsass.exe`（AirPlay 那对端口在 Windows 不存在，`note` 不会出现） |
+
+结论：Windows 上端口列表**比 macOS 更完整**（不需要提权、不会漏别的用户的进程），
+但少了「端口 → 项目目录」这一列；UI 侧对 `project == null` 只显示 `—`，不编造。
+
+## 8. 风险
 
 - **真机验证是硬门槛**：`cargo check` 只能证明能编译，托盘定位、透明面板、失焦隐藏、
   Temp 目录删除权限都必须在 Windows 上走查（清单见 §6）。
