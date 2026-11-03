@@ -1,0 +1,66 @@
+version: '1.0'
+name: prune-ci
+displayName: Prune 构建校验
+
+# 触发：MR/PR 校验 + 主干推送 + 打 tag
+triggers:
+  push:
+    branches:
+      precise:
+        - master
+    tags:
+      prefix:
+        - v
+  pr:
+    branches:
+      precise:
+        - master
+
+stages:
+  - name: verify
+    displayName: 版本与前端校验
+    strategy: naturally
+    trigger: auto
+    executor: [] # 公用构建机（Linux）；接入自托管 mac/win 构建机后可在此指定资源池
+    steps:
+      - step: build@nodejs
+        name: verify_frontend
+        displayName: 版本一致性 + 前端构建
+        nodeVersion: '20'
+        commands:
+          - set -e
+          - npm config set registry https://registry.npmmirror.com
+          - npm i -g pnpm@9
+          - pnpm install --frozen-lockfile
+          # 三处版本号必须一致，否则各平台产物版本会错乱
+          - |
+            V_PKG=$(node -p "require('./package.json').version")
+            V_TAURI=$(node -p "require('./src-tauri/tauri.conf.json').version")
+            V_CARGO=$(grep -m1 '^version' src-tauri/Cargo.toml | sed 's/.*"\(.*\)".*/\1/')
+            echo "package.json=$V_PKG tauri.conf.json=$V_TAURI Cargo.toml=$V_CARGO"
+            if [ "$V_PKG" != "$V_TAURI" ] || [ "$V_PKG" != "$V_CARGO" ]; then
+              echo "❌ 版本号不一致，请先执行 pnpm bump <patch|minor|major|x.y.z>"
+              exit 1
+            fi
+            echo "✅ 版本号一致：$V_PKG"
+          # tsc 类型检查 + vite 前端构建（tauri 打包前的必经步骤）
+          - pnpm build
+
+  # ---------------------------------------------------------------------------
+  # 可选：接入 Windows / macOS 自托管构建机后，把下面 stage 的注释打开即可全自动出安装包。
+  # 前提：流水线设置 → 构建机（资源池）里注册机器，并把 executor 指向该资源池名称。
+  # 安装包最终仍由 scripts/release.mjs 上传到 Gitee Release（流水线只负责产出）。
+  # ---------------------------------------------------------------------------
+  # - name: bundle-windows
+  #   displayName: Windows 安装包
+  #   strategy: naturally
+  #   trigger: auto
+  #   executor: [windows-builder]
+  #   steps:
+  #     - step: build@nodejs
+  #       name: bundle_win
+  #       displayName: tauri build (msvc)
+  #       nodeVersion: '20'
+  #       commands:
+  #         - npm i -g pnpm@9 && pnpm install --frozen-lockfile
+  #         - pnpm tauri build --target x86_64-pc-windows-msvc

@@ -129,3 +129,6 @@ src-tauri/gen/schemas/
 
 # playwright-cli 快照产物
 /snap-*.yaml
+
+# 发版令牌（Gitee 私人令牌，不要提交）
+.env.release
