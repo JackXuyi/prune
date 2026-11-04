@@ -31,6 +31,8 @@ pub enum Command {
     Mem { swapped: bool, json: bool, watch: Option<u64> },
     /// `prune port` 列关注层；`prune port 3000` 查单个端口；`--all` 含内部 IPC
     Port { port: Option<u16>, json: bool, all: bool },
+    /// `prune app <家族名>`：一个应用的五域资源画像（M8）
+    App { name: String, json: bool },
     Mcp,
     Version,
 }
@@ -118,6 +120,29 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             }
             Ok(Command::Port { port, json, all })
         }
+        "app" => {
+            let mut json = false;
+            let mut name: Option<String> = None;
+            for a in it {
+                match a.as_str() {
+                    "--json" => json = true,
+                    other if other.starts_with('-') => {
+                        return Err(format!("app 不认识参数 {other:?}\n{}", usage()));
+                    }
+                    other => match name {
+                        None => name = Some(other.to_string()),
+                        Some(_) => return Err("app 只接受一个家族名".into()),
+                    },
+                }
+            }
+            let Some(name) = name else {
+                return Err(format!(
+                    "app 需要一个家族名，如 prune app cursor\n{}",
+                    usage()
+                ));
+            };
+            Ok(Command::App { name, json })
+        }
         other => Err(format!("不认识子命令 {other:?}\n{}", usage())),
     }
 }
@@ -137,6 +162,7 @@ fn usage() -> String {
   prune mem [--swapped] [--json]      一次性内存读数（footprint 口径）
   prune mem --watch [--interval N]    持续采样并输出泄漏嫌疑判定（默认 10s）
   prune port [PORT] [--json] [--all]  谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
+  prune app <家族名> [--json]         一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
   prune mcp                           启动 MCP stdio server（AI Agent 查询入口）
   prune --version | --help"
         .into()
@@ -164,6 +190,7 @@ fn main() {
             None => cmd_mem(swapped, json),
         },
         Command::Port { port, json, all } => cmd_port(port, json, all),
+        Command::App { name, json } => cmd_app(&name, json),
         Command::Mcp => cmd_mcp(),
     };    std::process::exit(code);
 }
@@ -576,6 +603,208 @@ fn cmd_port(only: Option<u16>, json: bool, all: bool) -> i32 {
         );
     }
     0
+}
+
+// ---------------------------------------------------------------- app（M8）
+
+/// 匹配失败的两种形态：文案不同（「没有这个应用」vs「说的哪一个」）
+pub enum AppMatchError {
+    /// 一个都没中，候选是当前全部家族
+    NotFound(Vec<String>),
+    /// 多个家族同时命中，候选就是命中的那几个
+    Ambiguous(Vec<String>),
+}
+
+/// 一个应用的五域资源画像。CLI 与 MCP 共用（mcp.rs 调 `crate::app_resource_report`）。
+///
+/// 口径（docs/m8-app-resource-plan.md §3）：
+/// - CPU 是单核口径可 >100%，部分成员未知时为下界；
+/// - 端口只列关注层（内部 IPC 随机端口是噪音）；
+/// - 连接只数 ESTABLISHED / CLOSE_WAIT——连接多 ≠ 流量大；
+/// - 磁盘三层按需 du（4 s/层预算），稀疏文件按实占块，可能带 partial 下界。
+pub struct AppResource {
+    pub family: String,
+    pub process_count: usize,
+    pub memory_bytes: u64,
+    /// false = 未深探，内存为 RSS 下界（CLI 不做深探，深探是 GUI 的 1-2 s 开销）
+    pub memory_exact: bool,
+    pub cpu: Option<f32>,
+    pub cpu_covered: usize,
+    pub conns: net::ConnStats,
+    /// 关注层端口（端口，暴露面）
+    pub ports: Vec<(u16, net::BindScope)>,
+    pub disk: prune_core::appdisk::AppDisk,
+}
+
+/// 家族名模糊匹配（大小写不敏感子串）。零命中或多个家族同时命中都返回候选，让用户重试。
+pub fn app_resource_report(query: &str) -> Result<AppResource, AppMatchError> {
+    // CPU 语义（M5）：首见进程一律 None——所以这里扫两轮，中间隔 ~0.8 s，
+    // 第二轮才有「近 10 s 均值」可读。代价是命令多等 1 秒，换一个真实读数值得。
+    let procs = {
+        let mut scanner = prune_core::mem::process::Scanner::new();
+        let _ = scanner.scan();
+        std::thread::sleep(Duration::from_millis(800));
+        scanner.scan().procs
+    };
+    let q = query.to_lowercase();
+    let mut members: Vec<&mem::ProcMem> = procs
+        .iter()
+        .filter(|p| p.family.to_lowercase().contains(&q))
+        .collect();
+    members.sort_by_key(|p| std::cmp::Reverse(total_bytes(p)));
+
+    if members.is_empty() {
+        // 给候选而不是只报错：家族名的准确拼法用户未必知道
+        let mut names: Vec<String> = procs.iter().map(|p| p.family.clone()).collect();
+        names.sort();
+        names.dedup();
+        return Err(AppMatchError::NotFound(names));
+    }
+
+    // 多个家族同时命中（如 "code" 同时中 Code / CodeBuddy）→ 报候选让用户重试，
+    // 绝不把两个应用的进程合并成一张画像（会把内存和磁盘都算错）
+    let mut families: Vec<String> = members.iter().map(|p| p.family.clone()).collect();
+    families.sort();
+    families.dedup();
+    if families.len() > 1 {
+        return Err(AppMatchError::Ambiguous(families));
+    }
+    let family = families.remove(0);
+    let pids: Vec<i32> = members.iter().map(|p| p.pid).collect();
+    let memory_bytes: u64 = members.iter().map(|p| total_bytes(p)).sum();
+    let memory_exact = members.iter().all(|p| p.footprint.is_some());
+    let cpu_sum: Option<f32> = {
+        let any_known = members.iter().any(|p| p.cpu.is_some());
+        any_known.then(|| members.iter().filter_map(|p| p.cpu).sum())
+    };
+    let cpu_covered = members.iter().filter(|p| p.cpu.is_some()).count();
+
+    // 连接与端口共用 M7 的一次扫描（GUI 同款），不重复跑 lsof
+    let snap = net::ports::scan(None);
+    let conns = snap.conns_of(&pids);
+    let ports: Vec<(u16, net::BindScope)> = snap
+        .entries
+        .iter()
+        .filter(|e| e.watched && e.listeners.iter().any(|b| b.pid.is_some_and(|p| pids.contains(&p))))
+        .map(|e| (e.port, e.exposure))
+        .collect();
+
+    let exe = members.iter().find_map(|p| p.exe.clone());
+    eprintln!("测量磁盘占用（只读，最多 4 秒/层）…");
+    let disk = prune_core::appdisk::measure(&family, exe.as_deref(), &home_dir());
+
+    Ok(AppResource {
+        family,
+        process_count: members.len(),
+        memory_bytes,
+        memory_exact,
+        cpu: cpu_sum,
+        cpu_covered,
+        conns,
+        ports,
+        disk,
+    })
+}
+
+fn total_bytes(p: &mem::ProcMem) -> u64 {
+    p.footprint.unwrap_or(p.rss)
+}
+
+fn cmd_app(query: &str, json: bool) -> i32 {
+    match app_resource_report(query) {
+        Err(AppMatchError::NotFound(candidates)) => {
+            eprintln!("没有匹配 {query:?} 的应用。当前在跑的家族：");
+            for n in candidates.iter().take(20) {
+                eprintln!("  {n}");
+            }
+            2
+        }
+        Err(AppMatchError::Ambiguous(candidates)) => {
+            eprintln!("{query:?} 同时匹配了 {} 个家族，请用全名重试：", candidates.len());
+            for n in &candidates {
+                eprintln!("  {n}");
+            }
+            2
+        }
+        Ok(r) => {
+            if json {
+                let doc = serde_json::json!({
+                    "family": r.family,
+                    "processCount": r.process_count,
+                    "memoryBytes": r.memory_bytes,
+                    "memoryExact": r.memory_exact,
+                    "cpu": r.cpu,
+                    "cpuCovered": r.cpu_covered,
+                    "conns": r.conns,
+                    "ports": r.ports.iter().map(|(p, s)| serde_json::json!({
+                        "port": p, "exposure": exposure_cn(*s),
+                    })).collect::<Vec<_>>(),
+                    "disk": r.disk,
+                });
+                println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+                return 0;
+            }
+
+            println!(
+                "{} · {} 个进程",
+                r.family, r.process_count
+            );
+            println!(
+                "内存  {}{}",
+                hb(r.memory_bytes),
+                if r.memory_exact { "" } else { "（≈ RSS 下界，未深探）" }
+            );
+            println!(
+                "CPU   {}",
+                r.cpu
+                    .map(|c| format!(
+                        "{}{}",
+                        format!("{c:.1}%"),
+                        if r.cpu_covered < r.process_count { "（下界）" } else { "" }
+                    ))
+                    .unwrap_or_else(|| "—".into())
+            );
+            if r.ports.is_empty() {
+                println!("端口  —（无关注层端口）");
+            } else {
+                let list = r
+                    .ports
+                    .iter()
+                    .map(|(p, s)| format!(":{p}（{}）", exposure_cn(*s)))
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                println!("端口  {list}");
+            }
+            if r.conns.established == 0 && r.conns.close_wait == 0 {
+                println!("连接  —");
+            } else {
+                let mut line = format!("连接  {} 活跃", r.conns.established);
+                if r.conns.close_wait > 0 {
+                    line.push_str(&format!(
+                        " · {} CLOSE_WAIT（可能泄漏，不是结论）",
+                        r.conns.close_wait
+                    ));
+                }
+                println!("{line}");
+            }
+            let leaf = |l: &Option<prune_core::appdisk::DiskLeaf>| match l {
+                Some(l) => format!("{}{}", if l.partial { "≥ " } else { "" }, hb(l.bytes)),
+                None => "—".into(),
+            };
+            println!(
+                "磁盘  本体 {} · 缓存 {} · 数据 {}",
+                leaf(&r.disk.bundle),
+                leaf(&r.disk.cache),
+                leaf(&r.disk.data)
+            );
+            if let Some(note) = &r.disk.note {
+                println!("      {note}");
+            }
+            println!();
+            println!("口径：内存 footprint 优先；CPU 单核可 >100%；连接多 ≠ 流量大；磁盘按实占块统计（含 APFS 克隆共享）。");
+            0
+        }
+    }
 }
 
 fn proto_cn(p: net::Proto) -> &'static str {

@@ -128,6 +128,20 @@ fn tool_defs() -> Value {
                     }
                 }
             }
+        },
+        {
+            "name": "app_resources",
+            "description": "单个应用的五域资源画像（只读，约 2-6 秒，不要高频调用）：进程数、内存（RSS 下界）、CPU、监听端口、TCP 连接数、磁盘三层（本体 / 缓存 / 数据，按实占块统计）。family 用大小写不敏感的子串匹配，如 \"cursor\"；匹配到多个家族时会返回 candidates 让你用全名重试。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "family": {
+                        "type": "string",
+                        "description": "应用家族名（子串匹配即可，如 cursor / chrome / wechat）"
+                    }
+                },
+                "required": ["family"]
+            }
         }
     ])
 }
@@ -146,6 +160,7 @@ pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
         }
         "disk_report" => Ok(tool_disk_report()),
         "port_listeners" => Ok(tool_port_listeners(args)),
+        "app_resources" => Ok(tool_app_resources(args)),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -237,6 +252,47 @@ fn tool_disk_report() -> Value {
 }
 
 /// 端口反查（只读）。**不暴露任何结束进程的工具**——Agent 拿到 pid 只用于解释与建议。
+/// 应用资源画像（只读，M8）。与 CLI 的 `prune app` 共用同一套口径与实现。
+fn tool_app_resources(args: &Value) -> Value {
+    let Some(family) = args
+        .get("family")
+        .and_then(|v| v.as_str())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+    else {
+        return json!({ "error": "需要 family 参数（子串匹配即可，如 \"cursor\"）" });
+    };
+
+    match crate::app_resource_report(&family) {
+        Ok(r) => json!({
+            "family": r.family,
+            "processCount": r.process_count,
+            "memoryBytes": r.memory_bytes,
+            // CLI 不做深探：内存恒为 RSS 下界，别让 Agent 当成精确值
+            "memoryExact": r.memory_exact,
+            "cpu": r.cpu,
+            "cpuCovered": r.cpu_covered,
+            "conns": r.conns,
+            "ports": r.ports.iter().map(|(p, s)| json!({
+                "port": p,
+                "exposure": s,
+            })).collect::<Vec<_>>(),
+            "disk": r.disk,
+            "hint": "连接多不等于流量大（本机无公开 API）；磁盘按实占块统计，含 APFS 克隆共享；data 层是用户数据，不要建议删除。",
+        }),
+        Err(e) => match e {
+            crate::AppMatchError::NotFound(candidates) => json!({
+                "error": format!("没有匹配 {family:?} 的应用"),
+                "candidates": candidates.into_iter().take(30).collect::<Vec<_>>(),
+            }),
+            crate::AppMatchError::Ambiguous(candidates) => json!({
+                "error": format!("{family:?} 同时匹配了多个家族，请用全名重试"),
+                "candidates": candidates,
+            }),
+        },
+    }
+}
+
 fn tool_port_listeners(args: &Value) -> Value {
     let port = args
         .get("port")
@@ -418,7 +474,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["mem_snapshot", "mem_leaks", "disk_report", "port_listeners"]
+            ["mem_snapshot", "mem_leaks", "disk_report", "port_listeners", "app_resources"]
         );
         for t in defs.as_array().unwrap() {
             assert!(t["description"].as_str().unwrap().len() > 10);
