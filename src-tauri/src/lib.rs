@@ -49,7 +49,8 @@ pub fn run() {
             commands::reclaim_execute,
             commands::port_snapshot,
             commands::port_refresh,
-            commands::port_set_active
+            commands::port_set_active,
+            commands::app_disk
         ])
         .setup(|app| {
             // 资源守门员形态：常驻菜单栏，不占 Dock
@@ -73,6 +74,7 @@ pub fn run() {
             app.manage(Arc::new(sampler::MemState::new(store)));
             app.manage(Arc::new(scan::DiskState::new()));
             app.manage(Arc::new(port_sampler::PortState::new()));
+            app.manage(Arc::new(commands::AppDiskState::new()));
 
             // 后台常采：无 WebView 也运行，前端打开时直接取最新快照
             let handle = app.handle().clone();

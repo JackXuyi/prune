@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport } from "../types/disk";
+import type { AppDisk } from "../types/appdisk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
 import type { PortSnapshot } from "../types/net";
 
@@ -85,4 +86,21 @@ export function portRefresh(): Promise<void> {
 /** 可见性门控：false 时定时器完全不采样，常驻开销 0 */
 export function portSetActive(active: boolean): Promise<void> {
   return invoke<void>("port_set_active", { active });
+}
+
+// ---------------------------------------------------------------- 应用磁盘（M8）
+
+/**
+ * 测量一个应用的磁盘三层（本体 / 缓存 / 数据）。
+ *
+ * 这是**按需**调用：Rust 侧有 30 min TTL 缓存，`force` 才会重测。
+ * 实测耗时 20 ms（Docker）到 4 s（Chrome profile 撞预算上限），
+ * 所以调用方必须有「测量中」占位，不能假定它即时返回。
+ */
+export function appDisk(
+  family: string,
+  exe: string | null,
+  force = false,
+): Promise<AppDisk> {
+  return invoke<AppDisk>("app_disk", { family, exe, force });
 }

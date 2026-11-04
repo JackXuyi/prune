@@ -240,6 +240,7 @@ export function MainWindow() {
               processes={processes}
               leaks={snapshot?.leaks}
               ports={ports}
+              expandable
               onOpen={(pid) => {
                 select(pid);
                 setTab("overview");

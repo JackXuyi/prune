@@ -7,6 +7,7 @@ import type {
   ReclaimItem,
   ReclaimPreview,
 } from "../types/disk";
+import type { AppDisk, DiskLeaf } from "../types/appdisk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
 import type { PortBinding, PortEntry, PortSnapshot, Proto } from "../types/net";
 
@@ -493,7 +494,57 @@ export function devPortSnapshot(): PortSnapshot {
     coverage: { listenTotal: 30, attributed: entries.reduce((n, e) => n + e.listeners.length, 0), note: null },
     timeWait: 326,
     timeWaitPorts: [56569, 56601, 49312, 50287, 51220],
+    // 连接计数（M8）：键是 pid 的字符串形式（JSON 对象的键只能是字符串）
+    connsByPid: {
+      "626": { established: 14, closeWait: 0 },
+      "4187": { established: 6, closeWait: 0 },
+      "5120": { established: 21, closeWait: 0 },
+      "7301": { established: 9, closeWait: 1 },
+      "3310": { established: 2, closeWait: 0 },
+      "9001": { established: 4, closeWait: 0 },
+    },
     at: Math.floor(Date.now() / 1000),
     scanMs: 38,
+  };
+}
+
+/**
+ * 家族磁盘三层的浏览器态样本（形态取自实机：Cursor 的 App Support 35.9 GB）。
+ * 只在 `!isTauri()` 时用，让浏览器里也能走查资源卡的三种状态。
+ */
+export function devAppDisk(family: string): AppDisk {
+  const now = Math.floor(Date.now() / 1000);
+  const leaf = (path: string, bytes: number, partial = false): DiskLeaf => ({ path, bytes, partial });
+  if (family.toLowerCase().includes("chrome")) {
+    // 撞预算上限的样子：缓存层只量了一部分
+    return {
+      family,
+      bundle: leaf("/Applications/Google Chrome.app", 1_500_000_000),
+      cache: leaf("/Users/dev/Library/Caches/google/Chrome", 2_800_000_000, true),
+      data: leaf("/Users/dev/Library/Application Support/google/Chrome", 9_800_000_000),
+      at: now,
+      elapsedMs: 4034,
+      note: null,
+    };
+  }
+  if (family.toLowerCase().includes("rapportd") || family.toLowerCase().includes("controlcenter")) {
+    return {
+      family,
+      bundle: null,
+      cache: null,
+      data: null,
+      at: now,
+      elapsedMs: 1,
+      note: "无 .app bundle（系统进程或命令行工具）",
+    };
+  }
+  return {
+    family,
+    bundle: leaf("/Applications/Cursor.app", 1_020_000_000),
+    cache: leaf("/Users/dev/Library/Caches/com.todesktop.230313mzl4w4u92", 40_000_000),
+    data: leaf("/Users/dev/Library/Application Support/Cursor", 35_850_000_000),
+    at: now,
+    elapsedMs: 2158,
+    note: null,
   };
 }

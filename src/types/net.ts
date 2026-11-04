@@ -49,6 +49,14 @@ export interface Coverage {
   note: string | null;
 }
 
+/** 单个进程的 TCP 连接计数（M8 应用维度）。只有「有连接的进程」才出现。 */
+export interface ConnStats {
+  /** 活跃连接（ESTABLISHED） */
+  established: number;
+  /** 本端未关（CLOSE_WAIT）——泄漏信号，不是结论 */
+  closeWait: number;
+}
+
 export interface PortSnapshot {
   /** 按 port 升序 */
   entries: PortEntry[];
@@ -57,6 +65,8 @@ export interface PortSnapshot {
   timeWait: number | null;
   /** TIME_WAIT 涉及的本地端口（去重升序，上限 128） */
   timeWaitPorts: number[];
+  /** pid → 连接计数。「没有记录 = 0 条」，不是「不知道」 */
+  connsByPid: Record<string, ConnStats>;
   at: number;
   scanMs: number;
 }
@@ -136,6 +146,33 @@ export function splitLayers(entries: PortEntry[]): {
 export function portsOfPid(entries: PortEntry[], pid: number): PortEntry[] {
   return entries.filter((e) => e.listeners.some((b) => b.pid === pid));
 }
+
+/**
+ * 一组 pid 的连接汇总。后端语义是「没有记录 = 0 条」，
+ * 所以这里缺失的 pid 直接跳过，不返回 null——与端口不同，连接没有
+ * 「采集失败」这个状态可区分（lsof 拿不到就是拿不到，也不会骗人）。
+ */
+export function connsOfPids(
+  connsByPid: Record<string, ConnStats> | undefined,
+  pids: number[],
+): ConnStats {
+  const out: ConnStats = { established: 0, closeWait: 0 };
+  if (!connsByPid) return out;
+  for (const pid of pids) {
+    const c = connsByPid[String(pid)];
+    if (!c) continue;
+    out.established += c.established;
+    out.closeWait += c.closeWait;
+  }
+  return out;
+}
+
+/**
+ * 连接徽标的展示阈值：< 5 不显示（沉默即正常）。
+ * 实测分布 42 / 21 / 14 / 9 / 8，阈值 5 能突出真异常而不让每行都长徽标。
+ */
+export const CONN_BADGE_MIN = 5;
+export const CONN_BADGE_WARN = 20;
 
 /**
  * 系统关键进程（与 Rust `SYSTEM_COMMS` 同源；那边管「不占关注层 + 禁杀」）。

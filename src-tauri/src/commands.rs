@@ -9,10 +9,12 @@
 //! - `disk_scan`      触发一轮扫描（单飞，重复调用忽略）
 //! - `reclaim_preview` dry-run：生成待清理清单
 //! - `reclaim_execute` 执行清理（走废纸篓，护栏在 prune-core）
+//! - `app_disk`       M8：按家族测量磁盘三层占用（按需 + TTL，绝不进定时轮）
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
+use prune_core::appdisk::{AppDisk, AppDiskCache};
 use prune_core::db::Point;
 use prune_core::disk::DiskReport;
 use prune_core::mem::{MemSnapshot, ProcMem};
@@ -172,6 +174,55 @@ pub async fn port_refresh(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn port_set_active(state: State<'_, Arc<PortState>>, active: bool) {
     state.set_active(active);
+}
+
+// ---------------------------------------------------------------- 应用磁盘（M8）
+
+/// 家族磁盘测量缓存。放在壳层而不是 core：它是有状态的（TTL），
+/// 生命周期应当与进程一致，跟 mem/disk 的 State 一个模式。
+pub struct AppDiskState {
+    cache: Mutex<AppDiskCache>,
+}
+
+impl AppDiskState {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(AppDiskCache::new()),
+        }
+    }
+}
+
+impl Default for AppDiskState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// 测量一个应用的磁盘三层（本体 / 缓存 / 数据）。
+///
+/// - 只读：不产生任何删除动作，也不进任何定时轮（方案 §6）
+/// - `force = true` 时绕开 TTL 重测（UI 的「重新测量」）
+/// - `exe` 由前端给（它本来就有进程明细），避免后端再枚举一次进程
+#[tauri::command]
+pub async fn app_disk(
+    state: State<'_, Arc<AppDiskState>>,
+    family: String,
+    exe: Option<String>,
+    force: Option<bool>,
+) -> Result<AppDisk, String> {
+    let cache = state.inner().clone();
+    let home = prune_core::paths::home_dir_or_root();
+    // du 是阻塞 IO（实测 Chrome 的 profile 目录可跑到 4 s 预算上限），
+    // 必须离开 async 执行器，否则会卡住其他 IPC
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = cache.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if force.unwrap_or(false) {
+            guard.invalidate(&family);
+        }
+        guard.get_or_measure(&family, exe.as_deref(), &home)
+    })
+    .await
+    .map_err(|e| format!("磁盘测量失败：{e}"))
 }
 
 // ---------------------------------------------------------------- 磁盘（M1）
