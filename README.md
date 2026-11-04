@@ -36,6 +36,7 @@
 | Swap 仪表盘：内存压力正在吃掉多少磁盘                  | 任何不在白名单内的删除                |
 | 「疑似内存泄漏」判定（概率 + 曲线 + 克制措辞）             | 提升任何权限（root / 全盘访问 / 辅助功能） |
 | 端口反查：谁占着 3000 / 3118，以及它属于哪个项目       | 防火墙、抓包、网络流量监控            |
+| 应用维度资源卡：进程 / 内存 / CPU / 端口 / 连接 / 磁盘一次看全 | 流量统计（macOS 无公开 API）、GPU/能耗 |
 
 ## 首屏长什么样
 
@@ -88,11 +89,13 @@ prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run�
 prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
 prune mem --watch [--interval N]    # 持续采样，每 60s 输出泄漏嫌疑判定（序列不落盘）
 prune port [PORT] [--json] [--all]  # 谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
+prune app <家族名> [--json]         # 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
 prune mcp                           # MCP stdio server（AI Agent 查询入口）
 ```
 
 MCP 工具：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）/
-`port_listeners`（端口反查，只读；`coverage` 说明权限可见范围，`timeWait` 说明内核残留连接）。
+`port_listeners`（端口反查，只读；`coverage` 说明权限可见范围，`timeWait` 说明内核残留连接）/
+`app_resources`（应用维度五域画像，只读；连接多 ≠ 流量大，磁盘含 APFS 克隆共享部分）。
 安全底线：`reclaim` 不带 `--yes` 绝不删除；白名单 + 20GB 熔断在 prune-core 代码层兜底。
 
 ## 开发
@@ -109,6 +112,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M1** 磁盘浪费探测 MVP：跨平台二进制探测 + 🟢 级清理 + 菜单栏
 - [x] **M2** 内存真相：footprint 口径 + swap 仪表 + 换出受害者榜
 - [x] **M3** 泄漏嫌疑判定（B5）+ CLI + MCP + A6 只读（NSPopover 原生化推迟，tray 方案实测可用）
+- [x] **M8** 应用维度资源卡：连接统计（M7 同源）+ 磁盘三层（本体/缓存/数据，按需 du）+ `prune app`
 
 ## 相关文档
 

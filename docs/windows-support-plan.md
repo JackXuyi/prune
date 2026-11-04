@@ -170,6 +170,15 @@ UI 呈现统一按「隐藏」处理：由前端根据 `null` 字段决定是否
 结论：Windows 上端口列表**比 macOS 更完整**（不需要提权、不会漏别的用户的进程），
 但少了「端口 → 项目目录」这一列；UI 侧对 `project == null` 只显示 `—`，不编造。
 
+## 7.1 应用磁盘（M8 `appdisk`）平台差异
+
+| 项 | macOS | Windows |
+|---|---|---|
+| 本体 bundle | exe 路径里的 `*.app` 段 | exe 所在目录（没有 bundle 概念，**首期只实现这一层**） |
+| 缓存 / 数据 | `~/Library/Caches/<名>`、`~/Library/Application Support/<名>`、`~/Library/Containers/<bundle-id>`，候选链：家族名 → bundle id 拆解（`com.google.Chrome` → `Google/Chrome`） | `%LOCALAPPDATA%\<exe名>` / `%APPDATA%\<exe名>`——目录命名没有统一规律，**首期不实现**，避免错归属 |
+| 稀疏文件 | `st_blocks * 512`（Docker.raw 1 TiB 逻辑长度只实占 3 GB，`len()` 会得出荒谬读数） | 无 blocks 概念，退回 `len()`（NTFS 稀疏同样会偏大，挂待办） |
+| bundle id | `defaults read <app>/Contents/Info CFBundleIdentifier`（~15 ms，仅按名匹配失败时调用） | 无对应物 |
+
 ## 8. 风险
 
 - **真机验证是硬门槛**：`cargo check` 只能证明能编译，托盘定位、透明面板、失焦隐藏、
