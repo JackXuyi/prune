@@ -73,8 +73,8 @@ node [22325]: 64-bit    Footprint: 3432 MB
 ┌──────────────────────────────────────────────────────┐
 │ 前端 · React 19 + TS + Tailwind 4                     │
 │  ├ MenuBarPanel   菜单栏面板（首屏）                   │
-│  ├ MainWindow     双栏：分组列表 + 检视器              │
-│  ├ stores/        Zustand（memStore / diskStore）      │
+│  ├ MainWindow     5 tab：统计（默认）/内存/存储/端口   │
+│  ├ stores/        Zustand（mem / disk / port）          │
 │  └ charts/        自绘 SVG sparkline（不引图表库）     │
 └───────────────┬──────────────────────────────────────┘
       IPC: invoke() 拉数据  |  Channel 推实时采样流
@@ -108,9 +108,9 @@ prune/
 │   ├── App.tsx
 │   ├── panels/MenuBarPanel.tsx
 │   ├── windows/MainWindow.tsx
-│   ├── components/{GroupList,Inspector,SafetyBadge,Sparkline}.tsx
-│   ├── stores/{memStore,diskStore}.ts
-│   └── lib/tauri.ts             # invoke 封装
+│   ├── components/{StatsBoard,AppMemoryList,AppResourceCard,PortList,ReclaimBoard,LeakCard,Sparkline,primitives}.tsx
+│   ├── stores/{memStore,diskStore,portStore}.ts
+│   └── lib/ipc.ts               # invoke 封装
 ├── src-tauri/
 │   ├── Cargo.toml
 │   ├── tauri.conf.json
