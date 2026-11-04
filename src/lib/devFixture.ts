@@ -6,6 +6,7 @@ import type {
   PlatformStat,
   ReclaimItem,
   ReclaimPreview,
+  VolumeInfo,
 } from "../types/disk";
 import type { AppDisk, DiskLeaf } from "../types/appdisk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
@@ -120,6 +121,13 @@ export function devSnapshot(): MemSnapshot {
     fastAt: now,
     deepUpdatedAt: now - 95,
     deepAvailable: true,
+    cpu: {
+      usage: 23,
+      cores: 10,
+      load: { one: 2.14, five: 1.87, fifteen: 1.62 },
+      history: [18, 21, 26, 24, 19, 16, 22, 31, 28, 23, 20, 25, 29, 27, 23],
+      at: now,
+    },
     families: aggregateDev(all),
     leaks: devLeaks(all, now),
   };
@@ -271,6 +279,15 @@ export function devProcesses(): ProcMem[] {
 // 让浏览器里能看到与桌面端一致的量级与分层，避免「演示 3 GB、真机 55 GB」的失真。
 
 const GB = 1e9;
+
+/** M9 统计 tab：卷容量样本（494 GB 盘 / 用户可用 176 GB，取自实机形态） */
+export function devVolume(): VolumeInfo {
+  return {
+    totalBytes: 494_000_000_000,
+    availableBytes: 178_000_000_000,
+    userAvailableBytes: 176_000_000_000,
+  };
+}
 
 function devGroup(
   key: string,

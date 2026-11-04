@@ -1,7 +1,7 @@
 /** 与 Rust 侧 IPC 命令的薄封装（契约见 docs/m2-memory-plan.md §6 / docs/m1-disk-plan.md §8）。 */
 import { invoke } from "@tauri-apps/api/core";
 
-import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport } from "../types/disk";
+import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
 import type { AppDisk } from "../types/appdisk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
 import type { PortSnapshot } from "../types/net";
@@ -30,7 +30,7 @@ export function memRefresh(): Promise<void> {
 /** 打开主窗口；传 pid 时主窗口会自动选中该进程，传 tab 时直接切到对应 tab */
 export function openMain(
   pid?: number,
-  tab?: "apps" | "overview" | "disk" | "ports",
+  tab?: "stats" | "apps" | "overview" | "disk" | "ports",
 ): Promise<void> {
   return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null });
 }
@@ -54,6 +54,14 @@ export function diskReport(): Promise<DiskReport | null> {
 /** 触发一轮扫描（单飞：已有扫描在跑时直接返回） */
 export function diskScan(): Promise<void> {
   return invoke<void>("disk_scan");
+}
+
+/**
+ * M9 统计 tab：home 所在卷容量（statvfs 直读，不依赖扫描）。
+ * null = statvfs 失败（罕见），UI 显示「容量不可读」而不是 0。
+ */
+export function diskVolume(): Promise<VolumeInfo | null> {
+  return invoke<VolumeInfo | null>("disk_volume");
 }
 
 /** dry-run：只生成清单，不动任何文件 */

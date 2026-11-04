@@ -6,6 +6,7 @@
 //! - `mem_history`    某进程的序列（读 SQLite）
 //! - `mem_refresh`    手动触发一轮快照 + 深探
 //! - `disk_report`    取最新可回收报告
+//! - `disk_volume`    M9：卷容量直读（statvfs，不依赖扫描）
 //! - `disk_scan`      触发一轮扫描（单飞，重复调用忽略）
 //! - `reclaim_preview` dry-run：生成待清理清单
 //! - `reclaim_execute` 执行清理（走废纸篓，护栏在 prune-core）
@@ -16,7 +17,7 @@ use std::sync::{Arc, Mutex};
 
 use prune_core::appdisk::{AppDisk, AppDiskCache};
 use prune_core::db::Point;
-use prune_core::disk::DiskReport;
+use prune_core::disk::{DiskReport, VolumeInfo};
 use prune_core::mem::{MemSnapshot, ProcMem};
 use prune_core::net::PortSnapshot;
 use prune_core::reclaim::{self, Limits, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport};
@@ -230,6 +231,16 @@ pub async fn app_disk(
 #[tauri::command]
 pub fn disk_report(state: State<'_, Arc<DiskState>>) -> Option<DiskReport> {
     state.report()
+}
+
+/// M9 统计 tab：home 所在卷的容量，statvfs 微秒级同步直读。
+///
+/// 不能用 `disk_report` 里的 `volume` 代替：那是**扫描完成时**装配的，
+/// 首次启动（首扫 30 s 后才跑）或扫描失败时读数为 null——统计 tab
+/// 作为默认页必须在任何扫描之前就能显示容量。
+#[tauri::command]
+pub fn disk_volume() -> Option<VolumeInfo> {
+    prune_core::disk::volume_info(&prune_core::paths::home_dir_or_root())
 }
 
 /// 手动触发扫描（A7 D-A7-2：手动 = 全量，用户盯着数字求证，准确性优先）。
