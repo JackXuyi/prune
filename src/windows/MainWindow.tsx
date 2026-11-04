@@ -7,6 +7,7 @@ import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { PortBoard } from "../components/PortList";
 import { ReclaimBoard } from "../components/ReclaimBoard";
 import { Sparkline } from "../components/Sparkline";
+import { StatsBoard } from "../components/StatsBoard";
 import {
   ChevronRightIcon,
   RefreshIcon,
@@ -30,7 +31,7 @@ import {
 } from "../types/mem";
 import { exposureMeta, portsOfPid } from "../types/net";
 
-type MainTab = "apps" | "overview" | "disk" | "ports";
+type MainTab = "stats" | "apps" | "overview" | "disk" | "ports";
 
 /** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
@@ -44,9 +45,10 @@ function sourceLabel(s: WorkspaceSource): string {
       : "继承所属窗口";
 }
 
-/** 主窗口（960×640）：应用内存 / 系统概况 两个 tab */
+/** 主窗口（960×640）：统计总览 / 内存 / 存储 / 端口 */
 export function MainWindow() {
-  const [tab, setTab] = useState<MainTab>("apps");
+  // M9：统计是默认页——打开先看本机整体，再下钻到具体域
+  const [tab, setTab] = useState<MainTab>("stats");
   const snapshot = useMemStore((s) => s.snapshot);
   const processes = useMemStore((s) => s.processes);
   const loading = useMemStore((s) => s.loading);
@@ -67,6 +69,8 @@ export function MainWindow() {
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [killTarget, setKillTarget] = useState<KillTarget | null>(null);
+  /** 统计 tab 的卷容量重取信号（内存/端口由各自 store 刷新，不重复驱动） */
+  const [statsNonce, setStatsNonce] = useState(0);
 
   /** 右键进程行 → 弹「结束进程」菜单（位置取鼠标点） */
   const openKillMenu = (proc: ProcMem, x: number, y: number) => {
@@ -78,7 +82,7 @@ export function MainWindow() {
     if (!isTauri()) return;
     const un = listen<string>("ui://tab", (e) => {
       const t = e.payload === "port" ? "ports" : e.payload;
-      if (t === "apps" || t === "overview" || t === "disk" || t === "ports") {
+      if (t === "stats" || t === "apps" || t === "overview" || t === "disk" || t === "ports") {
         setTab(t);
       }
     });
@@ -108,6 +112,15 @@ export function MainWindow() {
     if (tab === "apps") void hydratePorts();
   }, [tab, hydratePorts]);
 
+  /**
+   * 统计 tab 需要「端口数量」：只做一次性扫描——`init` 内部有快照就只读、
+   * 没有才扫一轮。这里**不调 setActive**，30 s 定时轮仍然只属于端口 tab，
+   * 统计页的常驻开销为 0（方案 §3.4 / 验收 3）。
+   */
+  useEffect(() => {
+    if (tab === "stats") void initPorts();
+  }, [tab, initPorts]);
+
   const families = snapshot?.families ?? [];
   const selected = useMemo(
     () => processes.find((p) => p.pid === selectedPid) ?? null,
@@ -115,11 +128,23 @@ export function MainWindow() {
   );
 
   // 刷新按钮按 tab 分流：三个域的采样代价与语义都不同，不能混用一个 loading
-  const busy = tab === "disk" ? diskScanning : tab === "ports" ? portRefreshing : refreshing;
+  const busy =
+    tab === "disk"
+      ? diskScanning
+      : tab === "ports"
+        ? portRefreshing
+        : tab === "stats"
+          ? refreshing || portRefreshing
+          : refreshing;
   const onRefresh = () => {
     if (tab === "disk") void refreshDisk();
     else if (tab === "ports") void refreshPorts();
-    else void refresh();
+    else if (tab === "stats") {
+      // 三个域各刷一次：内存常采、卷容量按需取、端口显式重扫一轮（用户点了就该扫）
+      void refresh();
+      void refreshPorts();
+      setStatsNonce((n) => n + 1);
+    } else void refresh();
   };
   const refreshLabel =
     tab === "disk"
@@ -145,6 +170,7 @@ export function MainWindow() {
           value={tab}
           onChange={setTab}
           items={[
+            { id: "stats", label: "统计", hint: "内存 / 硬盘 / CPU / 端口：本机资源总览" },
             { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
             { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
             { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
@@ -152,7 +178,7 @@ export function MainWindow() {
           ]}
         />
         <div className="flex-1" />
-        {tab !== "ports" ? (
+        {tab === "apps" || tab === "overview" ? (
           <>
             {snapshot ? (
               snapshot.deepAvailable ? (
@@ -187,7 +213,9 @@ export function MainWindow() {
         </div>
       ) : null}
 
-      {tab === "ports" ? (
+      {tab === "stats" ? (
+        <StatsBoard onDrill={setTab} refreshNonce={statsNonce} />
+      ) : tab === "ports" ? (
         <PortBoard
           onOpenProcess={(pid) => {
             select(pid);
