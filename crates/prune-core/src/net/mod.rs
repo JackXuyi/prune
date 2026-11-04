@@ -134,6 +134,24 @@ impl PortEntry {
     }
 }
 
+/// 单个进程的 TCP 连接计数（M8 应用维度）。
+///
+/// 只看两个状态，别的状态对「这个应用连了多少东西」没有解释力：
+/// - `ESTABLISHED`：活跃连接，用户可感知的「在联着」
+/// - `CLOSE_WAIT`：本端还没关，往往意味着对端已关而程序没释放 fd（泄漏信号，不是结论）
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConnStats {
+    pub established: u32,
+    pub close_wait: u32,
+}
+
+impl ConnStats {
+    pub fn is_empty(&self) -> bool {
+        self.established == 0 && self.close_wait == 0
+    }
+}
+
 /// 可见性说明（§3.2.1）。这是「不撒谎」的载体——没有它就只能猜。
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -164,6 +182,11 @@ pub struct PortSnapshot {
     pub time_wait: Option<u32>,
     /// TIME_WAIT 涉及的本地端口（去重，升序，上限 128）。用于解释「EADDRINUSE 但没进程」
     pub time_wait_ports: Vec<u16>,
+    /// 每进程的连接计数（M8）：端口域与应用维度的共享底座。
+    /// 只含「有 ESTABLISHED / CLOSE_WAIT」的进程——没有连接的进程不出现在这里，
+    /// 语义是「没有记录 = 0 条」，而不是「不知道」。
+    #[serde(default)]
+    pub conns_by_pid: std::collections::BTreeMap<i32, ConnStats>,
     pub at: i64,
     pub scan_ms: u64,
 }
@@ -180,9 +203,23 @@ impl PortSnapshot {
             },
             time_wait: None,
             time_wait_ports: Vec::new(),
+            conns_by_pid: std::collections::BTreeMap::new(),
             at: 0,
             scan_ms,
         }
+    }
+
+    /// 一组 pid 的连接汇总（应用维度用：家族成员 pid 求和）。
+    /// 每次都归零重算，避免把上一轮的数字累积进来。
+    pub fn conns_of(&self, pids: &[i32]) -> ConnStats {
+        let mut out = ConnStats::default();
+        for pid in pids {
+            if let Some(c) = self.conns_by_pid.get(pid) {
+                out.established += c.established;
+                out.close_wait += c.close_wait;
+            }
+        }
+        out
     }
 
     pub fn watched_count(&self) -> usize {

@@ -21,9 +21,10 @@ use windows_sys::Win32::Networking::WinSock::{AF_INET, AF_INET6};
 use super::ports::{KernelTcp, TcpScan};
 use super::{BindScope, PortBinding, Proto};
 
-/// `MIB_TCP_STATE_*` 里本模块关心的三个
+/// `MIB_TCP_STATE_*` 里本模块关心的四个
 const STATE_LISTEN: u32 = 2;
 const STATE_ESTAB: u32 = 5;
+const STATE_CLOSE_WAIT: u32 = 8;
 const STATE_TIME_WAIT: u32 = 11;
 
 /// 通用「两次调用」模式：先问大小（必得 INSUFFICIENT_BUFFER），再取数据。
@@ -98,6 +99,19 @@ pub fn scan_tcp() -> Result<TcpScan, String> {
     let mut scan = TcpScan::default();
     let mut conns: std::collections::HashMap<u16, u32> = std::collections::HashMap::new();
 
+    // 按 pid 计数：Windows 的 owner-pid 表一行就是一个连接，直接累加（与 mac 分支等价）
+    fn bump(scan: &mut TcpScan, pid: u32, state: u32) {
+        if pid == 0 {
+            return;
+        }
+        let s = scan.conns_by_pid.entry(pid as i32).or_default();
+        if state == STATE_ESTAB {
+            s.established += 1;
+        } else if state == STATE_CLOSE_WAIT {
+            s.close_wait += 1;
+        }
+    }
+
     unsafe {
         // IPv4
         let buf = query(|p, s| {
@@ -106,6 +120,7 @@ pub fn scan_tcp() -> Result<TcpScan, String> {
         for row in rows::<MIB_TCPROW_OWNER_PID>(&buf) {
             let port = port_of(row.dwLocalPort);
             let addr = Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()).to_string();
+            bump(&mut scan, row.dwOwningPid, row.dwState);
             match row.dwState {
                 STATE_LISTEN => scan.listeners.push(binding(
                     port,
@@ -125,6 +140,7 @@ pub fn scan_tcp() -> Result<TcpScan, String> {
         for row in rows::<MIB_TCP6ROW_OWNER_PID>(&buf6) {
             let port = port_of(row.dwLocalPort);
             let addr = Ipv6Addr::from(row.ucLocalAddr).to_string();
+            bump(&mut scan, row.dwOwningPid, row.dwState);
             match row.dwState {
                 STATE_LISTEN => scan.listeners.push(binding(port, &addr, true, row.dwOwningPid)),
                 STATE_ESTAB => {

@@ -26,6 +26,8 @@ pub struct TcpScan {
     pub listeners: Vec<PortBinding>,
     /// local port → ESTABLISHED 条数（按 local 算：服务端的 local 就是服务端口）
     pub conns: Vec<(u16, u32)>,
+    /// pid → 连接计数（M8）。与 `conns` 同源，只是按进程再切一刀
+    pub conns_by_pid: std::collections::BTreeMap<i32, super::ConnStats>,
 }
 
 /// lsof 可执行文件路径。
@@ -163,8 +165,7 @@ pub fn parse_lsof_tcp(text: &str) -> TcpScan {
                  block: &FdBlock,
                  scan: &mut TcpScan,
                  conns: &mut std::collections::HashMap<u16, u32>| {
-        let Some(pid) = pid else { return };
-        // 第二道防线：没有 P 行的 fd 是文件/管道，不是 socket（防 `-a` 缺失时的脏输入）
+        let Some(pid) = pid else { return };        // 第二道防线：没有 P 行的 fd 是文件/管道，不是 socket（防 `-a` 缺失时的脏输入）
         let Some(proto) = block.proto else { return };
         let Some(name) = block.name.as_deref() else { return };
 
@@ -189,6 +190,12 @@ pub fn parse_lsof_tcp(text: &str) -> TcpScan {
             }
             Some("ESTABLISHED") => {
                 *conns.entry(port).or_insert(0) += 1;
+                scan.conns_by_pid.entry(pid).or_default().established += 1;
+            }
+            // CLOSE_WAIT 不进端口计数（它不是服务），但对应用维度是泄漏信号：
+            // 本端没关、对端已关，说明程序没释放 fd。只计数，不下结论。
+            Some("CLOSE_WAIT") => {
+                scan.conns_by_pid.entry(pid).or_default().close_wait += 1;
             }
             // CLOSED / FIN_WAIT_* / SYN_SENT / TIME_WAIT(内核态无 fd) 都不是「服务」
             _ => {}
@@ -444,6 +451,7 @@ pub fn scan_cached(
         },
         time_wait: kernel.as_ref().map(|k| k.time_wait),
         time_wait_ports: kernel.map(|k| k.time_wait_ports).unwrap_or_default(),
+        conns_by_pid: tcp_scan.conns_by_pid,
         at: now_secs(),
         scan_ms: started.elapsed().as_millis() as u64,
     }
@@ -508,6 +516,49 @@ TST=ESTABLISHED
         assert_eq!(scan.listeners[0].port, 3118);
         assert_eq!(scan.listeners[0].addr, "::1");
         assert!(scan.listeners[0].v6);
+    }
+
+    #[test]
+    fn conns_are_counted_per_pid() {
+        // M8：同一个 lsof 输出里，WeChat 有 2 条 ESTABLISHED、1 条 CLOSE_WAIT，
+        // rapportd 只有 LISTEN——它不该出现在 conns_by_pid 里。
+        let text = "\
+p584
+crapportd
+f8
+PTCP
+n*:58578
+TST=LISTEN
+p626
+cWeChat
+f150
+PTCP
+n[::1]:3118->[::1]:51741
+TST=ESTABLISHED
+f151
+PTCP
+n[::1]:51742->[::1]:3118
+TST=ESTABLISHED
+f152
+PTCP
+n[::1]:51743->[::1]:443
+TST=CLOSE_WAIT
+p900
+cnode
+f9
+PTCP
+n127.0.0.1:7000->127.0.0.1:51000
+TST=ESTABLISHED
+";
+        let scan = parse_lsof_tcp(text);
+        assert_eq!(scan.conns_by_pid.get(&626).map(|c| c.established), Some(2));
+        assert_eq!(scan.conns_by_pid.get(&626).map(|c| c.close_wait), Some(1));
+        assert_eq!(scan.conns_by_pid.get(&900).map(|c| c.established), Some(1));
+        // 只有 LISTEN 的进程不产生连接记录（「没有记录 = 0 条」）
+        assert!(!scan.conns_by_pid.contains_key(&584));
+        // 端口维度的 conns 只数 ESTABLISHED，CLOSE_WAIT 不进
+        let conns: std::collections::HashMap<u16, u32> = scan.conns.iter().copied().collect();
+        assert_eq!(conns.get(&51743), None);
     }
 
     #[test]

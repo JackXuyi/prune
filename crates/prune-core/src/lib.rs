@@ -10,9 +10,12 @@
 //! - `reclaim/`  ✅ M1：安全删除：路径白名单 + 废纸篓（trash）+ dry-run 前置 + >20GB 熔断
 //! - `leak/`     ✅ M3：B5 泄漏**嫌疑**判定（单进程序列回归 + 阶梯排除 + 良性名单）
 //! - `net/`      ✅ M7：端口占用反查（lsof 机器格式 + netstat 交叉校验 + 关注度分层）
+//!               M8：连接计数按 pid 聚合（应用维度复用同一次 lsof）
+//! - `appdisk`   ✅ M8：应用磁盘三层口径（bundle / cache / data），按需测量 + TTL 缓存
 //! - `paths/`    ✅ W1：平台路径口径（home / 配置目录 / 系统根），跨平台唯一出处
 //! - `win/`      ✅ W2：Windows 系统调用（GlobalMemoryStatusEx / 进程 Private Bytes）
 
+pub mod appdisk;
 pub mod classify;
 pub mod db;
 pub mod disk;
