@@ -179,6 +179,17 @@ UI 呈现统一按「隐藏」处理：由前端根据 `null` 字段决定是否
 | 稀疏文件 | `st_blocks * 512`（Docker.raw 1 TiB 逻辑长度只实占 3 GB，`len()` 会得出荒谬读数） | 无 blocks 概念，退回 `len()`（NTFS 稀疏同样会偏大，挂待办） |
 | bundle id | `defaults read <app>/Contents/Info CFBundleIdentifier`（~15 ms，仅按名匹配失败时调用） | 无对应物 |
 
+## 7.2 应用网速（M10 `nettop`）平台差异
+
+| 项 | macOS | Windows |
+|---|---|---|
+| 数据源 | `nettop -P -x -l 1 -t external -J bytes_in,bytes_out`，1 s 一次，累计字节差分（实测 14.5 ms/次） | **无等价轻量路径**：per-process 字节要 ETW 实时会话（`Microsoft-Windows-Kernel-Network`），权限与实现成本都超出本里程碑 |
+| 结果 | `status = ok`，卡片显示 ↓/↑ 速率 | `status = unavailable` + note「当前平台不支持按进程网速」，卡片网速行显示「不可读」 |
+| 口径 | `external`：不含 loopback（vite HMR 这类本地转发不算网速） | 同左（未来接入时保持一致） |
+| 常驻成本 | 只在「应用资源」tab 可见时跑；切走即停（`pgrep nettop` 为空） | 0（不采样） |
+
+**绝不做的**：Windows 上显示 `0 B/s` 冒充「没有流量」——没有数据与零流量是两件事。
+
 ## 8. 风险
 
 - **真机验证是硬门槛**：`cargo check` 只能证明能编译，托盘定位、透明面板、失焦隐藏、

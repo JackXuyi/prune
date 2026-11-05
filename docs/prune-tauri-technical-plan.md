@@ -73,8 +73,8 @@ node [22325]: 64-bit    Footprint: 3432 MB
 ┌──────────────────────────────────────────────────────┐
 │ 前端 · React 19 + TS + Tailwind 4                     │
 │  ├ MenuBarPanel   菜单栏面板（首屏）                   │
-│  ├ MainWindow     5 tab：统计（默认）/内存/存储/端口   │
-│  ├ stores/        Zustand（mem / disk / port）          │
+│  ├ MainWindow     6 tab：统计（默认）/应用资源/内存×2/存储/端口 │
+│  ├ stores/        Zustand（mem / disk / port / netSpeed）│
 │  └ charts/        自绘 SVG sparkline（不引图表库）     │
 └───────────────┬──────────────────────────────────────┘
       IPC: invoke() 拉数据  |  Channel 推实时采样流
@@ -87,11 +87,13 @@ node [22325]: 64-bit    Footprint: 3432 MB
 │  │  ├ disk/    ignore+rayon 并行扫描            │      │
 │  │  ├ classify/ 跨平台二进制 / 家族归类          │      │
 │  │  ├ reclaim/  安全删除（废纸篓 + 白名单）      │      │
-│  │  ├ net/     端口反查 + 连接计数（lsof -F / iphlpapi）│      │
-│  │  ├ appdisk/ 应用磁盘三层（bundle/cache/data）  │      │
+│  │  ├ net/     端口反查 + 连接计数 + 网速差分（lsof / iphlpapi / nettop）│
+│  │  ├ appdisk/ 应用磁盘三层（bundle/cache/data）+ 批量本体  │
 │  │  └ db/      rusqlite 时间序列                │      │
 │  └────────────────────────────────────────────┘      │
-│  sampler 线程：10s RSS / 5min footprint              │
+│  sampler：10s RSS / 5min footprint                    │
+│  port_sampler：30s（仅端口 tab 可见）                 │
+│  net_sampler：1s nettop 轮询（仅应用资源 tab 可见）   │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -108,8 +110,8 @@ prune/
 │   ├── App.tsx
 │   ├── panels/MenuBarPanel.tsx
 │   ├── windows/MainWindow.tsx
-│   ├── components/{StatsBoard,AppMemoryList,AppResourceCard,PortList,ReclaimBoard,LeakCard,Sparkline,primitives}.tsx
-│   ├── stores/{memStore,diskStore,portStore}.ts
+│   ├── components/{StatsBoard,AppMemoryList,AppResourceCard,AppResourceGrid,CellBar,PortList,ReclaimBoard,LeakCard,Sparkline,primitives}.tsx
+│   ├── stores/{memStore,diskStore,portStore,netStore}.ts
 │   └── lib/ipc.ts               # invoke 封装
 ├── src-tauri/
 │   ├── Cargo.toml
@@ -120,6 +122,8 @@ prune/
 │       ├── lib.rs               # Tauri 入口 + 命令注册
 │       ├── tray.rs              # 菜单栏图标与面板定位
 │       ├── sampler.rs           # 后台采样线程
+│       ├── port_sampler.rs      # 端口采样（可见性门控）
+│       ├── net_sampler.rs       # 网速采样（1 s 轮询 + 门控，M10）
 │       └── commands.rs
 ├── crates/
 │   ├── prune-core/              # 共享核心（lib）
