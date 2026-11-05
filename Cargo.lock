@@ -2637,6 +2637,7 @@ dependencies = [
  "prune-core",
  "serde",
  "serde_json",
+ "sysinfo",
  "tauri",
  "tauri-build",
  "tauri-plugin-updater",

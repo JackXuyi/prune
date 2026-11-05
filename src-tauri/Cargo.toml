@@ -19,6 +19,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 prune-core = { path = "../crates/prune-core" }
 tokio = { version = "1.54.1", features = ["time", "macros"] }
+# 菜单栏数字的总网速采样（M13）：与 prune-core 同版本，不引入第二份编译产物
+sysinfo = "0.39.6"
 
 # NSPopover 原生化（docs/ns-popover-plan.md）。版本对齐 Cargo.lock 中 Tauri 已锁定的
 # objc2-app-kit 0.3.2 —— 不引入新的编译产物，只追加 feature。

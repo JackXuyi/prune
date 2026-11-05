@@ -253,6 +253,11 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
     let _ = app.emit(EVENT_SNAPSHOT, &outcome);
     // 托盘 tooltip 携带精确 CPU 读数（M6-T2 顺手项；动画关闭时数字仍在）
     crate::tray::update_tooltip(&app, outcome.cpu.as_ref().map(|c| c.usage));
+    // 菜单栏数字的内存段（M13）：0 = 口径未知（serde default），显示为空而不是 0G
+    crate::tray::update_title_mem(
+        &app,
+        Some(outcome.physical_used_bytes).filter(|b| *b > 0),
+    );
     Ok(())
 }
 

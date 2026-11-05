@@ -17,6 +17,7 @@ mod net_sampler;
 mod port_sampler;
 mod sampler;
 mod scan;
+mod settings;
 mod tray;
 mod tray_icon;
 mod updater;
@@ -89,6 +90,7 @@ pub fn run() {
             app.manage(Arc::new(port_sampler::PortState::new()));
             app.manage(Arc::new(commands::AppDiskState::new()));
             app.manage(Arc::new(net_sampler::NetSpeedState::new()));
+            app.manage(Arc::new(net_sampler::TotalNetState::new()));
             app.manage(Arc::new(updater::UpdateState::new()));
 
             // 启动静默检查更新（延迟 5 s，发现新版才广播事件，否则沉默）
@@ -113,6 +115,13 @@ pub fn run() {
             let net_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 net_sampler::run_net_speed(net_handle).await;
+            });
+
+            // 菜单栏数字的总网速（M13）：2 s 常驻轻采样（sysinfo，无子进程），
+            // 与上面按进程的 tab 采样完全解耦
+            let total_net_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                net_sampler::run_total_speed(total_net_handle).await;
             });
 
             // 磁盘侧：启动 30 s 后首扫，此后每周静默刷新
