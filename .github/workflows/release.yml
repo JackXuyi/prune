@@ -127,6 +127,20 @@ jobs:
 
           echo "OK: p12 合法 / 密码正确 / 含私钥 / identity=${SIGN_IDENTITY}"
 
+      # updater 升级包签名密钥自检：bundle 开了 createUpdaterArtifacts 后，
+      # 没有私钥 tauri 会在签名阶段直接失败。宁可在这里 2 秒报清楚原因，
+      # 也不要等三平台 Rust 编译完才倒在 .sig 生成上。
+      - name: Preflight updater signing key
+        env:
+          UPDATER_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          UPDATER_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [[ -z "${UPDATER_KEY}" ]]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY 未配置。到 Settings → Secrets and variables → Actions 添加（本地生成命令：pnpm tauri signer generate，见 docs/updater-plan.md）"
+            exit 1
+          fi
+          echo "OK: TAURI_SIGNING_PRIVATE_KEY 已配置（password ${UPDATER_KEY_PASSWORD:+已设置}${UPDATER_KEY_PASSWORD:-为空，对应无密码密钥}）"
+
       - name: Typecheck & build frontend
         run: pnpm build
 
@@ -247,6 +261,11 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # updater 升级包签名（docs/updater-plan.md）：私钥不进仓库，
+          # verify 任务的 preflight 已确认两个 secret 都在。密钥对由
+          # `pnpm tauri signer generate` 生成，公钥内置在 tauri.conf.json。
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           # 签名/公证变量由上面的 "Resolve macOS signing mode" 动态注入：
           #   三件套齐全 → 正式签名（含可选公证）
           #   缺任意一项 → 只有 APPLE_SIGNING_IDENTITY=-（ad-hoc）
@@ -264,7 +283,12 @@ jobs:
             | macOS Intel | `Prune_*_x64.dmg` |
             | Windows x64 | `Prune_*_x64-setup.exe`（推荐） / `Prune_*_x64_en-US.msi` |
 
+            已装旧版本可通过托盘菜单「检查更新」或应用内自动升级直接更新到本版本。
+
             macOS 首次打开若提示未验证开发者：右键 → 打开，或 `xattr -cr /Applications/Prune.app`。
           releaseDraft: true
           prerelease: false
+          # 生成 latest.json（updater 清单）：三个 job 并行跑，tauri-action 会把
+          # 各自的平台条目合并进 Release 上已存在的 latest.json
+          includeUpdaterJson: true
           args: ${{ matrix.args }}

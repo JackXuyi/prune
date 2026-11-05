@@ -132,3 +132,27 @@ export function netSpeedSnapshot(): Promise<NetSpeedSample | null> {
 export function netSpeedSetActive(active: boolean): Promise<void> {
   return invoke<void>("net_speed_set_active", { active });
 }
+
+// ---------------------------------------------------------------- 自动升级
+
+/** 检查结果负载（Rust 侧 updater::pending_payload / check-result 事件的形状） */
+export type UpdateStatus =
+  | { status: "available"; version: string; currentVersion: string; notes: string | null; date: string | null }
+  | { status: "up-to-date" }
+  | { status: "error"; message: string }
+  | { status: "none" };
+
+/** 手动检查更新（托盘 / 面板共用同一 Rust 逻辑，结果也会经事件广播） */
+export function updateCheck(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("update_check");
+}
+
+/** 查询本次会话已发现的待安装更新（面板重开后的状态兜底） */
+export function updatePending(): Promise<UpdateStatus> {
+  return invoke<UpdateStatus>("update_pending");
+}
+
+/** 下载并安装待更新，完成后应用自动重启 */
+export function updateInstall(): Promise<void> {
+  return invoke<void>("update_install");
+}

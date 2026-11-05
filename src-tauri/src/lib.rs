@@ -18,6 +18,7 @@ mod port_sampler;
 mod sampler;
 mod scan;
 mod tray;
+mod updater;
 
 // NSPopover 原生菜单栏面板（M3，docs/ns-popover-plan.md）
 #[cfg(target_os = "macos")]
@@ -35,8 +36,13 @@ fn app_info() -> serde_json::Value {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        // GitHub 源自动升级（docs/updater-plan.md）：endpoint 在 tauri.conf.json
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .invoke_handler(tauri::generate_handler![
             app_info,
+            updater::update_check,
+            updater::update_pending,
+            updater::update_install,
             commands::mem_snapshot,
             commands::mem_processes,
             commands::mem_history,
@@ -82,6 +88,13 @@ pub fn run() {
             app.manage(Arc::new(port_sampler::PortState::new()));
             app.manage(Arc::new(commands::AppDiskState::new()));
             app.manage(Arc::new(net_sampler::NetSpeedState::new()));
+            app.manage(Arc::new(updater::UpdateState::new()));
+
+            // 启动静默检查更新（延迟 5 s，发现新版才广播事件，否则沉默）
+            let update_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                updater::run_startup_check(update_handle).await;
+            });
 
             // 后台常采：无 WebView 也运行，前端打开时直接取最新快照
             let handle = app.handle().clone();

@@ -11,6 +11,7 @@ import { swappedRatio, type FamilyMem, type MemSnapshot, type ProcMem } from "..
 import { ChevronRightIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge, Meter, PressureDot } from "../components/primitives";
 import { Tabs } from "../components/Tabs";
+import { UpdateCard } from "../components/UpdateCard";
 
 type PanelTab = "apps" | "overview";
 
@@ -88,6 +89,9 @@ export function MenuBarPanel() {
             <MemSection />
           )}
         </div>
+
+        {/* 自动升级：静默时只有一行低调的「检查更新」，发现新版才占版面 */}
+        <UpdateCard />
 
         <footer className="flex shrink-0 items-center justify-between px-3.5 pb-2.5 pt-1 text-[10px] text-ink-faint/80">
           <span>上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}</span>

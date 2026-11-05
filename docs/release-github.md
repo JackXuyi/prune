@@ -41,6 +41,8 @@ verify (ubuntu, ~1 min)          bundle (3 个并行 job, ~8-15 min)
 | Windows x64 | `Prune_<version>_x64-setup.exe` | NSIS，推荐分发给普通用户 |
 | Windows x64 | `Prune_<version>_x64_en-US.msi` | MSI，适合域环境/静默安装 |
 
+此外，workflow 会随包产出**自动升级产物**（macOS `app.tar.gz` + `.sig`、Windows `.exe` + `.sig`、三平台合并的 `latest.json`），供已装客户端通过 updater 自动升级——见 `docs/updater-plan.md`。前提是 GitHub Secrets 已配置 `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`（verify 阶段有 preflight，缺失会直接失败）。
+
 ## 四、一次性配置
 
 **必需：无。** `GITHUB_TOKEN` 由 Actions 自动注入，`permissions: contents: write` 已声明，仓库设置里不需要额外配 secret。
@@ -49,6 +51,8 @@ verify (ubuntu, ~1 min)          bundle (3 个并行 job, ~8-15 min)
 
 | Secret | 用途 | 缺失后果 |
 |---|---|---|
+| `TAURI_SIGNING_PRIVATE_KEY` | updater 升级包签名私钥（`cat ~/.tauri/prune-updater.key`） | verify preflight 直接失败，无法出包 |
+| `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 上述私钥密码（当前密钥无密码，留空字符串） | verify preflight 直接失败 |
 | `APPLE_CERTIFICATE` | `.p12` 证书的 base64（`openssl base64 -A -in cert.p12`） | 降级 ad-hoc |
 | `APPLE_CERTIFICATE_PASSWORD` | 导出 `.p12` 时设的密码 | 降级 ad-hoc |
 | `APPLE_SIGNING_IDENTITY` | 证书全名，如 `Developer ID Application: XXX (TEAMID)` | 降级 ad-hoc |

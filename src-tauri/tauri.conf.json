@@ -43,6 +43,7 @@
   },
   "bundle": {
     "active": true,
+    "createUpdaterArtifacts": true,
     "targets": "all",
     "category": "DeveloperTool",
     "icon": [
@@ -52,5 +53,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "endpoints": [
+        "https://github.com/JackXuyi/prune/releases/latest/download/latest.json"
+      ],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDA3RDlEN0NFMzUwQUUyQjUKUldTMTRnbzF6dGZaQitORVZ2ckdab2l6S1ExRTk0d3FxYlpNSlVLc2dJNUpxbHVwazE4RkNLVCsK"
+    }
   }
 }
