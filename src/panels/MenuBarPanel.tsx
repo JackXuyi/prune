@@ -1,6 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
+import { AppMemorySummary } from "../components/AppMemoryList";
 import { LeakBanner } from "../components/LeakCard";
+import { TopAppCards } from "../components/AppResourceGrid";
 import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { openMain } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
@@ -59,7 +60,7 @@ export function MenuBarPanel() {
             value={tab}
             onChange={setTab}
             items={[
-              { id: "apps", label: "应用", hint: "每个应用的绝对内存占用" },
+              { id: "apps", label: "应用", hint: "内存前 3 的应用资源卡，点击卡片看全部" },
               { id: "overview", label: "概况", hint: "内存压力与 swap" },
             ]}
           />
@@ -97,7 +98,7 @@ export function MenuBarPanel() {
   );
 }
 
-/** tab 1：每个应用占用的绝对内存（含换出，按总量降序） */
+/** tab 1：应用资源卡片（M10 同款），只看内存前 3 —— 面板是「瞄一眼」场景，不是对比工作台 */
 function AppsSection() {
   const families = useMemStore((s) => s.snapshot?.families ?? EMPTY_FAMILIES);
   const processes = useMemStore((s) => s.processes ?? EMPTY_PROCESSES);
@@ -105,7 +106,6 @@ function AppsSection() {
   // 只读已有端口快照：面板不做端口扫描（lsof 40 ms 起，面板打开频率太高）
   const ports = usePortStore((s) => s.snapshot);
   const hydratePorts = usePortStore((s) => s.hydrate);
-  const setPortFocus = usePortStore((s) => s.setFocus);
 
   useEffect(() => {
     void hydratePorts();
@@ -115,19 +115,14 @@ function AppsSection() {
     <section>
       {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
       {leaks ? <LeakBanner report={leaks} onOpen={() => void openMain(undefined, "apps")} /> : null}
-      <div className={leaks ? "mt-1" : ""}>
-        <AppMemoryList
-          compact
-          limit={10}
+      <div className={leaks ? "mt-2" : ""}>
+        <TopAppCards
           families={families}
           processes={processes}
-          leaks={leaks}
           ports={ports}
-          onOpen={(pid) => void openMain(pid)}
-          onOpenPorts={(port) => {
-            setPortFocus(String(port));
-            void openMain(undefined, "ports");
-          }}
+          count={3}
+          onOpenProcess={(pid) => void openMain(pid)}
+          onOpenAll={() => void openMain(undefined, "resources")}
         />
       </div>
     </section>
@@ -143,6 +138,11 @@ function MemSection() {
   const ratio = swap.total > 0 ? swap.used / swap.total : 0;
   const tone = ratio >= 0.9 ? "danger" : ratio >= 0.75 ? "warn" : "accent";
   const ratioText = ratio >= 0.9 ? "text-danger" : ratio >= 0.75 ? "text-warn" : "text-ink-dim";
+
+  // 面板是「瞄一眼」场景：受害者只露前 3 名，完整列表在主窗口的内存·概况里
+  const victimLimit = 3;
+  const shownVictims = topSwapped.slice(0, victimLimit);
+  const hiddenVictims = topSwapped.length - shownVictims.length;
 
   return (
     <section>
@@ -162,7 +162,7 @@ function MemSection() {
         ) : null}
       </div>
 
-      <div className="mt-3.5">
+      <div className="mt-2.5">
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] text-ink-dim">swap 已用</span>
           <span className="font-mono text-[12px] tabular-nums text-ink">
@@ -174,8 +174,8 @@ function MemSection() {
             <span className={`ml-1.5 ${ratioText}`}>{formatPercent(ratio)}</span>
           </span>
         </div>
-        <Meter ratio={ratio} tone={tone} className="mt-2" />
-        <div className="mt-2 flex items-center justify-between text-[10px] text-ink-faint">
+        <Meter ratio={ratio} tone={tone} className="mt-1.5" />
+        <div className="mt-1.5 flex items-center justify-between text-[10px] text-ink-faint">
           <span>
             {swap.fileCount != null
               ? `↳ swapfile 占用 ${formatBytes(swap.used)}（主窗口「存储」可查）`
@@ -199,23 +199,33 @@ function MemSection() {
 
       {hasSwapMetrics ? (
         <>
-          <div className="mt-4 flex items-baseline justify-between border-t border-hairline-soft pt-3">
+          <div className="mt-2.5 flex items-baseline justify-between border-t border-hairline-soft pt-2.5">
             <h2 className="text-[11px] font-medium tracking-wide text-ink-dim">换出受害者</h2>
             <span className="text-[10px] text-ink-faint">
               {snapshot.deepAvailable ? "按已换出量 · 点开检视" : "暂无深探数据"}
             </span>
           </div>
           {topSwapped.length === 0 ? (
-            <p className="mt-2 py-2 text-[11px] leading-relaxed text-ink-faint">
+            <p className="mt-2 py-1.5 text-[11px] leading-relaxed text-ink-faint">
               当前没有明显被换出的进程。
             </p>
           ) : (
-            <ul className="mt-1">
-              {topSwapped.map((p) => (
+            <ul className="mt-0.5">
+              {shownVictims.map((p) => (
                 <VictimRow key={`${p.pid}-${p.startTime}`} proc={p} />
               ))}
             </ul>
           )}
+          {hiddenVictims > 0 ? (
+            <button
+              type="button"
+              onClick={() => void openMain(undefined, "overview")}
+              className="mt-0.5 w-full rounded-md px-1.5 py-1 text-left text-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
+              title="打开主窗口的内存·概况 tab"
+            >
+              还有 {hiddenVictims} 个被换出的进程 → 主窗口查看
+            </button>
+          ) : null}
         </>
       ) : null}
 
@@ -254,7 +264,7 @@ function VictimRow({ proc }: { proc: ProcMem }) {
       <button
         type="button"
         onClick={() => void openMain(proc.pid)}
-        className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1.5 text-left transition-colors hover:bg-white/[0.045]"
+        className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.045]"
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[12px] leading-tight text-ink">{proc.name}</span>

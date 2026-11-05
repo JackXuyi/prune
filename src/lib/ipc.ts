@@ -30,7 +30,7 @@ export function memRefresh(): Promise<void> {
 /** 打开主窗口；传 pid 时主窗口会自动选中该进程，传 tab 时直接切到对应 tab */
 export function openMain(
   pid?: number,
-  tab?: "stats" | "apps" | "overview" | "disk" | "ports",
+  tab?: "stats" | "resources" | "apps" | "overview" | "disk" | "ports",
 ): Promise<void> {
   return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null });
 }

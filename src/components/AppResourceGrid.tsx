@@ -60,6 +60,46 @@ interface Row {
   net: Speed | null;
 }
 
+/** 行装配：家族 × 成员 × 端口 × 连接 × 网速。主窗口网格与面板卡片共用同一口径。 */
+function buildRows(
+  families: FamilyMem[],
+  processes: ProcMem[],
+  ports: PortSnapshot | null,
+  bundles: BundleMap | null,
+  net: NetSpeedSample | null,
+): Row[] {
+  const byFamily = new Map<string, ProcMem[]>();
+  for (const p of processes) {
+    const arr = byFamily.get(p.family);
+    if (arr) arr.push(p);
+    else byFamily.set(p.family, [p]);
+  }
+
+  return families.map((f) => {
+    const members = byFamily.get(f.name) ?? [];
+    const pids = members.map((m) => m.pid);
+    const watched = ports
+      ? ports.entries.filter(
+          (e) => e.watched && e.listeners.some((b) => b.pid != null && pids.includes(b.pid)),
+        )
+      : [];
+    const speed = net && net.status === "ok" ? netSpeedOfPids(net, pids) : null;
+    return {
+      family: f,
+      members,
+      pids,
+      mem: totalOf(f),
+      cpu: f.cpu ?? null,
+      procs: f.processCount,
+      disk: bundles ? (bundles[f.name] ?? null) : null,
+      ports: watched,
+      exposed: watched.filter((e) => e.exposure === "any").length,
+      conns: ports ? connsOfPids(ports.connsByPid, pids) : null,
+      net: speed,
+    };
+  });
+}
+
 /** 单核口径的短格式：卡片里放不下「188%（约 1.9 核）」 */
 function cpuShort(v: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -147,39 +187,10 @@ export function AppResourceBoard({
     void loadBundles(force);
   }, [families.length, refreshNonce, loadBundles]);
 
-  const rows = useMemo<Row[]>(() => {
-    const byFamily = new Map<string, ProcMem[]>();
-    for (const p of processes) {
-      const arr = byFamily.get(p.family);
-      if (arr) arr.push(p);
-      else byFamily.set(p.family, [p]);
-    }
-
-    return families.map((f) => {
-      const members = byFamily.get(f.name) ?? [];
-      const pids = members.map((m) => m.pid);
-      const watched = ports
-        ? ports.entries.filter(
-            (e) => e.watched && e.listeners.some((b) => b.pid != null && pids.includes(b.pid)),
-          )
-        : [];
-      const speed =
-        net && net.status === "ok" ? netSpeedOfPids(net, pids) : null;
-      return {
-        family: f,
-        members,
-        pids,
-        mem: totalOf(f),
-        cpu: f.cpu ?? null,
-        procs: f.processCount,
-        disk: bundles ? (bundles[f.name] ?? null) : null,
-        ports: watched,
-        exposed: watched.filter((e) => e.exposure === "any").length,
-        conns: ports ? connsOfPids(ports.connsByPid, pids) : null,
-        net: speed,
-      };
-    });
-  }, [families, processes, ports, bundles, net]);
+  const rows = useMemo<Row[]>(
+    () => buildRows(families, processes, ports, bundles, net),
+    [families, processes, ports, bundles, net],
+  );
 
   // 网速走势：只保留最近 60 个样本（60 s）。切走 tab 组件卸载即清空，不落盘。
   useEffect(() => {
@@ -428,6 +439,8 @@ function ResourceCard({
   bundleReady,
   portsReady,
   history,
+  showNet = true,
+  dense = false,
   onOpenPorts,
   onOpenProcess,
 }: {
@@ -439,6 +452,10 @@ function ResourceCard({
   bundleReady: boolean;
   portsReady: boolean;
   history: number[];
+  /** 面板不采样网速：隐藏整行比显示「尚未采样」诚实（后者像坏了） */
+  showNet?: boolean;
+  /** 面板紧凑规格：收紧内边距与行距，3 张卡 + 入口必须在一屏内装下、不滚动 */
+  dense?: boolean;
   onOpenPorts?: (port: number) => void;
   onOpenProcess?: (pid: number) => void;
 }) {
@@ -483,14 +500,18 @@ function ResourceCard({
           }
         }}
         aria-expanded={expanded}
-        className="cursor-pointer px-3 pt-2 pb-2 text-left"
+        className={`cursor-pointer text-left ${dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"}`}
       >
         <div className="flex items-center gap-1.5">
           <ChevronRightIcon
             size={11}
             className={`shrink-0 text-ink-faint transition-transform ${expanded ? "rotate-90" : ""}`}
           />
-          <span className="min-w-0 flex-1 truncate text-[12.5px] leading-tight text-ink">
+          <span
+            className={`min-w-0 flex-1 truncate leading-tight text-ink ${
+              dense ? "text-[12px]" : "text-[12.5px]"
+            }`}
+          >
             {family.name}
           </span>
           <span
@@ -507,7 +528,11 @@ function ResourceCard({
           </span>
         </div>
 
-        <div className="mt-0.5 flex flex-wrap items-center gap-x-2 pl-[18px] text-[10px] text-ink-faint">
+        <div
+          className={`flex items-center gap-x-2 text-ink-faint ${
+            dense ? "mt-0.5 pl-[16px] text-[9.5px]" : "mt-0.5 flex-wrap pl-[18px] text-[10px]"
+          }`}
+        >
           <span className={`font-mono tabular-nums ${cpuTone}`} title="单核口径，可超过 100%">
             {cpuShort(cpu)} CPU
           </span>
@@ -528,14 +553,16 @@ function ResourceCard({
           </span>
         </div>
 
-        <div className="mt-1.5 space-y-[5px]">
+        <div className={dense ? "mt-1 space-y-[3px]" : "mt-1.5 space-y-[5px]"}>
           <MetricRow
+            dense={dense}
             label="内存"
             text={`${exact ? "" : "≈"}${formatBytes(mem)}`}
             hint="footprint 口径，含被换出到磁盘的部分；未深探的子进程按 RSS 计入（下界）"
             bar={<CellBar ratio={denom.mem > 0 ? mem / denom.mem : 0} tone="accent" show={denom.mem > 0} />}
           />
           <MetricRow
+            dense={dense}
             label="磁盘"
             text={diskText}
             hint={`仅 .app 本体；${BUNDLE_READONLY_HINT}。缓存/数据在展开后按需测量`}
@@ -547,24 +574,26 @@ function ResourceCard({
               />
             }
           />
-          <MetricRow
-            label="网速"
-            text={
-              netText ??
-              (net
-                ? `↓${formatSpeed(net.downBps)} ↑${formatSpeed(net.upBps)}`
-                : "—")
-            }
-            hint="1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大"
-            textClass="text-[10px]"
-            bar={
-              <CellBar
-                ratio={denom.down > 0 && net ? net.downBps / denom.down : 0}
-                tone="neutral"
-                show={denom.down > 0 && !!net && net.downBps > 0}
-              />
-            }
-          />
+          {showNet ? (
+            <MetricRow
+              label="网速"
+              text={
+                netText ??
+                (net
+                  ? `↓${formatSpeed(net.downBps)} ↑${formatSpeed(net.upBps)}`
+                  : "—")
+              }
+              hint="1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大"
+              textClass="text-[10px]"
+              bar={
+                <CellBar
+                  ratio={denom.down > 0 && net ? net.downBps / denom.down : 0}
+                  tone="neutral"
+                  show={denom.down > 0 && !!net && net.downBps > 0}
+                />
+              }
+            />
+          ) : null}
         </div>
       </div>
 
@@ -588,17 +617,32 @@ function MetricRow({
   hint,
   bar,
   textClass = "",
+  dense = false,
 }: {
   label: string;
   text: string;
   hint: string;
   bar: ReactNode;
   textClass?: string;
+  dense?: boolean;
 }) {
   return (
-    <div className="grid grid-cols-[30px_78px_minmax(0,1fr)] items-center gap-2" title={hint}>
-      <span className="text-[10px] text-ink-faint">{label}</span>
-      <span className={`truncate text-right font-mono tabular-nums text-ink-dim ${textClass}`}>
+    <div
+      className={
+        dense
+          ? "grid grid-cols-[24px_72px_minmax(0,1fr)] items-center gap-1.5"
+          : "grid grid-cols-[30px_78px_minmax(0,1fr)] items-center gap-2"
+      }
+      title={hint}
+    >
+      <span className={dense ? "text-[9.5px] text-ink-faint" : "text-[10px] text-ink-faint"}>
+        {label}
+      </span>
+      <span
+        className={`truncate text-right font-mono tabular-nums text-ink-dim ${textClass} ${
+          dense ? "text-[11px]" : ""
+        }`}
+      >
         {text}
       </span>
       <span className="min-w-0">{bar}</span>
@@ -752,6 +796,115 @@ function ResourceDetail({
         单核 CPU 口径可超过 100%；连接多不等于流量大（本机没有 per-process 字节 API，
         网速来自 nettop 差分）。
       </p>
+    </div>
+  );
+}
+
+/**
+ * 面板用轻量版（菜单栏「应用」tab）：单列卡片，只渲染内存前 N 张（默认 3）。
+ *
+ * 与主窗口 `AppResourceBoard` 的口径差异——面板打开频率高，处处为省成本：
+ * - 不带搜索 / 排序 / spotlight / Top 12 门控：前三张就是「谁吃内存最多」的答案
+ * - 网速行隐藏：nettop 轮询只在主窗口应用资源 tab 运行，面板不采样
+ * - bundle 本体只测前 N 张（服务端 30 min 缓存命中时零成本），不 du 全部应用
+ * - 不做卡内展开（展开区太长）：点卡片 = 打开主窗口的应用资源 tab
+ */
+export function TopAppCards({
+  families,
+  processes,
+  ports,
+  count = 3,
+  onOpenAll,
+  onOpenProcess,
+}: {
+  families: FamilyMem[];
+  processes: ProcMem[];
+  ports: PortSnapshot | null;
+  count?: number;
+  /** 点卡片 / 底部入口时打开主窗口的应用资源 tab */
+  onOpenAll?: () => void;
+  onOpenProcess?: (pid: number) => void;
+}) {
+  const [bundles, setBundles] = useState<BundleMap | null>(null);
+
+  const rows = useMemo(
+    () => buildRows(families, processes, ports, bundles, null),
+    [families, processes, ports, bundles],
+  );
+
+  // 内存降序取前 N；同值按名称（与主窗口的稳定排序一致，刷新不抖动）
+  const top = useMemo(
+    () =>
+      [...rows]
+        .sort((a, b) => b.mem - a.mem || a.family.name.localeCompare(b.family.name))
+        .slice(0, count),
+    [rows, count],
+  );
+
+  // 分母仍按全部应用的内存最大值：面板只画 3 张卡，但比例条刻度要和
+  // 主窗口看到的同刻度，否则两边观感不一致、条长不可比
+  const denomMem = useMemo(() => rows.reduce((m, r) => Math.max(m, r.mem), 0), [rows]);
+  const denomDisk = useMemo(
+    () => top.reduce((m, r) => Math.max(m, r.disk?.bytes ?? 0), 0),
+    [top],
+  );
+
+  // 只测前 N 张的本体。按成员名单做去重触发：每 10 s 快照都会换引用，
+  // 不能拿数组当依赖，否则面板每轮刷新都重新 du 一遍
+  const topKey = top.map((r) => r.family.name).join(",");
+  const lastKeyRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (top.length === 0 || lastKeyRef.current === topKey) return;
+    lastKeyRef.current = topKey;
+    const items = top.map((r) => ({
+      family: r.family.name,
+      exe: r.members.find((m) => m.exe)?.exe ?? null,
+    }));
+    const p = isTauri() ? appBundles(items, false) : Promise.resolve(devBundles());
+    // 测不出就是「—」：磁盘是次要信息，不打断面板
+    void p.then(setBundles).catch(() => setBundles({}));
+  }, [topKey, top]);
+
+  if (rows.length === 0) {
+    return <p className="px-1 py-6 text-[11px] text-ink-faint">暂无应用数据。</p>;
+  }
+
+  return (
+    <div>
+      {/* space-y-1.5 + dense 卡：3 张卡与入口必须一屏放下，面板内容区不允许滚动 */}
+      <div className="space-y-1.5">
+        {top.map((r) => (
+          <ResourceCard
+            key={r.family.name}
+            row={r}
+            expanded={false}
+            dense
+            onToggle={() => onOpenAll?.()}
+            denom={{
+              mem: denomMem,
+              // 卡片里 CPU / 进程没有比例条，这两个分母不参与渲染
+              cpu: 0,
+              disk: denomDisk,
+              down: 0,
+              procs: 0,
+            }}
+            netStatus={null}
+            showNet={false}
+            bundleReady={bundles != null}
+            portsReady={ports != null}
+            history={[]}
+            onOpenProcess={onOpenProcess}
+          />
+        ))}
+      </div>
+      <button
+        type="button"
+        onClick={() => onOpenAll?.()}
+        className="mt-1.5 w-full rounded-lg bg-white/[0.03] py-1.5 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
+        title="打开主窗口的应用资源 tab"
+      >
+        查看全部 {rows.length} 个应用（CPU / 磁盘 / 网速对比） →
+      </button>
     </div>
   );
 }
