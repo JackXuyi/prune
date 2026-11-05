@@ -2,9 +2,9 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
-import type { AppDisk } from "../types/appdisk";
+import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
-import type { PortSnapshot } from "../types/net";
+import type { NetSpeedSample, PortSnapshot } from "../types/net";
 
 /** 浏览器里跑 vite 时没有任何 Tauri 注入，需要显式兜底而不是静默失败 */
 export function isTauri(): boolean {
@@ -111,4 +111,24 @@ export function appDisk(
   force = false,
 ): Promise<AppDisk> {
   return invoke<AppDisk>("app_disk", { family, exe, force });
+}
+
+/**
+ * M10：批量测一批应用的**本体**体积（卡片首屏用）。
+ * 8 路并行 + 4 s/应用预算 + 30 min 缓存；超预算条目 `partial = true`。
+ */
+export function appBundles(items: BundleQuery[], force = false): Promise<BundleMap> {
+  return invoke<BundleMap>("app_bundles", { items, force });
+}
+
+// ---------------------------------------------------------------- 网速（M10）
+
+/** 最新一轮网速样本；null = 还没采过（**不是「没有流量」**） */
+export function netSpeedSnapshot(): Promise<NetSpeedSample | null> {
+  return invoke<NetSpeedSample | null>("net_speed_snapshot");
+}
+
+/** 可见性门控：false 时 1 s 采样循环连 nettop 都不 spawn，常驻开销 0 */
+export function netSpeedSetActive(active: boolean): Promise<void> {
+  return invoke<void>("net_speed_set_active", { active });
 }

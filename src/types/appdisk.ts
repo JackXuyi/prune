@@ -43,3 +43,21 @@ export function diskEmpty(d: AppDisk): boolean {
 export const CACHE_CLEAN_HINT = "可再生缓存，清理入口在「存储」tab";
 export const DATA_READONLY_HINT = "用户数据，不建议清理";
 export const BUNDLE_READONLY_HINT = "应用本体，卸载应用才会释放";
+
+// ---------------------------------------------------------------- M10 批量本体
+
+/** 批量本体查询（一个应用 → 它的某个 exe；后端据此找 .app） */
+export interface BundleQuery {
+  family: string;
+  exe: string | null;
+}
+
+/** 批量本体读数。**没有条目 = 没有 .app**（CLI 工具 / 系统进程），要显示「—」而不是 0 */
+export interface BundleSize {
+  bytes: number;
+  /** 超预算只量了一部分 → 显示「≥」 */
+  partial: boolean;
+}
+
+/** 家族 → 本体体积 */
+export type BundleMap = Record<string, BundleSize>;

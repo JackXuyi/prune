@@ -15,7 +15,7 @@
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use prune_core::appdisk::{AppDisk, AppDiskCache};
+use prune_core::appdisk::{AppDisk, AppDiskCache, BundleQuery, BundleSize};
 use prune_core::db::Point;
 use prune_core::disk::{DiskReport, VolumeInfo};
 use prune_core::mem::{MemSnapshot, ProcMem};
@@ -183,12 +183,16 @@ pub fn port_set_active(state: State<'_, Arc<PortState>>, active: bool) {
 /// 生命周期应当与进程一致，跟 mem/disk 的 State 一个模式。
 pub struct AppDiskState {
     cache: Mutex<AppDiskCache>,
+    /// M10 批量本体测量缓存：卡片首屏每张卡都要一个数，同一批数据不该反复 du。
+    /// 键是家族名；30 min 足以覆盖一次会话里反复切 tab 的场景。
+    bundles: Mutex<Option<(std::time::Instant, std::collections::HashMap<String, BundleSize>)>>,
 }
 
 impl AppDiskState {
     pub fn new() -> Self {
         Self {
             cache: Mutex::new(AppDiskCache::new()),
+            bundles: Mutex::new(None),
         }
     }
 }
@@ -224,6 +228,51 @@ pub async fn app_disk(
     })
     .await
     .map_err(|e| format!("磁盘测量失败：{e}"))
+}
+
+// ---------------------------------------------------------------- 批量本体测量（M10）
+
+/// 批量测量一批应用的**本体**体积（卡片首屏用）。
+///
+/// - 只测 `.app` 本体：缓存/数据层 0.25–4 s/应用，进不了首屏
+/// - 8 路并行 + 单应用 4 s 预算；超预算的条目 `partial = true`（UI 显示「≥」）
+/// - 30 min 缓存；`force` 绕开（刷新按钮）。新出现的家族会补测，不会因为
+///   「缓存里没有」就一直空着
+#[tauri::command]
+pub async fn app_bundles(
+    state: State<'_, Arc<AppDiskState>>,
+    items: Vec<BundleQuery>,
+    force: Option<bool>,
+) -> Result<std::collections::HashMap<String, BundleSize>, String> {
+    let state = state.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let mut guard = state.bundles.lock().unwrap_or_else(|e| e.into_inner());
+
+        // 命中缓存：同一批家族且未过期就直接用（新家族单独补测）
+        let mut cached: std::collections::HashMap<String, BundleSize> = match guard.as_ref() {
+            Some((at, map)) if !force.unwrap_or(false) && at.elapsed() < prune_core::appdisk::TTL => {
+                map.clone()
+            }
+            _ => std::collections::HashMap::new(),
+        };
+
+        let missing: Vec<BundleQuery> = items
+            .iter()
+            .filter(|q| !cached.contains_key(&q.family))
+            .cloned()
+            .collect();
+
+        if !missing.is_empty() {
+            let fresh =
+                prune_core::appdisk::bundle_bytes_batch(&missing, prune_core::appdisk::BUDGET);
+            cached.extend(fresh);
+            *guard = Some((std::time::Instant::now(), cached.clone()));
+        }
+
+        cached
+    })
+    .await
+    .map_err(|e| format!("批量磁盘测量失败：{e}"))
 }
 
 // ---------------------------------------------------------------- 磁盘（M1）

@@ -215,3 +215,65 @@ export function canKillOwner(b: PortBinding): boolean {
 export function localUrl(port: number): string {
   return `http://127.0.0.1:${port}`;
 }
+
+// ---------------------------------------------------------------- 网速（M10）
+
+/** 单个进程的即时速率（字节/秒） */
+export interface Speed {
+  downBps: number;
+  upBps: number;
+}
+
+/**
+ * 采样状态。三种都必须能被 UI 区分：
+ * - `ok` 正常出数
+ * - `warmup` 只有第一轮累计值，还没基线 → 显示「采样中…」
+ * - `unavailable` nettop 缺失/失败 → 显示「不可读 + 原因」，**绝不显示 0**
+ */
+export type NetSpeedStatus = "ok" | "warmup" | "unavailable";
+
+export interface NetSpeedSample {
+  at: number;
+  status: NetSpeedStatus;
+  note: string | null;
+  /** pid → 速率。只含本样本里出现的进程 */
+  perPid: Record<string, Speed>;
+  totalDownBps: number;
+  totalUpBps: number;
+  /** 与上一轮的实际间隔（毫秒）。首轮 warmup 时是标称间隔 */
+  intervalMs: number;
+}
+
+/**
+ * 一组 pid 的速率之和（家族口径），与 CPU / 内存一致。
+ *
+ * 缺失的 pid 按 0 处理：nettop 只列出「有流量的进程」，
+ * 没有记录就是这一秒没有流量，而不是「不知道」。
+ */
+export function netSpeedOfPids(
+  sample: NetSpeedSample | null | undefined,
+  pids: number[],
+): Speed {
+  const out: Speed = { downBps: 0, upBps: 0 };
+  if (!sample || sample.status !== "ok") return out;
+  for (const pid of pids) {
+    const s = sample.perPid[String(pid)];
+    if (!s) continue;
+    out.downBps += s.downBps;
+    out.upBps += s.upBps;
+  }
+  return out;
+}
+
+/** 速率展示：B/s → 自动单位；0 显示「0」，null 由调用方负责「—」 */
+export function formatSpeed(bps: number): string {
+  if (!Number.isFinite(bps) || bps < 1) return "0 B/s";
+  const units = ["B/s", "KB/s", "MB/s", "GB/s"];
+  let v = bps;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
+}

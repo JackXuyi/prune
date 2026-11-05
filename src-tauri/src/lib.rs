@@ -4,6 +4,7 @@
 //! - `tray.rs`    菜单栏 tray + 面板定位（M0 spike 结论已固化）
 //! - `sampler.rs` 内存双频采样（M2/T-206）
 //! - `port_sampler.rs` 端口采样（M7，独立通道 + 可见性门控）
+//! - `net_sampler.rs` 应用网速采样（M10，1 s 轮询 + 可见性门控）
 //! - `scan.rs`    磁盘可回收扫描调度（M1/T-306）
 //! - `commands.rs` IPC 读写（M2/T-207 + M1/T-306）
 
@@ -12,6 +13,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 mod commands;
+mod net_sampler;
 mod port_sampler;
 mod sampler;
 mod scan;
@@ -51,7 +53,10 @@ pub fn run() {
             commands::port_snapshot,
             commands::port_refresh,
             commands::port_set_active,
-            commands::app_disk
+            commands::app_disk,
+            commands::app_bundles,
+            net_sampler::net_speed_snapshot,
+            net_sampler::net_speed_set_active
         ])
         .setup(|app| {
             // 资源守门员形态：常驻菜单栏，不占 Dock
@@ -76,6 +81,7 @@ pub fn run() {
             app.manage(Arc::new(scan::DiskState::new()));
             app.manage(Arc::new(port_sampler::PortState::new()));
             app.manage(Arc::new(commands::AppDiskState::new()));
+            app.manage(Arc::new(net_sampler::NetSpeedState::new()));
 
             // 后台常采：无 WebView 也运行，前端打开时直接取最新快照
             let handle = app.handle().clone();
@@ -87,6 +93,12 @@ pub fn run() {
             let port_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 port_sampler::run_port(port_handle).await;
+            });
+
+            // 网速：只在「应用资源」tab 可见时 1 s 轮采样（不可见时连子进程都不 spawn）
+            let net_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                net_sampler::run_net_speed(net_handle).await;
             });
 
             // 磁盘侧：启动 30 s 后首扫，此后每周静默刷新
