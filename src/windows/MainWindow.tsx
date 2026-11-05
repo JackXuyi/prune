@@ -3,6 +3,7 @@ import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
+import { AppResourceBoard } from "../components/AppResourceGrid";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { PortBoard } from "../components/PortList";
 import { ReclaimBoard } from "../components/ReclaimBoard";
@@ -19,6 +20,7 @@ import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, nu
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
+import { useNetSpeedStore } from "../stores/netStore";
 import { usePortStore } from "../stores/portStore";
 import {
   isExact,
@@ -31,7 +33,7 @@ import {
 } from "../types/mem";
 import { exposureMeta, portsOfPid } from "../types/net";
 
-type MainTab = "stats" | "apps" | "overview" | "disk" | "ports";
+type MainTab = "stats" | "resources" | "apps" | "overview" | "disk" | "ports";
 
 /** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
@@ -66,11 +68,16 @@ export function MainWindow() {
   const setPortActive = usePortStore((s) => s.setActive);
   const setPortFocus = usePortStore((s) => s.setFocus);
   const hydratePorts = usePortStore((s) => s.hydrate);
+  const netSample = useNetSpeedStore((s) => s.sample);
+  const initNetSpeed = useNetSpeedStore((s) => s.init);
+  const setNetActive = useNetSpeedStore((s) => s.setActive);
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [killTarget, setKillTarget] = useState<KillTarget | null>(null);
   /** 统计 tab 的卷容量重取信号（内存/端口由各自 store 刷新，不重复驱动） */
   const [statsNonce, setStatsNonce] = useState(0);
+  /** 应用资源 tab 的磁盘本体重测信号 */
+  const [resourcesNonce, setResourcesNonce] = useState(0);
 
   /** 右键进程行 → 弹「结束进程」菜单（位置取鼠标点） */
   const openKillMenu = (proc: ProcMem, x: number, y: number) => {
@@ -82,7 +89,14 @@ export function MainWindow() {
     if (!isTauri()) return;
     const un = listen<string>("ui://tab", (e) => {
       const t = e.payload === "port" ? "ports" : e.payload;
-      if (t === "stats" || t === "apps" || t === "overview" || t === "disk" || t === "ports") {
+      if (
+        t === "stats" ||
+        t === "resources" ||
+        t === "apps" ||
+        t === "overview" ||
+        t === "disk" ||
+        t === "ports"
+      ) {
         setTab(t);
       }
     });
@@ -121,6 +135,23 @@ export function MainWindow() {
     if (tab === "stats") void initPorts();
   }, [tab, initPorts]);
 
+  /**
+   * 应用资源 tab：端口只做一次性 init（不挂 30 s 定时轮），
+   * 网速则要显式开闸——1 s 一次 nettop 只在用户真的看着这个 tab 时才该跑。
+   */
+  useEffect(() => {
+    if (tab !== "resources") {
+      void setNetActive(false);
+      return;
+    }
+    void initPorts();
+    void initNetSpeed();
+    void setNetActive(true);
+    return () => {
+      void setNetActive(false);
+    };
+  }, [tab, initPorts, initNetSpeed, setNetActive]);
+
   const families = snapshot?.families ?? [];
   const selected = useMemo(
     () => processes.find((p) => p.pid === selectedPid) ?? null,
@@ -144,6 +175,11 @@ export function MainWindow() {
       void refresh();
       void refreshPorts();
       setStatsNonce((n) => n + 1);
+    } else if (tab === "resources") {
+      // 网速不用手动刷（1 s 自己跳）；这里刷内存 + 端口 + 强制重测磁盘本体
+      void refresh();
+      void refreshPorts();
+      setResourcesNonce((n) => n + 1);
     } else void refresh();
   };
   const refreshLabel =
@@ -171,6 +207,11 @@ export function MainWindow() {
           onChange={setTab}
           items={[
             { id: "stats", label: "统计", hint: "内存 / 硬盘 / CPU / 端口：本机资源总览" },
+            {
+              id: "resources",
+              label: "应用资源",
+              hint: "每个应用一张卡：进程 / CPU / 内存 / 磁盘 / 端口 / 网速",
+            },
             { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
             { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
             { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
@@ -215,6 +256,22 @@ export function MainWindow() {
 
       {tab === "stats" ? (
         <StatsBoard onDrill={setTab} refreshNonce={statsNonce} />
+      ) : tab === "resources" ? (
+        <AppResourceBoard
+          families={families}
+          processes={processes}
+          ports={ports}
+          net={netSample}
+          refreshNonce={resourcesNonce}
+          onOpenPorts={(port) => {
+            setPortFocus(String(port));
+            setTab("ports");
+          }}
+          onOpenProcess={(pid) => {
+            select(pid);
+            setTab("overview");
+          }}
+        />
       ) : tab === "ports" ? (
         <PortBoard
           onOpenProcess={(pid) => {

@@ -8,9 +8,9 @@ import type {
   ReclaimPreview,
   VolumeInfo,
 } from "../types/disk";
-import type { AppDisk, DiskLeaf } from "../types/appdisk";
+import type { AppDisk, BundleMap, DiskLeaf } from "../types/appdisk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
-import type { PortBinding, PortEntry, PortSnapshot, Proto } from "../types/net";
+import type { NetSpeedSample, PortBinding, PortEntry, PortSnapshot, Proto } from "../types/net";
 
 /**
  * 仅开发态使用（import.meta.env.DEV && 非 Tauri）：让 UI 可以脱离桌面端
@@ -563,5 +563,40 @@ export function devAppDisk(family: string): AppDisk {
     at: now,
     elapsedMs: 2158,
     note: null,
+  };
+}
+
+/**
+ * 网速样本（M10）：浏览器走查用。pid 与 `devSnapshot` 的家族成员对不上时
+ * 表格会显示 0，所以这里按家族名给几个典型速率，前端按 pid 匹配不到也不影响布局走查。
+ */
+export function devNetSpeed(): NetSpeedSample {
+  return {
+    at: Math.floor(Date.now() / 1000),
+    status: "ok",
+    note: null,
+    // 键是 devPortSnapshot 里出现过的 pid，保证卡片能算出非零速率
+    perPid: {
+      "626": { downBps: 14_000, upBps: 2_000 },
+      "4187": { downBps: 2_000, upBps: 1_000 },
+      "5120": { downBps: 890_000, upBps: 60_000 },
+      "7301": { downBps: 120_000, upBps: 8_000 },
+      "3310": { downBps: 900, upBps: 300 },
+    },
+    totalDownBps: 1_026_900,
+    totalUpBps: 71_300,
+    intervalMs: 1000,
+  };
+}
+
+/** 批量本体体积（M10）：真机首屏的典型量级 */
+export function devBundles(): BundleMap {
+  return {
+    Cursor: { bytes: 1_020_000_000, partial: false },
+    "Google Chrome": { bytes: 1_500_000_000, partial: false },
+    Xcode: { bytes: 5_200_000_000, partial: true },
+    WeChat: { bytes: 480_000_000, partial: false },
+    Slack: { bytes: 210_000_000, partial: false },
+    Docker: { bytes: 3_100_000_000, partial: false },
   };
 }
