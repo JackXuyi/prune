@@ -76,13 +76,13 @@ if (changed) {
   ].filter(Boolean)
   const cargoBin = cargoBins.find((c) => c === 'cargo' || existsSync(c))
   if (!cargoBin) {
-    console.warn('⚠️ 未找到 cargo，请手动运行: cargo update -p prune')
+    console.warn('⚠️ 未找到 cargo，请手动运行: cargo update -p prune-app')
   } else {
     try {
-      execSync(`${cargoBin} update -p prune --precise ${target}`, { cwd: root, stdio: 'ignore' })
+      execSync(`${cargoBin} update -p prune-app --precise ${target}`, { cwd: root, stdio: 'ignore' })
       results.push(['Cargo.lock', current, target])
     } catch {
-      console.warn(`⚠️ cargo update -p prune 失败，请手动运行: cargo update -p prune --precise ${target}`)
+      console.warn(`⚠️ cargo update -p prune-app 失败，请手动运行: cargo update -p prune-app --precise ${target}`)
     }
   }
 }
