@@ -18,6 +18,7 @@ mod port_sampler;
 mod sampler;
 mod scan;
 mod tray;
+mod tray_icon;
 mod updater;
 
 // NSPopover 原生菜单栏面板（M3，docs/ns-popover-plan.md）

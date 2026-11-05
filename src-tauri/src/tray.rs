@@ -9,9 +9,9 @@
 //!
 //! 运行 `pnpm tauri dev` 后观察 stdout 的 `[m0-tray]` 日志，并目测面板落点。
 
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
 use std::sync::Arc;
-use tauri::menu::{CheckMenuItem, Menu, MenuItem, PredefinedMenuItem};
+use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{
     AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent,
@@ -20,7 +20,8 @@ use tauri::{
 #[cfg(target_os = "macos")]
 use crate::popover;
 
-use crate::sampler::{MemState, FAST_INTERVAL_SECS};
+use crate::sampler::MemState;
+use crate::tray_icon::{self, IconTheme};
 
 /// tray 图标唯一 ID
 pub const TRAY_ID: &str = "prune-tray";
@@ -28,14 +29,23 @@ pub const TRAY_ID: &str = "prune-tray";
 pub const PANEL_LABEL: &str = "panel";
 /// 「CPU 动画」右键菜单项 ID（M6-T3）
 pub const MENU_TOGGLE_CPU_ANIM: &str = "toggle-cpu-anim";
+/// 「检查更新」右键菜单项 ID（docs/updater-plan.md）
+pub const MENU_CHECK_UPDATE: &str = "check-update";
+/// 「顶部图标」子菜单 ID 与子项 ID 前缀（M11）
+const MENU_ICON_THEME: &str = "tray-icon-theme";
+const MENU_ICON_PREFIX: &str = "tray-icon:";
 /// 设置文件名与键名（config_dir()/settings.json，多模块共享，只改本键）
 const SETTINGS_FILE: &str = "settings.json";
 const SETTING_CPU_ANIM: &str = "trayCpuAnim";
 /// LAST_FRAME 的「静态原图」哨兵值
 const FRAME_STATIC: usize = usize::MAX;
+/// LAST_FRAME 的「主题已换、必须重发」哨兵值
+const FRAME_DIRTY: usize = usize::MAX - 1;
 
 /// CPU 动画开关（M6-T3）：默认开，启动时从 settings.json 加载
 static CPU_ANIM_ENABLED: AtomicBool = AtomicBool::new(true);
+/// 当前顶部图标主题（M11），启动时从 settings.json 加载
+static TRAY_THEME: AtomicU8 = AtomicU8::new(0);
 /// 最近设置的帧索引；相同帧跳过 set（往返节拍里 f1/f2 会出现两次，省 ~30% 主线程跳转）
 static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 /// 面板尺寸（与 tauri.conf.json 一致，popover 内容尺寸同源）
@@ -62,14 +72,26 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+/// 右键菜单里「顶部图标」的勾选项句柄：切换主题后要把勾搬到新项上。
+///
+/// 菜单项本身是 Arc 包的内核句柄，克隆成本低；这里持有它只为了 `set_checked`。
+struct TrayMenuState {
+    themes: Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>,
+}
+
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
     // 开关持久化状态先行加载（决定菜单勾选态与动画行为）
     let anim_on = load_cpu_anim_setting(app);
     CPU_ANIM_ENABLED.store(anim_on, Ordering::Relaxed);
+    // 顶部图标主题：决定 tray 初始图标与菜单勾选态（M11）
+    let theme = tray_icon::load(app);
+    TRAY_THEME.store(theme.as_u8(), Ordering::Relaxed);
     // create 里刚设置静态原图，与哨兵一致，避免动画首轮重复 set
     LAST_FRAME.store(FRAME_STATIC, Ordering::Relaxed);
 
     let open_main = MenuItem::with_id(app, "open-main", "打开主窗口", true, None::<&str>)?;
+    let check_update =
+        MenuItem::with_id(app, MENU_CHECK_UPDATE, "检查更新", true, None::<&str>)?;
     let cpu_anim = CheckMenuItem::with_id(
         app,
         MENU_TOGGLE_CPU_ANIM,
@@ -78,28 +100,72 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
         anim_on,
         None::<&str>,
     )?;
+
+    // 顶部图标子菜单：一项一套皮肤，勾选态表达当前选择
+    let mut theme_items: Vec<(IconTheme, CheckMenuItem<tauri::Wry>)> = Vec::new();
+    for t in IconTheme::ALL {
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("{MENU_ICON_PREFIX}{}", t.id()),
+            t.label(),
+            true,
+            t == theme,
+            None::<&str>,
+        )?;
+        theme_items.push((t, item));
+    }
+    // 子菜单只借用引用，句柄所有权留在 theme_items（后面交给 app 管理）
+    let theme_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = theme_items
+        .iter()
+        .map(|(_, item)| item as &dyn IsMenuItem<tauri::Wry>)
+        .collect();
+    let icon_menu =
+        Submenu::with_id_and_items(app, MENU_ICON_THEME, "顶部图标", true, &theme_refs)?;
+
     let quit = MenuItem::with_id(app, "quit", "退出 Prune", true, None::<&str>)?;
     let menu = Menu::with_items(
         app,
         &[
             &open_main,
+            &check_update,
             &PredefinedMenuItem::separator(app)?,
             &cpu_anim,
+            &icon_menu,
             &PredefinedMenuItem::separator(app)?,
             &quit,
         ],
     )?;
+    app.manage(TrayMenuState { themes: theme_items });
 
     let tray = TrayIconBuilder::with_id(TRAY_ID)
-        .icon(tray_icon())
+        .icon(theme.static_icon())
         .tooltip("Prune")
         .menu(&menu)
         .show_menu_on_left_click(false)
-        .on_menu_event(|app, event| match event.id().as_ref() {
-            "open-main" => show_main(app),
-            MENU_TOGGLE_CPU_ANIM => toggle_cpu_anim(app),
-            "quit" => app.exit(0),
-            _ => {}
+        .on_menu_event(|app, event| {
+            let id = event.id().as_ref();
+            // 主题项走前缀分派，避免每加一套皮肤就往 match 里塞一条
+            if let Some(raw) = id.strip_prefix(MENU_ICON_PREFIX) {
+                if let Some(theme) = IconTheme::parse(raw) {
+                    switch_theme(app, theme);
+                }
+                return;
+            }
+            match id {
+                "open-main" => show_main(app),
+                MENU_CHECK_UPDATE => {
+                    // 异步检查，不阻塞菜单线程；结果经事件广播（见 updater 模块注释）
+                    let handle = app.clone();
+                    tauri::async_runtime::spawn(async move {
+                        if let Err(e) = crate::updater::check_and_notify(&handle, true).await {
+                            eprintln!("[updater] 托盘手动检查失败: {e}");
+                        }
+                    });
+                }
+                MENU_TOGGLE_CPU_ANIM => toggle_cpu_anim(app),
+                "quit" => app.exit(0),
+                _ => {}
+            }
         })
         .on_tray_icon_event(|tray, event| {
             // 左键单击：弹出/收起面板（右键交给菜单）
@@ -113,65 +179,64 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    // 模板图标是 macOS 专属机制：黑图 + 系统反色。其他平台关掉（否则彩色
-    // 图标被当模板处理再被忽略，行为依赖平台默认值），并显式留彩色原图。
-    tray.set_icon_as_template(cfg!(target_os = "macos")).ok();
+    // 模板图标是 macOS 专属机制：黑图 + 系统反色。彩色主题（鲸鱼娘）必须显式关掉，
+    // 否则彩色会被系统当 alpha 掩码反色成黑白剪影。
+    tray.set_icon_as_template(theme.is_template()).ok();
     Ok(())
 }
 
-/// 托盘图标：macOS 用黑色模板图（系统自动适配深浅色菜单栏）；
-/// 其他平台用彩色应用图标（深色任务栏下黑色模板图不可见）。
-/// 内嵌字节解析失败直接 panic——这是编译期打包产物，坏不了。
-fn tray_icon() -> tauri::image::Image<'static> {
-    #[cfg(target_os = "macos")]
-    {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))
-            .expect("内置 tray 图标损坏")
+/// 当前生效的图标主题（动画循环每拍读一次，切皮肤立即生效）
+fn current_theme() -> IconTheme {
+    IconTheme::from_u8(TRAY_THEME.load(Ordering::Relaxed))
+}
+
+/// 切换顶部图标：落盘 → 立即重发静态图 → 搬勾选态
+fn switch_theme(app: &AppHandle, theme: IconTheme) {
+    if current_theme() != theme {
+        TRAY_THEME.store(theme.as_u8(), Ordering::Relaxed);
+        if let Err(e) = tray_icon::save(app, theme) {
+            eprintln!("[m11-tray] ⚠️ 主题持久化失败（本次会话内仍生效）: {e}");
+        }
+        // 预置成非法值，让 set_frame 跳过「同帧不重发」的快路径，
+        // 真正把新主题的静态图下发一次（否则图标停在旧皮肤上）
+        LAST_FRAME.store(FRAME_DIRTY, Ordering::Relaxed);
+        set_frame(app, None);
+        eprintln!("[m11-tray] 顶部图标已切换: {}（{}）", theme.label(), theme.id());
     }
-    #[cfg(not(target_os = "macos"))]
-    {
-        tauri::image::Image::from_bytes(include_bytes!("../icons/32x32.png"))
-            .expect("内置应用图标损坏")
+    sync_checks(app, theme);
+}
+
+fn sync_checks(app: &AppHandle, active: IconTheme) {
+    let Some(state) = app.try_state::<TrayMenuState>() else {
+        return;
+    };
+    for (theme, item) in &state.themes {
+        let _ = item.set_checked(*theme == active);
     }
 }
 
 // ---- M6 · CPU 动画（docs/m6-tray-anim-plan.md）----
+// 帧资源随主题走（见 tray_icon.rs）：剪刀是黑色模板帧，鲸鱼娘是彩色呼吸帧。
 
-/// 动画帧（编译期内嵌，OnceLock 启动时解析一次）。
-/// macOS 用 48×48 黑色模板帧，其他平台用 32×32 品牌色帧（W3 教训）。
-fn anim_frames() -> &'static [tauri::image::Image<'static>; 4] {
-    static FRAMES: std::sync::OnceLock<Box<[tauri::image::Image<'static>; 4]>> =
-        std::sync::OnceLock::new();
-    FRAMES.get_or_init(|| {
-        #[cfg(target_os = "macos")]
-        let bytes: [&[u8]; 4] = [
-            include_bytes!("../icons/tray-anim/macos/f0.png"),
-            include_bytes!("../icons/tray-anim/macos/f1.png"),
-            include_bytes!("../icons/tray-anim/macos/f2.png"),
-            include_bytes!("../icons/tray-anim/macos/f3.png"),
-        ];
-        #[cfg(not(target_os = "macos"))]
-        let bytes: [&[u8]; 4] = [
-            include_bytes!("../icons/tray-anim/win/f0.png"),
-            include_bytes!("../icons/tray-anim/win/f1.png"),
-            include_bytes!("../icons/tray-anim/win/f2.png"),
-            include_bytes!("../icons/tray-anim/win/f3.png"),
-        ];
-        Box::new(std::array::from_fn(|i| {
-            tauri::image::Image::from_bytes(bytes[i]).expect("内置托盘动画帧损坏")
-        }))
-    })
-}
-
-/// 档位映射（方案 §3.1，整机 CPU 近 10 s 均值）→ 帧间隔 ms。
-/// None = 静止档：CPU 未知（**绝不拿未知值驱动动画**）或 <10%。
-fn anim_beat_ms(usage: Option<f32>) -> Option<u64> {
+/// 档位映射（方案 §3.1，整机 CPU 近 10 s 均值）→ **每帧**停留毫秒数。
+///
+/// M11 起不再有「静止档」：鲸鱼娘这张皮的表意就是「吃白米饭」，
+/// 停住不动的图标等于一张静态头像，看不出 CPU 忙闲。CPU 未知时也保持
+/// 慢速咀嚼（700 ms/帧，一轮约 8.4 s），只比最闲档慢一档。
+///
+/// 12 帧 = 吃三口饭，所以「一轮时长 = 12 × 本值」：最闲约 9.6 s 吃完一碗，
+/// 满载约 1.1 s 一碗 —— 快慢差 9 倍，隔着屏幕也能分出「闲」和「忙」。
+fn anim_beat_ms(usage: Option<f32>) -> u64 {
     match usage {
-        None => None,
-        Some(u) if u < 10.0 => None,
-        Some(u) if u < 40.0 => Some(500), // 2 fps · 慢
-        Some(u) if u < 70.0 => Some(200), // 5 fps · 中
-        Some(_) => Some(100),             // 10 fps · 快
+        None => 700, // CPU 未知：慢速但仍在吃
+        Some(u) if u < 5.0 => 800,
+        Some(u) if u < 15.0 => 690,
+        Some(u) if u < 30.0 => 520,
+        Some(u) if u < 45.0 => 380,
+        Some(u) if u < 60.0 => 280,
+        Some(u) if u < 75.0 => 200,
+        Some(u) if u < 88.0 => 140,
+        Some(_) => 95,
     }
 }
 
@@ -185,26 +250,35 @@ fn current_cpu_usage(app: &AppHandle) -> Option<f32> {
 /// 换帧。macOS 必须用组合 API 原子换帧——先 `set_icon` 再
 /// `set_icon_as_template` 会渲染两次导致可见闪烁（tauri 文档明示）；
 /// 其他平台该 API 内部自动降级为 `set_icon`。
+///
+/// 第二个参数（是否模板）必须跟随主题：彩色主题传 true 会变黑白剪影（M11）。
 fn set_icon_frame(
     tray: &tauri::tray::TrayIcon,
     icon: tauri::image::Image<'static>,
+    as_template: bool,
 ) -> tauri::Result<()> {
-    tray.set_icon_with_as_template(Some(icon), true)
+    tray.set_icon_with_as_template(Some(icon), as_template)
 }
 
 /// 切到指定帧（None = 回静态原图）。失败只记日志，不 panic、不中断循环；
 /// 相同帧跳过 set。
 fn set_frame(app: &AppHandle, frame: Option<usize>) {
     let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let theme = current_theme();
     let target = frame.unwrap_or(FRAME_STATIC);
     if LAST_FRAME.load(Ordering::Relaxed) == target {
         return;
     }
+    // 切主题的瞬间 beats 还指向上一个主题的帧数，越界时静默跳过这一帧，
+    // 下一拍 current_theme 已经变了，不会卡在坏状态上
     let icon = match frame {
-        Some(i) => anim_frames()[i].clone(),
-        None => tray_icon(),
+        Some(i) => match theme.frames().get(i) {
+            Some(img) => img.clone(),
+            None => return,
+        },
+        None => theme.static_icon(),
     };
-    match set_icon_frame(&tray, icon) {
+    match set_icon_frame(&tray, icon, theme.is_template()) {
         Ok(()) => LAST_FRAME.store(target, Ordering::Relaxed),
         Err(e) => eprintln!("[m6-tray] 换帧失败（不中断动画）: {e}"),
     }
@@ -213,31 +287,27 @@ fn set_frame(app: &AppHandle, frame: Option<usize>) {
 /// CPU 动画循环（T2）：tokio spawn 于 setup，与采样循环解耦——
 /// 采样失败不影响图标，图标失败不影响采样（方案 §4.2 约束 4）。
 ///
-/// 帧序列 f0→f1→f2→f3→f2→f1（6 拍往返）；每播完一个周期重读一次 CPU，
-/// 周期内不换速，避免视觉撕裂（约束 5）。静止档只随 10 s 快照轮醒来，不空转。
+/// 播放顺序来自主题的 [`IconTheme::beats`]：剪刀 6 拍往返开合，鲸鱼娘 12 拍
+/// 吃一碗饭。节奏按 CPU 逐帧重算 —— CPU 快照 10 s 才刷新一次，逐帧读与
+/// 逐轮读等价，但切换主题/开关时能立刻跟上，不用等一轮跑完。
 pub async fn run_anim(app: AppHandle) {
-    const CYCLE: [usize; 6] = [0, 1, 2, 3, 2, 1];
     loop {
         if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) {
             set_frame(&app, None); // 关闭：回静态原图
-            tokio::time::sleep(std::time::Duration::from_secs(FAST_INTERVAL_SECS)).await;
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             continue;
         }
-        match anim_beat_ms(current_cpu_usage(&app)) {
-            None => {
-                // 静止档：闭合帧 + 睡到下一个快照轮（验收 #1：无任何定时器空转）
-                set_frame(&app, Some(0));
-                tokio::time::sleep(std::time::Duration::from_secs(FAST_INTERVAL_SECS)).await;
+        let theme = current_theme();
+        for &beat in theme.beats() {
+            // 关掉动画、或用户换了皮肤：立刻中断本轮，重新取主题
+            if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) || current_theme() != theme {
+                break;
             }
-            Some(beat_ms) => {
-                for &beat in &CYCLE {
-                    if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) {
-                        break;
-                    }
-                    set_frame(&app, Some(beat));
-                    tokio::time::sleep(std::time::Duration::from_millis(beat_ms)).await;
-                }
-            }
+            set_frame(&app, Some(beat));
+            tokio::time::sleep(std::time::Duration::from_millis(anim_beat_ms(current_cpu_usage(
+                &app,
+            ))))
+            .await;
         }
     }
 }
@@ -512,4 +582,32 @@ pub fn attach_blur_to_hide(panel: &WebviewWindow) {
             let _ = handle.hide();
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::anim_beat_ms;
+
+    /// CPU 越高吃得越快：档位必须严格递减，且首尾差 ≥5 倍。
+    /// 差太小的话菜单栏里只是一团在抖，分不出「闲」和「忙」。
+    #[test]
+    fn eating_gets_faster_as_cpu_rises() {
+        let mut prev = u64::MAX;
+        for u in [5.0f32, 20.0, 40.0, 55.0, 70.0, 80.0, 95.0] {
+            let ms = anim_beat_ms(Some(u));
+            assert!(ms < prev, "CPU {u}% 的帧间隔没有变快：{ms} ≥ {prev}");
+            prev = ms;
+        }
+        assert!(
+            anim_beat_ms(Some(0.0)) >= anim_beat_ms(Some(99.0)) * 5,
+            "满载与空闲的节奏差不足 5 倍"
+        );
+    }
+
+    /// 鲸鱼娘的表意就是「在吃」，CPU 未知也不能停成一张静态图
+    #[test]
+    fn unknown_cpu_keeps_chewing() {
+        let ms = anim_beat_ms(None);
+        assert!(ms > 0 && ms <= anim_beat_ms(Some(0.0)));
+    }
 }
