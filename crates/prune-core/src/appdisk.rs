@@ -424,6 +424,80 @@ fn bundle_changed(cached: &AppDisk, exe: Option<&str>) -> bool {
     }
 }
 
+// ---------------------------------------------------------------- M10 批量本体测量
+
+/// 一个「应用 → exe」查询。前端本来就有进程明细，直接给 exe，后端不再枚举进程。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleQuery {
+    pub family: String,
+    pub exe: Option<String>,
+}
+
+/// 只含本体的体积读数。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct BundleSize {
+    pub bytes: u64,
+    /// 超预算只量了一部分 → UI 显示「≥」
+    pub partial: bool,
+}
+
+/// 批量测得一批应用的**本体**体积（M10 卡片首屏用）。
+///
+/// 只测 `.app` 本体，不碰缓存/数据：卡片每张都要一个数，而缓存/数据层
+/// 0.25–4 s/应用（Chrome 的 profile 能撞满 4 s 预算），进不了首屏。
+///
+/// 两个必须做的优化：
+/// 1. **按 bundle 路径去重**——Chrome 的 42 个帮助进程指向同一个 `.app`，
+///    不去重就会把同一个 1.5 GB 量 42 次；
+/// 2. **8 路并行**——实测 20 个 `.app` 串行 1.96 s，并行后 ~0.5 s。
+pub fn bundle_bytes_batch(
+    items: &[BundleQuery],
+    per_item: Duration,
+) -> HashMap<String, BundleSize> {
+    // 路径 → 家族列表（同一个 bundle 可能被多个家族共享）
+    let mut by_path: HashMap<PathBuf, Vec<String>> = HashMap::new();
+    for item in items {
+        if let Some(path) = item.exe.as_deref().and_then(bundle_of_exe) {
+            by_path.entry(path).or_default().push(item.family.clone());
+        }
+    }
+
+    let queue = std::sync::Mutex::new(by_path.into_iter());
+    let out = std::sync::Mutex::new(HashMap::new());
+
+    let workers = std::thread::available_parallelism()
+        .map(|n| n.get())
+        .unwrap_or(4)
+        .clamp(1, 8);
+
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| loop {
+                let next = {
+                    let mut q = queue.lock().unwrap_or_else(|e| e.into_inner());
+                    q.next()
+                };
+                let Some((path, families)) = next else { break };
+                let Ok(meta) = std::fs::symlink_metadata(&path) else {
+                    continue;
+                };
+                if !meta.is_dir() {
+                    continue;
+                }
+                let (bytes, partial) = du_budget(&path, Some(per_item));
+                let mut guard = out.lock().unwrap_or_else(|e| e.into_inner());
+                for family in families {
+                    guard.insert(family, BundleSize { bytes, partial });
+                }
+            });
+        }
+    });
+
+    out.into_inner().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -515,5 +589,36 @@ mod tests {
         let second = cache.get_or_measure("X", None, &home);
         assert_eq!(first.at, second.at, "TTL 内应直接复用，不重测");
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    #[test]
+    fn batch_measures_shared_bundle_once() {
+        // 同一 .app 被多个家族共享（Chrome 的 42 个帮助进程）：必须能对上同一个读数
+        let root = std::env::temp_dir().join(format!("prune-batch-{}", std::process::id()));
+        let app = root.join("Fake.app");
+        std::fs::create_dir_all(app.join("Contents").join("MacOS")).unwrap();
+        std::fs::write(app.join("Contents").join("MacOS").join("Fake"), vec![0u8; 4096]).unwrap();
+
+        let exe = app.join("Contents").join("MacOS").join("Fake");
+        let exe_s = exe.to_string_lossy().to_string();
+        let items = vec![
+            BundleQuery { family: "Fake".into(), exe: Some(exe_s.clone()) },
+            BundleQuery { family: "Fake Helper".into(), exe: Some(exe_s) },
+        ];
+        let got = bundle_bytes_batch(&items, Duration::from_secs(2));
+        assert_eq!(got.len(), 2);
+        assert_eq!(got["Fake"].bytes, got["Fake Helper"].bytes);
+        assert!(got["Fake"].bytes >= 4096);
+        std::fs::remove_dir_all(&root).ok();
+    }
+
+    #[test]
+    fn batch_skips_apps_without_bundle() {
+        // CLI 工具 / 系统进程没有 .app：没有条目 ≠ 0 字节，前端要显示「—」
+        let items = vec![
+            BundleQuery { family: "node".into(), exe: Some("/opt/homebrew/bin/node".into()) },
+            BundleQuery { family: "unknown".into(), exe: None },
+        ];
+        assert!(bundle_bytes_batch(&items, Duration::from_secs(1)).is_empty());
     }
 }

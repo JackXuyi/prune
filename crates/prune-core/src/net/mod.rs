@@ -14,6 +14,8 @@
 //! 是 Electron / 微信 / Cursor 的内部 IPC 随机端口，全列出来等于把功能做废。
 
 pub mod host;
+/// M10：应用网速（nettop 累计字节差分）
+pub mod netspeed;
 pub mod ports;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof
 #[cfg(windows)]
