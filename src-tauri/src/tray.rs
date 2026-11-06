@@ -216,7 +216,8 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .build(app)?;
-    // 模板图标是 macOS 专属机制：黑图 + 系统反色。彩色主题（鲸鱼 Logo）必须显式关掉，
+    // 模板图标是 macOS 专属机制：黑图 + 系统反色。所有主题都是单色字形，
+    // 走 is_template() 统一决策；哪天加回彩色皮肤必须显式传 false，
     // 否则彩色会被系统当 alpha 掩码反色成黑白剪影。
     tray.set_icon_as_template(theme.is_template()).ok();
     eprintln!(
@@ -263,7 +264,7 @@ fn sync_checks(app: &AppHandle, active: IconTheme) {
 
 /// 档位映射（方案 §3.1，整机 CPU 近 10 s 均值）→ **每帧**停留毫秒数。
 ///
-/// M11 起不再有「静止档」：皮的表意是「一直在动」（鲸鱼娘吃饭 / 鲸鱼 Logo 游泳），
+/// M11 起不再有「静止档」：皮的表意是「一直在动」（鲸鱼娘吃饭 / 鲸鱼游泳），
 /// 停住不动的图标等于一张静态头像，看不出 CPU 忙闲。CPU 未知时也保持
 /// 慢速游动（700 ms/帧，一轮约 8.4 s），只比最闲档慢一档。
 ///
@@ -294,7 +295,8 @@ fn current_cpu_usage(app: &AppHandle) -> Option<f32> {
 /// `set_icon_as_template` 会渲染两次导致可见闪烁（tauri 文档明示）；
 /// 其他平台该 API 内部自动降级为 `set_icon`。
 ///
-/// 第二个参数（是否模板）必须跟随主题：彩色主题传 true 会变黑白剪影（M11）。
+/// 第二个参数（是否模板）必须跟随主题：彩色图传 true 会变黑白剪影（M11）；
+/// 当前两套主题在 macOS 上都是模板图，参数恒由 is_template() 给出。
 fn set_icon_frame(
     tray: &tauri::tray::TrayIcon,
     icon: tauri::image::Image<'static>,

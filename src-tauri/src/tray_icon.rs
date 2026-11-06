@@ -7,9 +7,10 @@
 //! 现有主题：
 //! - [`IconTheme::Scissors`]  Lucide 剪刀，**黑色模板图** —— macOS 由系统按菜单栏
 //!   深浅色反色，视觉上与系统图标同质（默认）
-//! - [`IconTheme::WhaleLogo`] 普通蓝鲸（自然海蓝），**彩色** —— 必须关掉模板机制，
-//!   否则会被压成黑白剪影（M13 起取代鲸鱼娘，持久化 id 保持 `whale` 不变，
-//!   已选鲸鱼娘的用户升级后自动落到新皮；M17 去除 DeepSeek 品牌皮换成普通鲸鱼，
+//! - [`IconTheme::WhaleLogo`] 蓝鲸线稿，与剪刀**同风格**：Lucide 24 网格描边
+//!   字形，macOS 黑色模板图（系统反色）/ Windows 品牌色 #34D399
+//!   （M13 起取代鲸鱼娘，持久化 id 保持 `whale` 不变，已选鲸鱼娘的用户升级后
+//!   自动落到新皮；M17 去除 DeepSeek 品牌皮并改为线稿风格，
 //!   目录名 `whale-logo` 为历史遗留，随 id 一起保留）
 //!
 //! 再加一套图标只需动本模块 4 个地方（`id` / `label` / `static_icon` / `frames`），
@@ -26,7 +27,7 @@ const SETTING_TRAY_ICON: &str = "trayIconTheme";
 pub enum IconTheme {
     /// 剪刀（默认）：黑色模板图
     Scissors,
-    /// 普通蓝鲸：白色圆徽章 + 海蓝鲸鱼（M17 起去除 DeepSeek 品牌皮，id 不变）
+    /// 蓝鲸线稿：与剪刀同风格的描边字形（M17 起去除 DeepSeek 品牌皮，id 不变）
     WhaleLogo,
 }
 
@@ -69,9 +70,9 @@ impl IconTheme {
     }
 
     /// macOS 模板图 = 系统只取 alpha 通道上色，彩色图会被反色成剪影。
-    /// 所以只有「本来就是单色字形」的主题走模板；Windows 没有模板机制，恒 false。
+    /// 两套主题都是单色字形，macOS 上都走模板；Windows 没有模板机制，恒 false。
     pub fn is_template(self) -> bool {
-        cfg!(target_os = "macos") && matches!(self, Self::Scissors)
+        cfg!(target_os = "macos")
     }
 
     /// 静态原图：动画关闭、CPU 静止档、以及创建 tray 时用
