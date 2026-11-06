@@ -64,7 +64,11 @@ pub fn run() {
             commands::app_disk,
             commands::app_bundles,
             net_sampler::net_speed_snapshot,
-            net_sampler::net_speed_set_active
+            net_sampler::net_speed_set_active,
+            net_sampler::net_total_snapshot,
+            net_sampler::net_total_history,
+            net_sampler::net_traffic_recent,
+            net_sampler::net_total_set_active
         ])
         .setup(|app| {
             // 资源守门员形态：常驻菜单栏，不占 Dock
@@ -85,12 +89,14 @@ pub fn run() {
                 }
             });
 
-            app.manage(Arc::new(sampler::MemState::new(store)));
+            app.manage(Arc::new(sampler::MemState::new(store.clone())));
             app.manage(Arc::new(scan::DiskState::new()));
             app.manage(Arc::new(port_sampler::PortState::new()));
             app.manage(Arc::new(commands::AppDiskState::new()));
             app.manage(Arc::new(net_sampler::NetSpeedState::new()));
-            app.manage(Arc::new(net_sampler::TotalNetState::new()));
+            // M14：每日流量也落在同一个 prune.db（`net_daily`）。库打不开就传 None，
+            // 网络 tab 的「今日」显示「不可用」，实时速率与会话累计照常工作
+            app.manage(Arc::new(net_sampler::TotalNetState::new(store)));
             app.manage(Arc::new(updater::UpdateState::new()));
 
             // 启动静默检查更新（延迟 5 s，发现新版才广播事件，否则沉默）
@@ -175,6 +181,15 @@ pub fn run() {
             }
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|handle, event| {
+            // M14：退出前把「今日流量」的最后一段增量落库。
+            // 不落也不会丢太多（最多 60 s），但正常退出时没必要留这个缺口
+            if let tauri::RunEvent::Exit = event {
+                if let Some(state) = handle.try_state::<Arc<net_sampler::TotalNetState>>() {
+                    state.flush_on_exit();
+                }
+            }
+        });
 }
