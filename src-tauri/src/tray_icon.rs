@@ -93,7 +93,7 @@ impl IconTheme {
 
     /// CPU 动画的帧（索引 0 与 `static_icon` 同尺寸，作为「静止」姿态）。
     ///
-    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，鲸鱼 8 帧「尾鳍往复」。
+    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，鲸鱼 6 帧「大幅游动」。
     /// 播放顺序由 [`IconTheme::beats`] 给出，不要假设长度。
     pub fn frames(self) -> &'static [Image<'static>] {
         match self {
@@ -104,17 +104,17 @@ impl IconTheme {
 
     /// 播放顺序（索引指向 `frames()`）。一轮播完才可能换速 —— 见 tray::run_anim。
     /// - 剪刀：[0,1,2,3,2,1] 往返 6 拍，避免开合动画首尾同帧造成的顿感
-    /// - 鲸鱼：0..8 顺序播放 = 一次完整游动往复（尾鳍 ±25° + 身体反向俯仰 ±7°）
+    /// - 鲸鱼：0..5 顺序播放 = 一次完整游动往复（尾鳍 ±30° + 身体反向俯仰 ±12°）
     pub fn beats(self) -> &'static [usize] {
         match self {
             Self::Scissors => &SCISSORS_BEATS,
-            Self::WhaleLogo => &WHALE_LOGO_BEATS,
+            Self::WhaleLogo => &WHALE_BEATS,
         }
     }
 }
 
 const SCISSORS_BEATS: [usize; 6] = [0, 1, 2, 3, 2, 1];
-const WHALE_LOGO_BEATS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+const WHALE_BEATS: [usize; 6] = [0, 1, 2, 3, 4, 5];
 
 fn scissors_frames() -> &'static [Image<'static>] {
     static FRAMES: OnceLock<[Image<'static>; 4]> = OnceLock::new();
@@ -142,26 +142,22 @@ fn whale_logo_frames() -> &'static [Image<'static>] {
     static FRAMES: OnceLock<Vec<Image<'static>>> = OnceLock::new();
     FRAMES.get_or_init(|| {
         #[cfg(target_os = "macos")]
-        let bytes: [&'static [u8]; 8] = [
+        let bytes: [&'static [u8]; 6] = [
             include_bytes!("../icons/tray-anim/whale-logo/macos/f0.png"),
             include_bytes!("../icons/tray-anim/whale-logo/macos/f1.png"),
             include_bytes!("../icons/tray-anim/whale-logo/macos/f2.png"),
             include_bytes!("../icons/tray-anim/whale-logo/macos/f3.png"),
             include_bytes!("../icons/tray-anim/whale-logo/macos/f4.png"),
             include_bytes!("../icons/tray-anim/whale-logo/macos/f5.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f6.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f7.png"),
         ];
         #[cfg(not(target_os = "macos"))]
-        let bytes: [&'static [u8]; 8] = [
+        let bytes: [&'static [u8]; 6] = [
             include_bytes!("../icons/tray-anim/whale-logo/win/f0.png"),
             include_bytes!("../icons/tray-anim/whale-logo/win/f1.png"),
             include_bytes!("../icons/tray-anim/whale-logo/win/f2.png"),
             include_bytes!("../icons/tray-anim/whale-logo/win/f3.png"),
             include_bytes!("../icons/tray-anim/whale-logo/win/f4.png"),
             include_bytes!("../icons/tray-anim/whale-logo/win/f5.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f6.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f7.png"),
         ];
         bytes
             .iter()
@@ -230,7 +226,7 @@ mod tests {
     }
 
     /// beats 是「播放顺序」，索引越界会在 set_frame 里 panic。
-    /// 改帧数（比如鲸鱼 Logo 从 8 帧加半拍）时最容易漏改 beats。
+    /// 改帧数（比如鲸鱼在 6/8 帧间调步进密度）时最容易漏改 beats。
     #[test]
     fn every_beat_points_at_a_real_frame() {
         for theme in IconTheme::ALL {
