@@ -8,6 +8,7 @@ import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
 import { ReclaimBoard } from "../components/ReclaimBoard";
+import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
 import { StatsBoard } from "../components/StatsBoard";
 import {
@@ -35,7 +36,15 @@ import {
 } from "../types/mem";
 import { exposureMeta, portsOfPid } from "../types/net";
 
-type MainTab = "stats" | "resources" | "apps" | "overview" | "disk" | "ports" | "net";
+type MainTab =
+  | "stats"
+  | "resources"
+  | "apps"
+  | "overview"
+  | "disk"
+  | "ports"
+  | "net"
+  | "settings";
 
 /** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
@@ -263,6 +272,7 @@ export function MainWindow() {
               hint: "本机下载 / 上传速率、走势、网卡分布与今日流量",
             },
             { id: "ports", label: "端口", hint: "谁占着 3000：按端口反查持有进程" },
+            { id: "settings", label: "设置", hint: "灵动岛开关与 CPU 暴走阈值" },
           ]}
         />
         <div className="flex-1" />
@@ -284,15 +294,17 @@ export function MainWindow() {
             </span>
           </>
         ) : null}
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={busy}
-          className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
-        >
-          <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
-          {refreshLabel}
-        </button>
+        {tab === "settings" ? null : (
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={busy}
+            className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
+          >
+            <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
+            {refreshLabel}
+          </button>
+        )}
       </header>
 
       {error ? (
@@ -301,7 +313,9 @@ export function MainWindow() {
         </div>
       ) : null}
 
-      {tab === "stats" ? (
+      {tab === "settings" ? (
+        <SettingsBoard />
+      ) : tab === "stats" ? (
         <StatsBoard onDrill={setTab} refreshNonce={statsNonce} />
       ) : tab === "resources" ? (
         <AppResourceBoard
