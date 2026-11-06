@@ -11,10 +11,20 @@ export function Sparkline({
   values,
   height = 64,
   tone = "accent",
+  baselineZero = false,
 }: {
   values: number[];
   height?: number;
+  /** `info` 是 M14 加的：上下行两条线必须可区分 */
   tone?: "accent" | "warn" | "info";
+  /**
+   * 纵轴从 0 起（M16）。
+   *
+   * 默认按自身 min/max 归一化，适合「形态」比「绝对值」重要的曲线；但网速在
+   * 空闲时会在 2–8 KB/s 之间抖动，min/max 归一化会把这层噪声画成满屏尖峰，
+   * 看起来像在跑满带宽。统计页的迷你走势必须从 0 起。
+   */
+  baselineZero?: boolean;
 }) {
   const gradientId = useId().replace(/:/g, "");
 
@@ -32,8 +42,9 @@ export function Sparkline({
   const W = 100;
   const H = 32;
   const max = Math.max(...values);
-  const min = Math.min(...values);
+  const min = baselineZero ? 0 : Math.min(...values);
   const span = max - min || Math.max(1, max * 0.02);
+
 
   const coords = values.map((v, i) => {
     const x = (i / (values.length - 1)) * W;

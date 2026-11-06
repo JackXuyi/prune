@@ -143,13 +143,18 @@ export function MainWindow() {
   }, [tab, hydratePorts]);
 
   /**
-   * 统计 tab 需要「端口数量」：只做一次性扫描——`init` 内部有快照就只读、
-   * 没有才扫一轮。这里**不调 setActive**，30 s 定时轮仍然只属于端口 tab，
-   * 统计页的常驻开销为 0（方案 §3.4 / 验收 3）。
+   * 统计 tab 的两个「只读依赖」：
+   * - 端口：一次性扫描——`init` 内部有快照就只读、没有才扫一轮。这里**不调
+   *   setActive**，30 s 定时轮仍然只属于端口 tab，统计页的常驻开销为 0。
+   * - 网速：只 `init`（订阅 net://total + 拉一次快照/历史），**不提速**；
+   *   `setActive` 仍然只属于「网络」tab。少了这一步，统计页的网络卡会永远停在
+   *   「采样中…」——`initNetTotal` 的唯一调用点本来在下面的 net 分支里。
    */
   useEffect(() => {
-    if (tab === "stats") void initPorts();
-  }, [tab, initPorts]);
+    if (tab !== "stats") return;
+    void initPorts();
+    void initNetTotal();
+  }, [tab, initPorts, initNetTotal]);
 
   // 应用资源 tab 的资源卡要挂端口徽标：一次性 init，不挂 30 s 定时轮
   useEffect(() => {
@@ -209,7 +214,7 @@ export function MainWindow() {
         : tab === "net"
           ? netTotalRefreshing
           : tab === "stats"
-            ? refreshing || portRefreshing
+            ? refreshing || portRefreshing || netTotalRefreshing
             : refreshing;
   const onRefresh = () => {
     if (tab === "disk") void refreshDisk();
@@ -218,9 +223,11 @@ export function MainWindow() {
       // 网络 tab 的「刷新」= 重取快照 + 走势 + 7 日柱，不打断后台采样
       void refreshNetTotal();
     } else if (tab === "stats") {
-      // 三个域各刷一次：内存常采、卷容量按需取、端口显式重扫一轮（用户点了就该扫）
+      // 四个域各刷一次：内存常采、卷容量按需取、端口显式重扫一轮（用户点了就该扫）、
+      // 网速重取快照与走势（只读，不改采样节拍）
       void refresh();
       void refreshPorts();
+      void refreshNetTotal();
       setStatsNonce((n) => n + 1);
     } else if (tab === "resources") {
       // 网速不用手动刷（1 s 自己跳）；这里刷内存 + 端口 + 强制重测磁盘本体
@@ -257,7 +264,7 @@ export function MainWindow() {
           value={tab}
           onChange={setTab}
           items={[
-            { id: "stats", label: "统计", hint: "内存 / 硬盘 / CPU / 端口：本机资源总览" },
+            { id: "stats", label: "统计", hint: "内存 / CPU / 硬盘 / 端口 / 网速：本机资源总览" },
             {
               id: "resources",
               label: "应用资源",

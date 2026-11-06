@@ -1,31 +1,53 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { AppMemorySummary } from "../components/AppMemoryList";
 import { LeakBanner } from "../components/LeakCard";
-import { TopAppCards } from "../components/AppResourceGrid";
-import { formatBytes, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
+import { NetStatsRow, StatsRow } from "../components/stats/StatsRow";
+import { formatRelative } from "../lib/format";
 import { openMain } from "../lib/ipc";
+import {
+  cpuReadout,
+  diskReadout,
+  memoryReadout,
+  netReadout,
+  portReadout,
+} from "../lib/statsReadout";
+import { useVolumeInfo } from "../lib/useVolumeInfo";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
+import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
-import { swappedRatio, type FamilyMem, type MemSnapshot, type ProcMem } from "../types/mem";
 import { ChevronRightIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
-import { Badge, Meter, PressureDot } from "../components/primitives";
-import { Tabs } from "../components/Tabs";
+import { Badge } from "../components/primitives";
 import { UpdateCard } from "../components/UpdateCard";
 
-type PanelTab = "apps" | "overview";
-
-const EMPTY_FAMILIES: FamilyMem[] = [];
-const EMPTY_PROCESSES: ProcMem[] = [];
-
-/** 菜单栏面板（380×560）：应用内存 / 概况 两个 tab */
+/**
+ * 菜单栏面板（380×400）：单页统计。
+ *
+ * 窗口高度贴合内容（394 + 6 余量，算式见 `tray.rs: PANEL_H`），不是固定 560：
+ * 面板只有一屏、没有 tab 切换，多出来的高度只会是底部空白。
+ *
+ * 原来的「应用」「概况」两个 tab 都已撤掉——应用级明细在主窗口「应用资源」，
+ * 内存压力 / swap / 换出受害者在主窗口「内存」。面板是「瞄一眼」场景。
+ *
+ * 读数与主窗口统计 tab 共用 `lib/statsReadout`，面板只换排版密度（48 px 行），
+ * 不重算口径。
+ */
 export function MenuBarPanel() {
-  const [tab, setTab] = useState<PanelTab>("apps");
+  const [refreshNonce, setRefreshNonce] = useState(0);
   const snapshot = useMemStore((s) => s.snapshot);
   const loading = useMemStore((s) => s.loading);
   const refreshing = useMemStore((s) => s.refreshing);
   const error = useMemStore((s) => s.error);
   const refresh = useMemStore((s) => s.refresh);
+  const refreshPorts = usePortStore((s) => s.refresh);
+  const refreshNet = useNetTotalStore((s) => s.refresh);
+
+  /** 一个按钮刷三个域：内存常采、端口重扫、网速重取快照（都是只读动作） */
+  const onRefresh = () => {
+    void refresh();
+    void refreshPorts();
+    void refreshNet();
+    setRefreshNonce((n) => n + 1);
+  };
 
   return (
     <div className="flex h-screen flex-col p-2">
@@ -45,7 +67,7 @@ export function MenuBarPanel() {
             )
           ) : null}
           <div className="flex-1" />
-          <IconButton label="立即刷新" onClick={() => void refresh()}>
+          <IconButton label="立即刷新" onClick={onRefresh}>
             <RefreshIcon size={13} className={refreshing ? "animate-spin" : ""} />
           </IconButton>
           <IconButton label="打开主窗口" onClick={() => void openMain()}>
@@ -53,40 +75,16 @@ export function MenuBarPanel() {
           </IconButton>
         </header>
 
-        <DomainHero />
-
-        <div className="flex h-9 shrink-0 items-center justify-between px-3.5">
-          <Tabs
-            size="sm"
-            value={tab}
-            onChange={setTab}
-            items={[
-              { id: "apps", label: "应用", hint: "内存前 3 的应用资源卡，点击卡片看全部" },
-              { id: "overview", label: "概况", hint: "内存压力与 swap" },
-            ]}
-          />
-          {snapshot ? (
-            tab === "overview" ? (
-              <span className="text-[10px] text-ink-faint">
-                swap {formatPercent(snapshot.swap.total > 0 ? snapshot.swap.used / snapshot.swap.total : 0)}
-              </span>
-            ) : (
-              <AppMemorySummary families={snapshot.families} />
-            )
-          ) : null}
-        </div>
-
-        <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-3">
+        {/* pt-1：tab 行删除后补一点呼吸，否则首个读数行紧贴 header */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-3 pt-1">
           {error ? (
             <div className="rounded-lg bg-danger/[0.08] p-3 text-[11px] leading-relaxed text-danger">
               {error}
             </div>
           ) : !snapshot ? (
             <Skeleton loading={loading} />
-          ) : tab === "apps" ? (
-            <AppsSection />
           ) : (
-            <MemSection />
+            <StatsSection refreshNonce={refreshNonce} />
           )}
         </div>
 
@@ -95,285 +93,78 @@ export function MenuBarPanel() {
 
         <footer className="flex shrink-0 items-center justify-between px-3.5 pb-2.5 pt-1 text-[10px] text-ink-faint/80">
           <span>上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}</span>
-          <span>每 10 秒刷新</span>
+          <span>内存 10 s · 网速 2 s</span>
         </footer>
       </div>
     </div>
   );
 }
 
-/** tab 1：应用资源卡片（M10 同款），只看内存前 3 —— 面板是「瞄一眼」场景，不是对比工作台 */
-function AppsSection() {
-  const families = useMemStore((s) => s.snapshot?.families ?? EMPTY_FAMILIES);
-  const processes = useMemStore((s) => s.processes ?? EMPTY_PROCESSES);
-  const leaks = useMemStore((s) => s.snapshot?.leaks);
-  // 只读已有端口快照：面板不做端口扫描（lsof 40 ms 起，面板打开频率太高）
+/**
+ * 单页统计（M16）。五行读数与主窗口统计页同源，只是密度不同。
+ *
+ * 端口只做一次性 init（有快照就只读），网速只 init 不提速——面板不做任何
+ * 轮询，所有数字都来自已有的常采 / 常驻采样。
+ */
+function StatsSection({ refreshNonce }: { refreshNonce: number }) {
+  const snapshot = useMemStore((s) => s.snapshot);
+  const report = useDiskStore((s) => s.report);
   const ports = usePortStore((s) => s.snapshot);
-  const hydratePorts = usePortStore((s) => s.hydrate);
+  const initPorts = usePortStore((s) => s.init);
+  const netSample = useNetTotalStore((s) => s.sample);
+  const netHistory = useNetTotalStore((s) => s.history);
+  const initNetTotal = useNetTotalStore((s) => s.init);
+  const { volume, known } = useVolumeInfo(refreshNonce);
 
+  // 面板一显示就备好端口与网速：两个 init 都幂等（有快照只读 / 已订阅即返回）
   useEffect(() => {
-    void hydratePorts();
-  }, [hydratePorts]);
+    void initPorts();
+    void initNetTotal();
+  }, [initPorts, initNetTotal]);
+
+  const mem = memoryReadout(snapshot);
+  const cpu = cpuReadout(snapshot?.cpu);
+  const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known);
+  const port = portReadout(ports);
+  const net = netReadout(netSample, netHistory);
+  const families = snapshot?.families.length ?? 0;
 
   return (
     <section>
       {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
-      {leaks ? <LeakBanner report={leaks} onOpen={() => void openMain(undefined, "apps")} /> : null}
-      <div className={leaks ? "mt-2" : ""}>
-        <TopAppCards
-          families={families}
-          processes={processes}
-          ports={ports}
-          count={3}
-          onOpenProcess={(pid) => void openMain(pid)}
-          onOpenAll={() => void openMain(undefined, "resources")}
-        />
-      </div>
-    </section>
-  );
-}
-
-function MemSection() {
-  const snapshot = useMemStore((s) => s.snapshot)!;
-  const { swap, compressorBytes, pressure, thrash, topSwapped } = snapshot;
-  // 没有换页计数 = 该平台不提供换出读数：换出受害者与颠簸速率整块隐藏
-  const hasSwapMetrics = thrash != null;
-
-  const ratio = swap.total > 0 ? swap.used / swap.total : 0;
-  const tone = ratio >= 0.9 ? "danger" : ratio >= 0.75 ? "warn" : "accent";
-  const ratioText = ratio >= 0.9 ? "text-danger" : ratio >= 0.75 ? "text-warn" : "text-ink-dim";
-
-  // 面板是「瞄一眼」场景：受害者只露前 3 名，完整列表在主窗口的内存·概况里
-  const victimLimit = 3;
-  const shownVictims = topSwapped.slice(0, victimLimit);
-  const hiddenVictims = topSwapped.length - shownVictims.length;
-
-  return (
-    <section>
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-ink-dim">内存压力</span>
-          {pressure ? (
-            <PressureDot level={pressure.level} />
-          ) : (
-            <span className="text-[10px] text-ink-faint">不可用</span>
-          )}
-        </div>
-        {compressorBytes != null ? (
-          <div className="text-[10px] text-ink-faint">
-            压缩 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(compressorBytes)}</span>
-          </div>
-        ) : null}
-      </div>
-
-      <div className="mt-2.5">
-        <div className="flex items-baseline justify-between">
-          <span className="text-[11px] text-ink-dim">swap 已用</span>
-          <span className="font-mono text-[12px] tabular-nums text-ink">
-            {numOf(swap.used)}
-            <span className="text-ink-faint">
-              {" "}
-              / {numOf(swap.total)} {unitOf(swap.total)}
-            </span>
-            <span className={`ml-1.5 ${ratioText}`}>{formatPercent(ratio)}</span>
-          </span>
-        </div>
-        <Meter ratio={ratio} tone={tone} className="mt-1.5" />
-        <div className="mt-1.5 flex items-center justify-between text-[10px] text-ink-faint">
-          <span>
-            {swap.fileCount != null
-              ? `↳ swapfile 占用 ${formatBytes(swap.used)}（主窗口「存储」可查）`
-              : `↳ pagefile 占用 ${formatBytes(swap.used)}`}
-          </span>
-          {swap.newToday != null ? (
-            <span>{swap.newToday > 0 ? `+${swap.newToday} 今日` : "今日 +0"}</span>
-          ) : null}
-        </div>
-        {hasSwapMetrics ? (
-          <div className="mt-1 flex items-center justify-between text-[10px] text-ink-faint">
-            <span>
-              颠簸 in <span className="font-mono tabular-nums">{formatRate(thrash.swapinsPerSec)}</span>/s
-            </span>
-            <span>
-              out <span className="font-mono tabular-nums">{formatRate(thrash.swapoutsPerSec)}</span>/s
-            </span>
-          </div>
-        ) : null}
-      </div>
-
-      {hasSwapMetrics ? (
-        <>
-          <div className="mt-2.5 flex items-baseline justify-between border-t border-hairline-soft pt-2.5">
-            <h2 className="text-[11px] font-medium tracking-wide text-ink-dim">换出受害者</h2>
-            <span className="text-[10px] text-ink-faint">
-              {snapshot.deepAvailable ? "按已换出量 · 点开检视" : "暂无深探数据"}
-            </span>
-          </div>
-          {topSwapped.length === 0 ? (
-            <p className="mt-2 py-1.5 text-[11px] leading-relaxed text-ink-faint">
-              当前没有明显被换出的进程。
-            </p>
-          ) : (
-            <ul className="mt-0.5">
-              {shownVictims.map((p) => (
-                <VictimRow key={`${p.pid}-${p.startTime}`} proc={p} />
-              ))}
-            </ul>
-          )}
-          {hiddenVictims > 0 ? (
-            <button
-              type="button"
-              onClick={() => void openMain(undefined, "overview")}
-              className="mt-0.5 w-full rounded-md px-1.5 py-1 text-left text-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
-              title="打开主窗口的内存·概况 tab"
-            >
-              还有 {hiddenVictims} 个被换出的进程 → 主窗口查看
-            </button>
-          ) : null}
-        </>
-      ) : null}
-
-      {/* 没有命中时也要区分「检查过没问题」和「数据不够/没在检查」 */}
-      {leakFootnote(snapshot.leaks)}
-    </section>
-  );
-}
-
-function leakFootnote(leaks: MemSnapshot["leaks"]): ReactNode {
-  if (leaks.items.length > 0) return null;
-  if (leaks.note) {
-    return (
-      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">
-        泄漏判定不可用：{leaks.note}
-      </p>
-    );
-  }
-  if (leaks.insufficient > 0) {
-    return (
-      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">
-        泄漏判定需连续观测 {Math.round(leaks.windowSecs / 60)} min 才能下结论，
-        当前 {leaks.insufficient} 个进程数据不足。
-      </p>
-    );
-  }
-  return null;
-}
-
-function VictimRow({ proc }: { proc: ProcMem }) {
-  const ratio = swappedRatio(proc);
-  const tone = ratio != null && ratio >= 0.9 ? "text-warn" : "text-ink-dim";
-
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => void openMain(proc.pid)}
-        className="group flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left transition-colors hover:bg-white/[0.045]"
-      >
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12px] leading-tight text-ink">{proc.name}</span>
-          <span className="mt-0.5 block truncate text-[10px] text-ink-faint">
-            {proc.family} · pid {proc.pid}
-          </span>
-        </span>
-        <span className="shrink-0 text-right">
-          <span className={`block font-mono text-[12px] leading-tight tabular-nums ${tone}`}>
-            {formatBytes(proc.swapped ?? 0)}
-          </span>
-          <span className="mt-0.5 block text-[10px] text-ink-faint">
-            {ratio != null ? `${formatPercent(ratio)} 在磁盘` : "—"}
-          </span>
-        </span>
-        <ChevronRightIcon
-          size={12}
-          className="shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100"
-        />
-      </button>
-    </li>
-  );
-}
-
-/**
- * 首屏双行分区（M4/S1）：内存域与存储域各占一行，边界清晰、互不混排。
- * 内存行读 memStore（压力 + 已用/总量），存储行读 diskStore（可回收 + 卷剩余）；
- * 交换两个域的展示顺序等于换 tab 入口，各自点击直达主窗口对应 tab。
- */
-function DomainHero() {
-  const snapshot = useMemStore((s) => s.snapshot);
-  const report = useDiskStore((s) => s.report);
-  const scanning = useDiskStore((s) => s.scanning);
-  const progress = useDiskStore((s) => s.progress);
-  const volume = report?.volume ?? null;
-  const used = snapshot?.physicalUsedBytes ?? 0;
-  const total = snapshot?.physicalTotal ?? 0;
-  const a1 = report?.groups.find((g) => g.deadweight != null)?.deadweight ?? null;
-
-  return (
-    <section className="shrink-0 border-y border-hairline-soft">
-      {/* 内存域：压力点 + 已用/总量 */}
-      <button
-        type="button"
-        onClick={() => void openMain(undefined, "overview")}
-        className="group flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-        title="打开内存概况"
-      >
-        <PressureDot level={snapshot?.pressure?.level ?? "normal"} />
-        <span className="text-[11px] font-medium text-ink-dim">内存</span>
-        <span className="flex-1" />
-        <span className="font-mono text-[15px] font-semibold tracking-tight tabular-nums text-ink">
-          {snapshot && used > 0 ? (
-            <>
-              {numOf(used)}
-              <span className="text-[11px] font-normal text-ink-faint">
-                {" "}
-                / {numOf(total)} {unitOf(total)}
-              </span>
-            </>
-          ) : (
-            "—"
-          )}
-        </span>
-        <ChevronRightIcon
-          size={12}
-          className="shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100"
-        />
-      </button>
-
-      {/* 存储域：⚡可回收主数字 + 卷剩余 */}
-      <button
-        type="button"
-        onClick={() => void openMain(undefined, "disk")}
-        className="group flex w-full items-center gap-2.5 border-t border-hairline-soft px-3.5 py-2.5 text-left transition-colors hover:bg-white/[0.03]"
-        title={
-          a1
-            ? `🟢 ${formatBytes(a1.bytes)} 跨平台二进制 · 你的 Mac 永远加载不了`
-            : "打开存储 / 可回收空间"
-        }
-      >
-        <span className="text-[11px] font-medium text-ink-dim">
-          <span className="mr-0.5 text-accent">⚡</span>存储
-        </span>
-        <span className="flex-1" />
-        <span className="font-mono text-[15px] font-semibold tracking-tight tabular-nums text-accent">
-          {report ? formatBytes(report.totals.reclaimable) : scanning ? "扫描中…" : "—"}
-        </span>
-        <span className="text-[10px] text-ink-faint">
-          可回收{volume ? ` · 剩余 ${formatBytes(volume.userAvailableBytes)}` : ""}
-        </span>
-        <ChevronRightIcon
-          size={12}
-          className="shrink-0 text-ink-faint opacity-0 transition-opacity group-hover:opacity-100"
-        />
-      </button>
-
-      {scanning ? (
-        <div className="h-0.5 w-full overflow-hidden rounded-full bg-white/[0.06]">
-          <div
-            className="h-full rounded-full bg-accent transition-[width] duration-300"
-            style={{ width: `${progress ? Math.round((progress.done / Math.max(progress.total, 1)) * 100) : 8}%` }}
-          />
+      {snapshot?.leaks ? (
+        <div className="mb-1">
+          <LeakBanner report={snapshot.leaks} onOpen={() => void openMain(undefined, "apps")} />
         </div>
       ) : null}
+
+      <div className="divide-y divide-hairline-soft">
+        <StatsRow title="内存" readout={mem} onOpen={() => void openMain(undefined, "overview")} />
+        <StatsRow
+          icon={<span className="text-accent">⚡</span>}
+          title="存储"
+          readout={disk}
+          onOpen={() => void openMain(undefined, "disk")}
+        />
+        <StatsRow title="CPU" readout={cpu} />
+        <NetStatsRow readout={net} onOpen={() => void openMain(undefined, "net")} />
+        <StatsRow title="端口" readout={port} onOpen={() => void openMain(undefined, "ports")} />
+      </div>
+
+      {/* 应用列表退化为一行入口：面板是「瞄一眼」，对比工作台在主窗口 */}
+      <button
+        type="button"
+        onClick={() => void openMain(undefined, "resources")}
+        className="group mt-1 flex w-full items-center gap-1 rounded-md px-1 py-1.5 text-left text-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
+      >
+        <span className="min-w-0 flex-1 truncate">
+          查看全部 {families} 个应用（CPU / 磁盘 / 网速对比）
+        </span>
+        <ChevronRightIcon
+          size={11}
+          className="shrink-0 transition-transform group-hover:translate-x-0.5"
+        />
+      </button>
     </section>
   );
 }
