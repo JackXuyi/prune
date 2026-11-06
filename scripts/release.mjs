@@ -112,7 +112,17 @@ const targetTriple =
 
 if (!SKIP_BUILD) {
   step(`构建安装包（${targetTriple}）`)
-  const cmd = `pnpm tauri build --target ${targetTriple}`
+  // pnpm 不一定在 PATH 里（新机器 / 受限 shell）；本地 node_modules 里就有
+  // 同一份 @tauri-apps/cli，回退用它，命令语义完全一致
+  let hasPnpm = true
+  try {
+    execSync('command -v pnpm', { stdio: 'pipe' })
+  } catch {
+    hasPnpm = false
+  }
+  const cmd = hasPnpm
+    ? `pnpm tauri build --target ${targetTriple}`
+    : `node_modules/.bin/tauri build --target ${targetTriple}`
   log(`  $ ${cmd}`)
   if (DRY) warn('dry-run：跳过构建')
   else execSync(cmd, { cwd: root, stdio: 'inherit' })
@@ -131,7 +141,11 @@ function walk(dir, acc = []) {
 }
 
 // 产物可能在带 target 三元组的目录，也可能在默认 target/release 下（不带 --target 构建时）
+// 注意两种布局：src-tauri 独立项目时是 src-tauri/target/...；Cargo workspace（本仓库）
+// 共享根 target，产物在仓库根的 target/... 下
 const bundleCandidates = [
+  join(root, 'target', targetTriple, 'release', 'bundle'),
+  join(root, 'target', 'release', 'bundle'),
   join(root, 'src-tauri', 'target', targetTriple, 'release', 'bundle'),
   join(root, 'src-tauri', 'target', 'release', 'bundle'),
 ]
