@@ -10,7 +10,17 @@ import type {
 } from "../types/disk";
 import type { AppDisk, BundleMap, DiskLeaf } from "../types/appdisk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
-import type { NetSpeedSample, PortBinding, PortEntry, PortSnapshot, Proto } from "../types/net";
+import type {
+  DayTraffic,
+  NetSpeedSample,
+  NetTotalPoint,
+  NetTotalSample,
+  PortBinding,
+  PortEntry,
+  PortSnapshot,
+  Proto,
+} from "../types/net";
+import { dayString } from "./format";
 
 /**
  * 仅开发态使用（import.meta.env.DEV && 非 Tauri）：让 UI 可以脱离桌面端
@@ -599,4 +609,98 @@ export function devBundles(): BundleMap {
     Slack: { bytes: 210_000_000, partial: false },
     Docker: { bytes: 3_100_000_000, partial: false },
   };
+}
+
+// ---------------------------------------------------------------- 网络总览（M14）
+
+/**
+ * 系统口径总网速的浏览器 fixture。
+ *
+ * 形态取自实机：一块物理口在跑、一块有线口常驻 0、VPN 隧道与隔空投送
+ * 在折叠区。数字量级按「真实 1–2 MB/s」给 —— 旧版菜单栏那个 `2.1M`
+ * 是分工错误放大的产物（见 net_sampler 的 P0 注释）。
+ */
+export function devNetTotal(): NetTotalSample {
+  const now = Math.floor(Date.now() / 1000);
+  const GB = 1e9;
+  return {
+    at: now,
+    status: "ok",
+    note: null,
+    downBps: 1_180_000,
+    upBps: 96_000,
+    intervalMs: 1000,
+    ifaces: [
+      {
+        name: "en0",
+        kind: "physical",
+        downBps: 1_180_000,
+        upBps: 96_000,
+        sessionDownBytes: 812e6,
+        sessionUpBytes: 96e6,
+      },
+      {
+        name: "en5",
+        kind: "physical",
+        downBps: 0,
+        upBps: 0,
+        sessionDownBytes: 0,
+        sessionUpBytes: 0,
+      },
+      {
+        name: "utun3",
+        kind: "tunnel",
+        downBps: 0,
+        upBps: 0,
+        sessionDownBytes: 0,
+        sessionUpBytes: 0,
+      },
+      { name: "awdl0", kind: "virtual", downBps: 0, upBps: 0, sessionDownBytes: 0, sessionUpBytes: 0 },
+      { name: "llw0", kind: "virtual", downBps: 0, upBps: 0, sessionDownBytes: 0, sessionUpBytes: 0 },
+    ],
+    sessionDownBytes: 812e6,
+    sessionUpBytes: 96e6,
+    peakDownBps: 8_100_000,
+    peakUpBps: 620_000,
+    peakAt: now - 640,
+    today: { day: dayString(new Date()), downBytes: 12.4 * GB, upBytes: 1.2 * GB },
+    todayPersistedAt: now - 18,
+  };
+}
+
+/** 近 5 min 走势：一条像真流量的曲线（静默 + 一波下载 + 回落） */
+export function devNetHistory(): NetTotalPoint[] {
+  const now = Math.floor(Date.now() / 1000);
+  const out: NetTotalPoint[] = [];
+  for (let i = 299; i >= 0; i -= 1) {
+    const t = 299 - i;
+    // 0.9 MB/s 的基线 + 第 120–170 s 的一波下载 + 小幅抖动
+    const burst = t > 120 && t < 170 ? 4.2e6 * Math.sin(((t - 120) / 50) * Math.PI) : 0;
+    const jitter = Math.sin(t / 3.1) * 120_000 + Math.sin(t / 11.7) * 60_000;
+    out.push({
+      at: now - i,
+      downBps: Math.max(0, 900_000 + burst + jitter),
+      upBps: Math.max(0, 70_000 + Math.sin(t / 5.3) * 22_000 + (t > 120 && t < 170 ? 40_000 : 0)),
+    });
+  }
+  return out;
+}
+
+/** 近 7 天：6 天有记录 + 1 天缺（验证灰条，不画成 0 柱） */
+export function devTrafficDays(): DayTraffic[] {
+  const GB = 1e9;
+  const out: DayTraffic[] = [];
+  const now = new Date();
+  // 缺第 4 天（index 3）：Prune 那天没运行
+  for (let i = 6; i >= 0; i -= 1) {
+    if (i === 3) continue;
+    const d = new Date(now.getTime() - i * 86_400_000);
+    const scale = i === 0 ? 12.4 : 4 + ((i * 7) % 11);
+    out.push({
+      day: dayString(d),
+      downBytes: scale * GB,
+      upBytes: scale * 0.11 * GB,
+    });
+  }
+  return out;
 }

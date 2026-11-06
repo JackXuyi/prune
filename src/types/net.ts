@@ -277,3 +277,118 @@ export function formatSpeed(bps: number): string {
   }
   return `${v >= 100 ? Math.round(v) : v.toFixed(1)} ${units[i]}`;
 }
+
+// ---------------------------------------------------------------- 网络总览（M14）
+//
+// 与 prune-core::net::traffic 一一对应（camelCase）。改这里必须同步 Rust 侧。
+
+/** 网卡类型：只有 physical 计入主数字（虚拟口与物理口统计同一批字节） */
+export type IfaceKind = "physical" | "tunnel" | "virtual" | "loopback";
+
+/** 采样状态三态，UI 必须区分（warmup / unavailable 都不能显示 0） */
+export type NetTotalStatus = "ok" | "warmup" | "unavailable";
+
+export interface IfaceRate {
+  name: string;
+  kind: IfaceKind;
+  downBps: number;
+  upBps: number;
+  /** 本次会话该网卡的正增量累计 */
+  sessionDownBytes: number;
+  sessionUpBytes: number;
+}
+
+/** 一天的流量（本地日期，仅物理口，仅 Prune 运行期间） */
+export interface DayTraffic {
+  /** `YYYY-MM-DD` */
+  day: string;
+  downBytes: number;
+  upBytes: number;
+}
+
+export interface NetTotalPoint {
+  at: number;
+  downBps: number;
+  upBps: number;
+}
+
+export interface NetTotalSample {
+  at: number;
+  status: NetTotalStatus;
+  /** 非空 = 必须显示给用户的原因（不可读 / 今日流量未落库） */
+  note: string | null;
+  /** 物理口合计 */
+  downBps: number;
+  upBps: number;
+  /** 上一拍的真实间隔（毫秒） */
+  intervalMs: number;
+  /** 物理口在前、虚拟口在后，各自按速率降序 */
+  ifaces: IfaceRate[];
+  sessionDownBytes: number;
+  sessionUpBytes: number;
+  /** 峰值固定为「本次会话最大值」，与走势窗口解耦 */
+  peakDownBps: number;
+  peakUpBps: number;
+  peakAt: number;
+  /** 今日。null = 未落库 / 库不可用 —— **不是 0** */
+  today: DayTraffic | null;
+  /** 上次成功落库时刻（0 = 还没落过） */
+  todayPersistedAt: number;
+}
+
+/** 网卡类型的展示文案（虚拟口那一行必须自带「不计入」的解释） */
+export function ifaceKindLabel(kind: IfaceKind): string {
+  switch (kind) {
+    case "tunnel":
+      return "隧道";
+    case "virtual":
+      return "虚拟";
+    case "loopback":
+      return "回环";
+    default:
+      return "物理";
+  }
+}
+
+/**
+ * 拆分网卡列表：物理口一行一行显示，虚拟口折叠。
+ *
+ * 折叠不是为了省地方，是为了不抢注意力 —— 一排 `awdl0 0 B/s` 会让人
+ * 以为网卡列表坏了。信息不能丢，所以折叠区仍然显示当前速率。
+ */
+export function splitIfaces(ifaces: IfaceRate[]): {
+  physical: IfaceRate[];
+  virtual: IfaceRate[];
+} {
+  return {
+    physical: ifaces.filter((i) => i.kind === "physical"),
+    virtual: ifaces.filter((i) => i.kind !== "physical"),
+  };
+}
+
+/** 单张网卡的合计速率（排序与占比条用，与 Rust `IfaceRate::total_bps` 同义） */
+export function ifaceTotalBps(i: IfaceRate): number {
+  return i.downBps + i.upBps;
+}
+
+/**
+ * 窗口内的**时间加权**平均速率。
+ *
+ * 用点间隔做权重而不是简单平均：采样抖动（漏拍、2 s 节拍）时简单平均
+ * 会让短间隔的尖峰被过度放大。
+ */
+export function weightedAverage(points: NetTotalPoint[]): { downBps: number; upBps: number } {
+  if (points.length < 2) return { downBps: 0, upBps: 0 };
+  let down = 0;
+  let up = 0;
+  let span = 0;
+  for (let i = 1; i < points.length; i += 1) {
+    const dt = Math.max(0, points[i].at - points[i - 1].at);
+    if (dt === 0) continue;
+    down += points[i].downBps * dt;
+    up += points[i].upBps * dt;
+    span += dt;
+  }
+  if (span === 0) return { downBps: 0, upBps: 0 };
+  return { downBps: down / span, upBps: up / span };
+}

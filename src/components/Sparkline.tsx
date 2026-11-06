@@ -3,6 +3,9 @@ import { useId } from "react";
 /**
  * 自绘 SVG sparkline（不引图表库，符合方案 §9 的自耗预算）。
  * 只负责画线，不带坐标轴——数值由外层以文字给出。
+ *
+ * `tone="info"` 是 M14 加的：网络 tab 的上下行必须是两条可区分的线，
+ * 而且**各自归一化**（量级常差 10 倍，共享纵轴会把上传压成直线）。
  */
 export function Sparkline({
   values,
@@ -11,7 +14,7 @@ export function Sparkline({
 }: {
   values: number[];
   height?: number;
-  tone?: "accent" | "warn";
+  tone?: "accent" | "warn" | "info";
 }) {
   const gradientId = useId().replace(/:/g, "");
 
@@ -43,7 +46,7 @@ export function Sparkline({
     .join(" ");
   const area = `${line} L${W} ${H} L0 ${H} Z`;
 
-  const stroke = tone === "warn" ? "#f5b74a" : "#34d399";
+  const stroke = tone === "warn" ? "#f5b74a" : tone === "info" ? "#6aa9ff" : "#34d399";
 
   return (
     <svg
@@ -52,7 +55,7 @@ export function Sparkline({
       style={{ height }}
       className="w-full"
       role="img"
-      aria-label="内存走势"
+      aria-label="走势"
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">

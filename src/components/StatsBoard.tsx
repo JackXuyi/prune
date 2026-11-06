@@ -355,7 +355,7 @@ function PortCard({
             <p className="mt-2 text-[10px] leading-snug text-warn">{ports.coverage.note}</p>
           ) : null}
           <p className="mt-2 text-[10px] text-ink-faint">
-            连接多 ≠ 流量大：本机没有 per-process 字节计数口径
+            连接多 ≠ 流量大：这里只数连接，带宽与今日流量见「网络」tab
           </p>
         </>
       ) : (

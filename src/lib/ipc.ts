@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
-import type { NetSpeedSample, PortSnapshot } from "../types/net";
+import type { DayTraffic, NetSpeedSample, NetTotalPoint, NetTotalSample, PortSnapshot } from "../types/net";
 
 /** 浏览器里跑 vite 时没有任何 Tauri 注入，需要显式兜底而不是静默失败 */
 export function isTauri(): boolean {
@@ -30,7 +30,7 @@ export function memRefresh(): Promise<void> {
 /** 打开主窗口；传 pid 时主窗口会自动选中该进程，传 tab 时直接切到对应 tab */
 export function openMain(
   pid?: number,
-  tab?: "stats" | "resources" | "apps" | "overview" | "disk" | "ports",
+  tab?: "stats" | "resources" | "apps" | "overview" | "disk" | "ports" | "net",
 ): Promise<void> {
   return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null });
 }
@@ -131,6 +131,31 @@ export function netSpeedSnapshot(): Promise<NetSpeedSample | null> {
 /** 可见性门控：false 时 1 s 采样循环连 nettop 都不 spawn，常驻开销 0 */
 export function netSpeedSetActive(active: boolean): Promise<void> {
   return invoke<void>("net_speed_set_active", { active });
+}
+
+// ---------------------------------------------------------------- 网络总览（M14）
+
+/** 最新一拍系统口径网速；null = 还没采过（**不是「没有流量」**） */
+export function netTotalSnapshot(): Promise<NetTotalSample | null> {
+  return invoke<NetTotalSample | null>("net_total_snapshot");
+}
+
+/** 走势窗口（60 / 300 / 900 秒），后端已降采样到 ≤ 120 点 */
+export function netTotalHistory(seconds: number): Promise<NetTotalPoint[]> {
+  return invoke<NetTotalPoint[]>("net_total_history", { seconds });
+}
+
+/** 近 N 天每日流量（升序，只含有记录的日子；缺失日不返回） */
+export function netTrafficRecent(days: number): Promise<DayTraffic[]> {
+  return invoke<DayTraffic[]>("net_traffic_recent", { days });
+}
+
+/**
+ * 只改采样节拍（1 s ↔ 2 s），不清基线。
+ * 与 `netSpeedSetActive` 不同：那个是「开不开 nettop」的开关
+ */
+export function netTotalSetActive(active: boolean): Promise<void> {
+  return invoke<void>("net_total_set_active", { active });
 }
 
 // ---------------------------------------------------------------- 自动升级

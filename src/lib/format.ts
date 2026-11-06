@@ -73,3 +73,30 @@ export function formatRate(perSec: number): string {
   if (!Number.isFinite(perSec) || perSec <= 0) return "0";
   return perSec >= 10 ? perSec.toFixed(0) : perSec.toFixed(1);
 }
+
+/**
+ * 本地日期 `YYYY-MM-DD`。
+ *
+ * 必须与 Rust `prune_core::localtime::day_string` 同格式：7 日柱的键就是它，
+ * 差一个字符就整排灰条（而且看起来像「没记到数据」，很难查）。
+ */
+export function dayString(d: Date): string {
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+}
+
+/**
+ * 最近 n 天的日期键（升序，含今天）。
+ *
+ * 锚在当天 12:00 再回退整日：直接减 86400000 在夏令时切换日会跳过或重复一天，
+ * 而 12:00 离两次切换点都够远。
+ */
+export function recentDays(n: number): string[] {
+  const anchor = new Date();
+  anchor.setHours(12, 0, 0, 0);
+  const out: string[] = [];
+  for (let i = n - 1; i >= 0; i -= 1) {
+    out.push(dayString(new Date(anchor.getTime() - i * 86_400_000)));
+  }
+  return out;
+}

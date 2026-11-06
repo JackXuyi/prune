@@ -5,6 +5,7 @@ import { listen } from "@tauri-apps/api/event";
 import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { AppResourceBoard } from "../components/AppResourceGrid";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
+import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
 import { ReclaimBoard } from "../components/ReclaimBoard";
 import { Sparkline } from "../components/Sparkline";
@@ -21,6 +22,7 @@ import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
 import { useNetSpeedStore } from "../stores/netStore";
+import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
 import {
   isExact,
@@ -33,7 +35,7 @@ import {
 } from "../types/mem";
 import { exposureMeta, portsOfPid } from "../types/net";
 
-type MainTab = "stats" | "resources" | "apps" | "overview" | "disk" | "ports";
+type MainTab = "stats" | "resources" | "apps" | "overview" | "disk" | "ports" | "net";
 
 /** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
@@ -47,7 +49,7 @@ function sourceLabel(s: WorkspaceSource): string {
       : "继承所属窗口";
 }
 
-/** 主窗口（960×640）：统计总览 / 内存 / 存储 / 端口 */
+/** 主窗口（960×640）：统计总览 / 内存 / 存储 / 网络 / 端口 */
 export function MainWindow() {
   // M9：统计是默认页——打开先看本机整体，再下钻到具体域
   const [tab, setTab] = useState<MainTab>("stats");
@@ -71,6 +73,10 @@ export function MainWindow() {
   const netSample = useNetSpeedStore((s) => s.sample);
   const initNetSpeed = useNetSpeedStore((s) => s.init);
   const setNetActive = useNetSpeedStore((s) => s.setActive);
+  const initNetTotal = useNetTotalStore((s) => s.init);
+  const setNetTotalActive = useNetTotalStore((s) => s.setActive);
+  const refreshNetTotal = useNetTotalStore((s) => s.refresh);
+  const netTotalRefreshing = useNetTotalStore((s) => s.refreshing);
 
   const [expanded, setExpanded] = useState<string | null>(null);
   const [killTarget, setKillTarget] = useState<KillTarget | null>(null);
@@ -95,7 +101,8 @@ export function MainWindow() {
         t === "apps" ||
         t === "overview" ||
         t === "disk" ||
-        t === "ports"
+        t === "ports" ||
+        t === "net"
       ) {
         setTab(t);
       }
@@ -135,22 +142,48 @@ export function MainWindow() {
     if (tab === "stats") void initPorts();
   }, [tab, initPorts]);
 
+  // 应用资源 tab 的资源卡要挂端口徽标：一次性 init，不挂 30 s 定时轮
+  useEffect(() => {
+    if (tab === "resources") void initPorts();
+  }, [tab, initPorts]);
+
   /**
-   * 应用资源 tab：端口只做一次性 init（不挂 30 s 定时轮），
-   * 网速则要显式开闸——1 s 一次 nettop 只在用户真的看着这个 tab 时才该跑。
+   * 按进程网速（nettop）的可见性门控。
+   *
+   * M14 起「应用资源」与「网络」两个 tab 都要这份数据（网络 tab 的「按应用」
+   * 区块与资源卡同源），所以**只能有一个 effect 管这一个开关**：拆成两个
+   * effect 各自 `setActive(false)`，会在切 tab 时互相把对方关掉。
+   *
+   * 1 s 一次 nettop 只在用户真的看着这两个 tab 时才跑，其它 tab 连子进程都不 spawn。
    */
   useEffect(() => {
-    if (tab !== "resources") {
+    const visible = tab === "resources" || tab === "net";
+    if (!visible) {
       void setNetActive(false);
       return;
     }
-    void initPorts();
     void initNetSpeed();
     void setNetActive(true);
     return () => {
       void setNetActive(false);
     };
-  }, [tab, initPorts, initNetSpeed, setNetActive]);
+  }, [tab, initNetSpeed, setNetActive]);
+
+  /**
+   * 系统口径总网速的门控：进入网络 tab 只**提速**（2 s → 1 s）并补齐走势与 7 日柱。
+   * 采样循环本身常驻（菜单栏数字要用），所以切走不清基线、不停止采样。
+   */
+  useEffect(() => {
+    if (tab !== "net") {
+      void setNetTotalActive(false);
+      return;
+    }
+    void initNetTotal();
+    void setNetTotalActive(true);
+    return () => {
+      void setNetTotalActive(false);
+    };
+  }, [tab, initNetTotal, setNetTotalActive]);
 
   const families = snapshot?.families ?? [];
   const selected = useMemo(
@@ -164,13 +197,18 @@ export function MainWindow() {
       ? diskScanning
       : tab === "ports"
         ? portRefreshing
-        : tab === "stats"
-          ? refreshing || portRefreshing
-          : refreshing;
+        : tab === "net"
+          ? netTotalRefreshing
+          : tab === "stats"
+            ? refreshing || portRefreshing
+            : refreshing;
   const onRefresh = () => {
     if (tab === "disk") void refreshDisk();
     else if (tab === "ports") void refreshPorts();
-    else if (tab === "stats") {
+    else if (tab === "net") {
+      // 网络 tab 的「刷新」= 重取快照 + 走势 + 7 日柱，不打断后台采样
+      void refreshNetTotal();
+    } else if (tab === "stats") {
       // 三个域各刷一次：内存常采、卷容量按需取、端口显式重扫一轮（用户点了就该扫）
       void refresh();
       void refreshPorts();
@@ -191,9 +229,13 @@ export function MainWindow() {
         ? portRefreshing
           ? "扫描中"
           : "扫描端口"
-        : refreshing
-          ? "采样中"
-          : "刷新";
+        : tab === "net"
+          ? netTotalRefreshing
+            ? "刷新中"
+            : "刷新"
+          : refreshing
+            ? "采样中"
+            : "刷新";
 
   return (
     <div className="flex h-screen flex-col bg-surface text-ink">
@@ -215,6 +257,11 @@ export function MainWindow() {
             { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
             { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
             { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
+            {
+              id: "net",
+              label: "网络",
+              hint: "本机下载 / 上传速率、走势、网卡分布与今日流量",
+            },
             { id: "ports", label: "端口", hint: "谁占着 3000：按端口反查持有进程" },
           ]}
         />
@@ -288,6 +335,8 @@ export function MainWindow() {
             });
           }}
         />
+      ) : tab === "net" ? (
+        <NetBoard onOpenResources={() => setTab("resources")} />
       ) : tab === "disk" ? (
         <ReclaimBoard />
       ) : tab === "apps" ? (
