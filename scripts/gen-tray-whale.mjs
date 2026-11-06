@@ -6,8 +6,9 @@
 // 注意：目录名 tray-whale-logo / whale-logo 是历史遗留（曾是 DeepSeek Logo 皮），
 // Rust 侧 include_bytes! 引用这些路径，改目录要同步改 tray_icon.rs，这里不动。
 //
-// 风格与剪刀（gen-tray-frames.mjs）完全一致：
-//   - Lucide 24 网格线稿，fill=none + 圆头描边，无徽章、无色块
+// 风格与剪刀（gen-tray-frames.mjs）同族：
+//   - 24 网格、无徽章、单色字形；M18 起鲸鱼改**实心剪影**并放大到几乎占满画布，
+//     尾鳍摆动在 48px 下更醒目（眼睛用 evenodd 透明镂空，保住模板 alpha 语义）
 //   - macOS  48×48 黑色模板帧（系统按菜单栏深浅反色）
 //   - Windows 32×32 品牌色帧 #34D399（深色任务栏下黑色不可见）
 //   - macOS 侧走 is_template()，与剪刀共用同一套模板机制
@@ -25,40 +26,42 @@ import sharp from "sharp";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 // 每帧：尾鳍角度（deg，绕尾根枢轴）+ 身体纵向偏移（24 网格 px）
-// 8 帧 = 一次完整尾鳍往复：0 → 下压(+16°) → 回中 → 上扬(−16°) → 回中
+// 8 帧 = 一次完整尾鳍往复：0 → 下压(+18°) → 回中 → 上扬(−18°) → 回中
+// 实心剪影比线稿大一号，摆幅也从 ±16° 加到 ±18°，游动感更明显
 const SEQ = [
   { a: 0, dy: 0 },
-  { a: 9, dy: -0.35 },
-  { a: 16, dy: -0.55 },
-  { a: 9, dy: -0.35 },
+  { a: 10, dy: -0.45 },
+  { a: 18, dy: -0.7 },
+  { a: 10, dy: -0.45 },
   { a: 0, dy: 0 },
-  { a: -9, dy: 0.35 },
-  { a: -16, dy: 0.55 },
-  { a: -9, dy: 0.35 },
+  { a: -10, dy: 0.45 },
+  { a: -18, dy: 0.7 },
+  { a: -10, dy: 0.45 },
 ];
 
-// 鲸身：头在左（圆润大弧），向右收窄到尾根 (15.9, 12.6)。闭合轮廓，纯描边
+// 鲸身（实心剪影，放大到几乎占满 24 网格）：头在左，向右收窄到尾根 (17.5, 12.4)。
+// 与 EYE_HOLE 拼成单一路径走 evenodd——眼睛是透明镂空而非白点，
+// macOS 模板图只取 alpha 通道，白点会被染成与身体同色而消失。
 const BODY =
-  "M3 12.7 C3 9.8, 5.8 8.2, 9.2 8.6 " +
-  "C12.3 9, 14.9 10.7, 15.9 12.6 " +
-  "C15.2 14.8, 12.6 16.6, 9.4 16.6 " +
-  "C5.9 16.6, 3 15.4, 3 12.7 Z";
+  "M1.5 12.6 C1.5 8.8, 5 6.4, 9.6 6.9 " +
+  "C13.9 7.4, 16.5 9.6, 17.5 12.4 " +
+  "C16.7 15.4, 13.2 17.9, 9.4 17.9 " +
+  "C4.8 17.9, 1.5 16.2, 1.5 12.6 Z";
+const EYE_HOLE =
+  "M6.7 11.5 A1.1 1.1 0 1 0 4.5 11.5 A1.1 1.1 0 1 0 6.7 11.5 Z";
 
-// 尾鳍：上下两瓣各一条开放曲线，枢轴在尾根。旋转角由 SEQ[a] 给出
-const TAIL_UP = "M15.9 12.6 C17.8 11.8, 18.9 10, 19.1 7.9";
-const TAIL_DOWN = "M15.9 12.6 C17.8 13.4, 18.9 15.2, 19.1 17.3";
-const PIVOT = "15.9 12.6";
+// 尾鳍（实心双叶，叶尖 (20.5, 6.9) / (20.5, 18.1)），枢轴在尾根。旋转角由 SEQ[a] 给出
+const TAIL =
+  "M16.9 12.3 C18.9 11.5, 20.2 9.6, 20.5 6.9 " +
+  "C22 8.5, 22.6 10.8, 21.9 12.5 " +
+  "C22.6 14.2, 22 16.5, 20.5 18.1 " +
+  "C20.2 15.4, 18.9 13.4, 16.9 12.6 Z";
+const PIVOT = "17 12.45";
 
-// 胸鳍：身体内的一小笔弧线，增加鲸的可辨识度
-const FIN = "M9.5 13.2 C10.3 14.2, 11.5 14.6, 12.6 14.4";
-
-// 头顶小喷水：两道短弧（克制装饰）
+// 头顶小喷水：两道短弧（线稿残留的克制装饰，实心剪影下仍可辨）
 const SPOUT =
-  "M6.5 8 C6.3 7, 5.7 6.3, 4.9 5.9 " +
-  "M6.5 8 C6.7 7, 7.3 6.3, 8.1 5.9";
-
-// 眼睛：实心小点（Lucide 亦用实点表达，点不参与描边）
-const EYE = '<circle cx="6.5" cy="12" r="0.9" fill="COLOR" stroke="none"/>';
+  "M5.8 6 C5.5 4.8, 4.8 4, 3.8 3.5 " +
+  "M5.8 6 C6.1 4.8, 6.8 4, 7.8 3.5";
 
 function frameSvg(size, color, strokeWidth, { a, dy }) {
   return Buffer.from(
@@ -66,15 +69,12 @@ function frameSvg(size, color, strokeWidth, { a, dy }) {
       fill="none" stroke="${color}" stroke-width="${strokeWidth}"
       stroke-linecap="round" stroke-linejoin="round">
       <g transform="translate(0 ${dy.toFixed(2)})">
-        <!-- 尾鳍（先画，被身体压住衔接处） -->
+        <!-- 尾鳍（先画，被身体压住衔接处，同为实心无痕拼接） -->
         <g transform="rotate(${a.toFixed(2)} ${PIVOT})">
-          <path d="${TAIL_UP}"/>
-          <path d="${TAIL_DOWN}"/>
+          <path d="${TAIL}" fill="${color}" stroke="none"/>
         </g>
-        <path d="${BODY}"/>
-        <path d="${FIN}"/>
+        <path d="${BODY} ${EYE_HOLE}" fill="${color}" stroke="none" fill-rule="evenodd"/>
         <path d="${SPOUT}"/>
-        ${EYE.replaceAll("COLOR", color)}
       </g>
     </svg>`,
   );
