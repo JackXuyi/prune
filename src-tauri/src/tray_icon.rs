@@ -7,9 +7,10 @@
 //! 现有主题：
 //! - [`IconTheme::Scissors`]  Lucide 剪刀，**黑色模板图** —— macOS 由系统按菜单栏
 //!   深浅色反色，视觉上与系统图标同质（默认）
-//! - [`IconTheme::WhaleLogo`] DeepSeek 鲸鱼 Logo，**彩色** —— 必须关掉模板机制，
+//! - [`IconTheme::WhaleLogo`] 普通蓝鲸（自然海蓝），**彩色** —— 必须关掉模板机制，
 //!   否则会被压成黑白剪影（M13 起取代鲸鱼娘，持久化 id 保持 `whale` 不变，
-//!   已选鲸鱼娘的用户升级后自动落到新皮）
+//!   已选鲸鱼娘的用户升级后自动落到新皮；M17 去除 DeepSeek 品牌皮换成普通鲸鱼，
+//!   目录名 `whale-logo` 为历史遗留，随 id 一起保留）
 //!
 //! 再加一套图标只需动本模块 4 个地方（`id` / `label` / `static_icon` / `frames`），
 //! 菜单勾选与持久化由 `IconTheme::ALL` 自动跟随，tray.rs 无需改动。
@@ -25,7 +26,7 @@ const SETTING_TRAY_ICON: &str = "trayIconTheme";
 pub enum IconTheme {
     /// 剪刀（默认）：黑色模板图
     Scissors,
-    /// DeepSeek 鲸鱼 Logo：白色圆徽章 + 蓝鲸（M13 起取代鲸鱼娘，id 不变）
+    /// 普通蓝鲸：白色圆徽章 + 海蓝鲸鱼（M17 起去除 DeepSeek 品牌皮，id 不变）
     WhaleLogo,
 }
 
@@ -44,7 +45,7 @@ impl IconTheme {
     pub fn label(self) -> &'static str {
         match self {
             Self::Scissors => "剪刀（默认）",
-            Self::WhaleLogo => "DeepSeek 鲸鱼",
+            Self::WhaleLogo => "鲸鱼",
         }
     }
 
@@ -91,7 +92,7 @@ impl IconTheme {
 
     /// CPU 动画的帧（索引 0 与 `static_icon` 同尺寸，作为「静止」姿态）。
     ///
-    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，鲸鱼 Logo 8 帧「尾鳍往复」。
+    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，鲸鱼 8 帧「尾鳍往复」。
     /// 播放顺序由 [`IconTheme::beats`] 给出，不要假设长度。
     pub fn frames(self) -> &'static [Image<'static>] {
         match self {
@@ -102,7 +103,7 @@ impl IconTheme {
 
     /// 播放顺序（索引指向 `frames()`）。一轮播完才可能换速 —— 见 tray::run_anim。
     /// - 剪刀：[0,1,2,3,2,1] 往返 6 拍，避免开合动画首尾同帧造成的顿感
-    /// - 鲸鱼 Logo：0..8 顺序播放 = 一次完整尾鳍往复（下压 → 摆平 → 上扬 → 回位）
+    /// - 鲸鱼：0..8 顺序播放 = 一次完整尾鳍往复（下压 → 摆平 → 上扬 → 回位）
     pub fn beats(self) -> &'static [usize] {
         match self {
             Self::Scissors => &SCISSORS_BEATS,

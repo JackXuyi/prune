@@ -259,7 +259,7 @@ fn sync_checks(app: &AppHandle, active: IconTheme) {
 }
 
 // ---- M6 · CPU 动画（docs/m6-tray-anim-plan.md）----
-// 帧资源随主题走（见 tray_icon.rs）：剪刀是黑色模板帧，鲸鱼 Logo 是彩色游泳帧。
+// 帧资源随主题走（见 tray_icon.rs）：剪刀是黑色模板帧，鲸鱼是彩色游泳帧。
 
 /// 档位映射（方案 §3.1，整机 CPU 近 10 s 均值）→ **每帧**停留毫秒数。
 ///
