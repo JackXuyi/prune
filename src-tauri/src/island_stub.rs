@@ -16,10 +16,6 @@ pub fn spawn_loops(_app: &AppHandle) {}
 
 pub fn load_cfg(_app: &AppHandle) {}
 
-pub fn is_enabled(_app: &AppHandle) -> bool {
-    false
-}
-
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IslandSettings {
@@ -28,6 +24,7 @@ pub struct IslandSettings {
     pub cpu_sustain_sec: u64,
     pub cpu_tolerance_pct: f64,
     pub swap_pct: f64,
+    pub mem_sustain_sec: u64,
     pub max_per_hour: u64,
 }
 
@@ -70,6 +67,7 @@ pub fn island_settings_get(_app: AppHandle) -> IslandSettings {
         cpu_sustain_sec: 60,
         cpu_tolerance_pct: 90.0,
         swap_pct: 80.0,
+        mem_sustain_sec: 30,
         max_per_hour: 6,
     }
 }
