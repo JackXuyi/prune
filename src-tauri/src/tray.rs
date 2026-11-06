@@ -68,10 +68,15 @@ static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 ///
 /// 只有 macOS 的 NSPopover 需要显式尺寸（Windows 由窗口配置决定），
 /// 因此加 cfg 门，避免 Windows 侧出现「定义未使用」告警。
+///
+/// 高度 400 是内容自然高 394 + 6 余量（M16 v5）：
+/// p-2 16 + 边框 2 + header 44 + 内容区 303（pt-1 4 + 五行 48×4+64 +
+/// 入口 31 + pb-3 12）+ footer 29。面板只有一屏统计、没有 tab，多余高度
+/// 全是空白，所以贴合内容而不是固定 560。
 #[cfg(target_os = "macos")]
 pub const PANEL_W: f64 = 380.0;
 #[cfg(target_os = "macos")]
-pub const PANEL_H: f64 = 560.0;
+pub const PANEL_H: f64 = 400.0;
 /// 面板与菜单栏图标的间距（逻辑像素）
 const MARGIN: f64 = 8.0;
 
