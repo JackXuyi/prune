@@ -23,4 +23,6 @@ windows-sys = { version = "0.61", features = [
   "Win32_System_ProcessStatus",
   "Win32_System_SystemInformation",
   "Win32_System_Threading",
+  # M14：本地日期（FileTimeToSystemTime + SystemTimeToTzSpecificLocalTime）
+  "Win32_System_Time",
 ] }

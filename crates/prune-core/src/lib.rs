@@ -13,6 +13,7 @@
 //!               M8：连接计数按 pid 聚合（应用维度复用同一次 lsof）
 //! - `appdisk`   ✅ M8：应用磁盘三层口径（bundle / cache / data），按需测量 + TTL 缓存
 //! - `paths/`    ✅ W1：平台路径口径（home / 配置目录 / 系统根），跨平台唯一出处
+//! - `localtime` ✅ M14：本地日期 / 当日 00:00（swap 与 net 共用，不引 chrono）
 //! - `win/`      ✅ W2：Windows 系统调用（GlobalMemoryStatusEx / 进程 Private Bytes）
 
 pub mod appdisk;
@@ -20,6 +21,7 @@ pub mod classify;
 pub mod db;
 pub mod disk;
 pub mod leak;
+pub mod localtime;
 pub mod mem;
 pub mod net;
 pub mod paths;

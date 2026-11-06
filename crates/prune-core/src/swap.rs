@@ -207,26 +207,11 @@ pub fn now_secs() -> u64 {
 }
 
 /// 本地时区当日 00:00 的 Unix 秒
+///
+/// 实现在 `crate::localtime`（M14 起与「今日流量」共用同一处 FFI）——
+/// Windows 分支顺带从 UTC 口径改成真正的本地口径。
 pub fn local_day_start(now: u64) -> u64 {
-    #[cfg(unix)]
-    {
-        // SAFETY: localtime_r 是线程安全版本，tm 由栈上 zeroed 结构提供
-        unsafe {
-            let t = now as libc::time_t;
-            let mut tm: libc::tm = std::mem::zeroed();
-            if libc::localtime_r(&t, &mut tm).is_null() {
-                return now.saturating_sub(now % 86_400);
-            }
-            let secs_of_day = (tm.tm_hour as u64) * 3600
-                + (tm.tm_min as u64) * 60
-                + tm.tm_sec.max(0) as u64;
-            now.saturating_sub(secs_of_day)
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        now.saturating_sub(now % 86_400)
-    }
+    crate::localtime::day_start(now)
 }
 
 #[cfg(test)]

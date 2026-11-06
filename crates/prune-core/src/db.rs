@@ -7,11 +7,12 @@
 use std::path::Path;
 use std::sync::Mutex;
 
-use rusqlite::{params, Connection};
+use rusqlite::{params, Connection, OptionalExtension};
 use serde::{Deserialize, Serialize};
 
 use crate::leak::{ProcSeries, Sample};
 use crate::mem::ProcMem;
+use crate::net::traffic::DayTraffic;
 
 /// 单进程单个时间点的序列记录
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -42,6 +43,12 @@ CREATE TABLE IF NOT EXISTS mem_process (
 );
 CREATE INDEX IF NOT EXISTS idx_mem_process_pid_ts ON mem_process (pid, ts);
 CREATE INDEX IF NOT EXISTS idx_mem_process_ts ON mem_process (ts);
+CREATE TABLE IF NOT EXISTS net_daily (
+    day        TEXT PRIMARY KEY,
+    down_bytes INTEGER NOT NULL,
+    up_bytes   INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
 ";
 
 impl Store {
@@ -171,6 +178,72 @@ impl Store {
         let conn = self.lock();
         conn.query_row("SELECT COUNT(*) FROM mem_process", [], |r| r.get(0))
     }
+
+    // ------------------------------------------------------------ 网络每日流量（M14）
+
+    /// 增量 UPSERT：把「上次落库之后的新增」加到当天行上。
+    ///
+    /// 语义是 `down_bytes = down_bytes + excluded.down_bytes`，所以重复提交同一批增量
+    /// 会双计 —— 只允许**单一采样线程**调用（方案 §3.5）。反过来，它不是「覆盖写」，
+    /// 所以重启后接着累加不会把当天已有数字抹掉。
+    pub fn net_add(&self, day: &str, down_delta: u64, up_delta: u64, now: i64) -> rusqlite::Result<()> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO net_daily (day, down_bytes, up_bytes, updated_at)
+             VALUES (?1, ?2, ?3, ?4)
+             ON CONFLICT(day) DO UPDATE SET
+                 down_bytes = down_bytes + excluded.down_bytes,
+                 up_bytes   = up_bytes   + excluded.up_bytes,
+                 updated_at = excluded.updated_at",
+            params![day, sat(down_delta), sat(up_delta), now],
+        )?;
+        Ok(())
+    }
+
+    /// 读某一天的累计（启动时读回「今日」基线；`None` = 当天还没落过库）
+    pub fn net_day(&self, day: &str) -> rusqlite::Result<Option<DayTraffic>> {
+        let conn = self.lock();
+        conn.query_row(
+            "SELECT day, down_bytes, up_bytes FROM net_daily WHERE day = ?1",
+            params![day],
+            row_to_day,
+        )
+        .optional()
+    }
+
+    /// 自 `from_day`（含）起的每日流量，按 day 升序。
+    ///
+    /// 只返回**有记录的日子**：缺失日由 UI 画灰条，不在这里补 0
+    /// —— 补 0 等于把「Prune 没运行」说成「那天没流量」。
+    pub fn net_recent(&self, from_day: &str) -> rusqlite::Result<Vec<DayTraffic>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT day, down_bytes, up_bytes FROM net_daily
+             WHERE day >= ?1 ORDER BY day ASC",
+        )?;
+        let rows = stmt.query_map(params![from_day], row_to_day)?;
+        rows.collect()
+    }
+
+    /// 删除早于 `day` 的行（保留期由调用方算好本地日期传进来）
+    pub fn net_prune_before(&self, day: &str) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM net_daily WHERE day < ?1", params![day])
+    }
+}
+
+/// u64 → i64 的饱和转换：日流量不可能到 9.2 EB，但脏数据不能翻转成负数
+fn sat(v: u64) -> i64 {
+    v.min(i64::MAX as u64) as i64
+}
+
+fn row_to_day(row: &rusqlite::Row<'_>) -> rusqlite::Result<DayTraffic> {
+    Ok(DayTraffic {
+        day: row.get(0)?,
+        // 列上若被外部写成负数，夹到 0，避免 as 转换出天文数字
+        down_bytes: row.get::<_, i64>(1)?.max(0) as u64,
+        up_bytes: row.get::<_, i64>(2)?.max(0) as u64,
+    })
 }
 
 #[cfg(test)]
@@ -299,5 +372,90 @@ mod tests {
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].samples.len(), 1);
         assert_eq!(s[0].samples[0].ts, 500);
+    }
+
+    // ------------------------------------------------------------ 网络每日流量
+
+    /// 一天内多次 flush：必须是**相加**而不是覆盖，否则 60 s 落库一次只剩最后一次
+    #[test]
+    fn net_add_accumulates_within_same_day() {
+        let store = Store::open_in_memory().unwrap();
+        store.net_add("2026-11-05", 1000, 100, 1).unwrap();
+        store.net_add("2026-11-05", 500, 50, 2).unwrap();
+
+        let d = store.net_day("2026-11-05").unwrap().expect("必须有一行");
+        assert_eq!((d.down_bytes, d.up_bytes), (1500, 150));
+    }
+
+    /// 跨天必须是两行：把昨天并进今天，用户会看到「今天突然多用了 10 GB」
+    #[test]
+    fn net_add_keeps_days_separate() {
+        let store = Store::open_in_memory().unwrap();
+        store.net_add("2026-11-04", 10, 1, 1).unwrap();
+        store.net_add("2026-11-05", 20, 2, 2).unwrap();
+
+        assert_eq!(store.net_day("2026-11-04").unwrap().unwrap().down_bytes, 10);
+        assert_eq!(store.net_day("2026-11-05").unwrap().unwrap().down_bytes, 20);
+        assert_eq!(store.net_recent("2026-11-01").unwrap().len(), 2);
+    }
+
+    /// 「今天还没落过库」= None，不是 0（0 是「今天确实没有流量」）
+    #[test]
+    fn net_day_missing_is_none() {
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.net_day("2026-11-05").unwrap().is_none());
+    }
+
+    /// 重启后读回同值：走同一份文件再开一次 Store（内存库测不出这件事）
+    #[test]
+    fn net_daily_survives_reopen() {
+        let path = std::env::temp_dir().join(format!("prune-net-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let store = Store::open(&path).unwrap();
+            store.net_add("2026-11-05", 4_096, 512, 1).unwrap();
+        }
+        {
+            let store = Store::open(&path).unwrap();
+            let d = store.net_day("2026-11-05").unwrap().unwrap();
+            assert_eq!((d.down_bytes, d.up_bytes), (4_096, 512));
+            // 重开后再累加，接着涨（不清零）
+            store.net_add("2026-11-05", 1_024, 128, 2).unwrap();
+            assert_eq!(store.net_day("2026-11-05").unwrap().unwrap().down_bytes, 5_120);
+        }
+        let _ = std::fs::remove_file(&path);
+        // WAL 模式会留下 sidecar 文件
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    /// 7 日柱：缺失日不返回（UI 画灰条），按日期升序
+    #[test]
+    fn net_recent_skips_missing_days_and_sorts() {
+        let store = Store::open_in_memory().unwrap();
+        store.net_add("2026-11-03", 30, 3, 1).unwrap();
+        store.net_add("2026-11-05", 50, 5, 2).unwrap();
+
+        let recent = store.net_recent("2026-11-01").unwrap();
+        let days: Vec<&str> = recent.iter().map(|d| d.day.as_str()).collect();
+        assert_eq!(days, vec!["2026-11-03", "2026-11-05"]);
+    }
+
+    /// 保留期清理：只删更早的行，边界当天保留
+    #[test]
+    fn net_prune_before_removes_old_rows_only() {
+        let store = Store::open_in_memory().unwrap();
+        store.net_add("2026-08-01", 1, 1, 1).unwrap();
+        store.net_add("2026-08-08", 2, 2, 2).unwrap();
+        store.net_add("2026-11-05", 3, 3, 3).unwrap();
+
+        assert_eq!(store.net_prune_before("2026-08-08").unwrap(), 1);
+        let days: Vec<String> = store
+            .net_recent("0000-00-00")
+            .unwrap()
+            .into_iter()
+            .map(|d| d.day)
+            .collect();
+        assert_eq!(days, vec!["2026-08-08", "2026-11-05"]);
     }
 }

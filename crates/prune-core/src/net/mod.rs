@@ -17,6 +17,8 @@ pub mod host;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
 pub mod ports;
+/// M14：系统口径总网速 + 每日流量（网卡分类 / 本地日期 / 数据契约）
+pub mod traffic;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof
 #[cfg(windows)]
 pub mod win_ports;
