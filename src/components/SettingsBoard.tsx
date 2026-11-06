@@ -19,6 +19,7 @@ interface IslandSettings {
   cpuSustainSec: number;
   cpuTolerancePct: number;
   swapPct: number;
+  memSustainSec: number;
   maxPerHour: number;
 }
 
@@ -36,6 +37,7 @@ const DEFAULTS: IslandSettings = {
   cpuSustainSec: 60,
   cpuTolerancePct: 90,
   swapPct: 80,
+  memSustainSec: 30,
   maxPerHour: 6,
 };
 
@@ -197,22 +199,43 @@ export function SettingsBoard() {
           </p>
         </section>
 
-        <section className="rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5">
+        <section
+          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+            disabled ? "opacity-40" : ""
+          }`}
+        >
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-[12px] font-medium">Swap 破阈值</span>
-            <Badge tone="neutral">下一版启用</Badge>
+            <span className="text-[12px] font-medium">内存异常</span>
+            <span className="text-[10px] text-ink-faint">内核压力 + swap 占用，双通道</span>
           </div>
           <Slider
-            label="阈值"
-            hint="swap 占上限的比例"
+            label="Swap 阈值"
+            hint="swap 占用 ≥ 此值且持续才算紧张；拉到 95% 视为关闭该通道"
             value={cfg.swapPct}
             min={50}
-            max={100}
+            max={95}
             step={5}
             suffix="%"
-            disabled
+            disabled={disabled}
             onChange={(v) => update({ swapPct: v })}
           />
+          <Slider
+            label="持续窗口"
+            hint="内核压力警告 / swap 超阈值要连续保持多久才提报"
+            value={cfg.memSustainSec}
+            min={10}
+            max={300}
+            step={5}
+            suffix=" 秒"
+            disabled={disabled}
+            onChange={(v) => update({ memSustainSec: v })}
+          />
+
+          <p className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
+            当前规则：内核压力严重立即提报；警告或 swap ≥ {cfg.swapPct}% 持续{" "}
+            {cfg.memSustainSec} 秒才提报；swap 掉到 {Math.max(50, cfg.swapPct - 10)}%
+            以下才会再次触发。
+          </p>
         </section>
 
         <div className="flex h-4 items-center gap-2 text-[10.5px]">

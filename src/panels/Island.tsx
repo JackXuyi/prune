@@ -4,8 +4,12 @@
  *
  * 一条容易忽略的物理约束：屏幕顶部 33 pt 是**物理挖孔**，画在那里的像素永远
  * 看不见。所以折叠态 50 pt 高里，真正能用的只有下面 17 pt 的内容条。
+ *
+ * 折叠态是三段式「图标 + 事件标签 + 读数」（§12.5）：内存 Warning 和 CPU 同为
+ * 橙色，颜色不是可靠的事件区分；「CPU」/「换出」标签是颜色之外的第二识别通道。
  */
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
@@ -13,10 +17,17 @@ import { openMain } from "../lib/ipc";
 
 type Phase = "idle" | "collapsed" | "expanded";
 
+type MemPressure = "normal" | "warning" | "critical";
+type MemTriggerKind = "pressure" | "swap" | "both";
+
 interface TopProc {
   name: string;
-  cpu: number;
   pid: number;
+  /** cpu 事件：CPU% */
+  cpu?: number;
+  /** mem 事件：换出量（MiB）/ 总量（MiB） */
+  swappedMb?: number | null;
+  totalMb?: number;
 }
 
 interface CpuPayload {
@@ -29,6 +40,23 @@ interface CpuPayload {
   top: TopProc[];
 }
 
+interface MemPayload {
+  kind: "mem";
+  pressure: MemPressure;
+  trigger: MemTriggerKind;
+  /** GiB，1 位小数；null = swap 口径读不到 */
+  swapUsedGb: number | null;
+  swapRatioPct: number;
+  /** 换出速率 /s；null = 快照还没算出来 */
+  swapoutsPerSec: number | null;
+  /** 压缩器占用 MiB；null = 平台无此口径 */
+  compressorMb: number | null;
+  notchH?: number;
+  top: TopProc[];
+}
+
+type AlertPayload = CpuPayload | MemPayload;
+
 /** 与 Rust `island_geo` 保持一致 */
 const COLLAPSED_W = 229;
 const COLLAPSED_H = 50;
@@ -36,6 +64,9 @@ const EXPANDED_W = 380;
 const EXPANDED_H = 180;
 /** 刘海高度兜底值，真实值随 payload 下发（不同机型不同） */
 const DEFAULT_NOTCH_H = 33;
+
+const ORANGE = "#FF9F0A";
+const RED = "#FF453A";
 
 /** 出现后无人干预的存活时间 */
 const AUTO_HIDE_MS = 6000;
@@ -48,9 +79,12 @@ const AFTER_LEAVE_HIDE_MS = 2500;
 
 const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
 
+/** MiB → 「3.2G」 */
+const mibToG = (mb: number) => `${(mb / 1024).toFixed(1)}G`;
+
 export function Island() {
   const [phase, setPhase] = useState<Phase>("idle");
-  const [data, setData] = useState<CpuPayload | null>(null);
+  const [data, setData] = useState<AlertPayload | null>(null);
   const [notchH, setNotchH] = useState(DEFAULT_NOTCH_H);
 
   // listen 回调是长生命周期闭包，读 state 会拿到旧值，所以用 ref 镜像
@@ -100,7 +134,7 @@ export function Island() {
     const disposers: Array<() => void> = [];
 
     const setups = [
-      listen<CpuPayload>("island://alert", (e) => {
+      listen<AlertPayload>("island://alert", (e) => {
         const p = e.payload;
         setData(p);
         if (typeof p.notchH === "number" && p.notchH > 0) setNotchH(p.notchH);
@@ -186,114 +220,258 @@ export function Island() {
           animation: visible ? "island-in 220ms cubic-bezier(0.2, 0.9, 0.2, 1)" : undefined,
         }}
       >
-        {phase === "collapsed" && data && (
-          <div
-            style={{
-              position: "absolute",
-              top: notchH,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 8,
-              color: "#fff",
-            }}
+        {phase === "collapsed" && data && (data.kind === "cpu" ? (
+          <CollapsedRow notchH={notchH} icon={<Bolt />} label="CPU" accent={ORANGE}>
+            {Math.round(data.avg)}%
+          </CollapsedRow>
+        ) : (
+          <CollapsedRow
+            notchH={notchH}
+            icon={<MemChip color={memColor(data.pressure)} />}
+            label="换出"
+            accent={memColor(data.pressure)}
           >
-            <Bolt />
-            <span
+            {data.swapUsedGb != null ? `${data.swapUsedGb.toFixed(1)}G` : `${Math.round(data.swapRatioPct)}%`}
+          </CollapsedRow>
+        ))}
+
+        {phase === "expanded" && data && (data.kind === "cpu" ? (
+          <CpuExpanded data={data} notchH={notchH} />
+        ) : (
+          <MemExpanded data={data} notchH={notchH} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/** 内存事件的强调色：Warning 橙 / Critical 红 / Normal 兜底橙 */
+function memColor(p: MemPressure): string {
+  return p === "critical" ? RED : ORANGE;
+}
+
+/** 折叠态三段式：图标 + 标签 + 读数，水平居中在挖孔下方的 17pt 内容条里 */
+function CollapsedRow({
+  notchH,
+  icon,
+  label,
+  accent,
+  children,
+}: {
+  notchH: number;
+  icon: ReactNode;
+  label: string;
+  accent: string;
+  children: ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: notchH,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        gap: 6,
+        color: "#fff",
+      }}
+    >
+      {icon}
+      <span style={{ fontSize: 11, fontWeight: 500, letterSpacing: 0.3 }}>{label}</span>
+      <span
+        style={{
+          fontSize: 13,
+          fontWeight: 500,
+          fontVariantNumeric: "tabular-nums",
+          letterSpacing: 0.2,
+          color: accent,
+        }}
+      >
+        {children}
+      </span>
+    </div>
+  );
+}
+
+function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: notchH,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        padding: "12px 18px 16px",
+        display: "flex",
+        flexDirection: "column",
+        color: "#fff",
+        animation: "island-fade 180ms ease-out",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <Bolt />
+        <span
+          style={{
+            fontSize: 26,
+            fontWeight: 500,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+          }}
+        >
+          {Math.round(data.avg)}%
+        </span>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+          CPU 持续偏高
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: "rgba(255,255,255,0.5)",
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {data.samples} 个采样里 {Math.round(data.ratio)}% 超过阈值 · 峰值{" "}
+        {Math.round(data.peak)}%
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+        {data.top.length === 0 ? (
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            明细稍后就绪
+          </span>
+        ) : (
+          data.top.map((p) => (
+            <div
+              key={`${p.pid}-${p.name}`}
               style={{
-                fontSize: 13,
-                fontWeight: 500,
-                fontVariantNumeric: "tabular-nums",
-                letterSpacing: 0.2,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                fontSize: 11,
+                color: "rgba(255,255,255,0.72)",
               }}
             >
-              {Math.round(data.avg)}%
-            </span>
-          </div>
-        )}
-
-        {phase === "expanded" && data && (
-          <div
-            style={{
-              position: "absolute",
-              top: notchH,
-              left: 0,
-              right: 0,
-              bottom: 0,
-              padding: "12px 18px 16px",
-              display: "flex",
-              flexDirection: "column",
-              color: "#fff",
-              animation: "island-fade 180ms ease-out",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-              <Bolt />
               <span
                 style={{
-                  fontSize: 26,
-                  fontWeight: 500,
-                  fontVariantNumeric: "tabular-nums",
-                  lineHeight: 1,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 250,
                 }}
               >
-                {Math.round(data.avg)}%
+                {p.name}
               </span>
-              <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-                CPU 持续偏高
+              <span style={{ fontVariantNumeric: "tabular-nums", color: ORANGE }}>
+                {Math.round(p.cpu ?? 0)}%
               </span>
             </div>
+          ))
+        )}
+      </div>
+    </div>
+  );
+}
 
+/** 触发通道的展开态副标题（§12.5） */
+function memSubtitle(data: MemPayload): string {
+  const level = data.pressure === "critical" ? "严重" : data.pressure === "warning" ? "警告" : null;
+  if (data.trigger === "both") {
+    return `换出破阈值 · 内核压力：${level ?? "未知"}`;
+  }
+  if (data.trigger === "pressure") {
+    return `内核内存压力：${level ?? "未知"}`;
+  }
+  return "换出破阈值";
+}
+
+function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
+  const accent = memColor(data.pressure);
+  const dim = "rgba(255,255,255,0.5)";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: notchH,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        padding: "12px 18px 16px",
+        display: "flex",
+        flexDirection: "column",
+        color: "#fff",
+        animation: "island-fade 180ms ease-out",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <MemChip color={accent} />
+        <span
+          style={{
+            fontSize: 26,
+            fontWeight: 500,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+          }}
+        >
+          {data.swapUsedGb != null ? `${data.swapUsedGb.toFixed(1)}G` : `${Math.round(data.swapRatioPct)}%`}
+        </span>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+          {memSubtitle(data)}
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: dim,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        占用 {Math.round(data.swapRatioPct)}%
+        {data.swapoutsPerSec != null && <> · 换出速率 {data.swapoutsPerSec.toFixed(1)}/s</>}
+        {data.compressorMb != null && <> · 压缩器 {mibToG(data.compressorMb)}</>}
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+        {data.top.length === 0 ? (
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            换出明细稍后就绪
+          </span>
+        ) : (
+          data.top.map((p) => (
             <div
+              key={`${p.pid}-${p.name}`}
               style={{
-                marginTop: 6,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
                 fontSize: 11,
-                color: "rgba(255,255,255,0.5)",
-                fontVariantNumeric: "tabular-nums",
+                color: "rgba(255,255,255,0.72)",
               }}
             >
-              {data.samples} 个采样里 {Math.round(data.ratio)}% 超过阈值 · 峰值{" "}
-              {Math.round(data.peak)}%
+              <span
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                  maxWidth: 170,
+                }}
+              >
+                {p.name}
+              </span>
+              <span style={{ fontVariantNumeric: "tabular-nums", color: accent }}>
+                {p.swappedMb != null ? `换出 ${mibToG(p.swappedMb)}` : "—"}
+                {p.totalMb != null ? ` / ${mibToG(p.totalMb)}` : ""}
+              </span>
             </div>
-
-            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
-              {data.top.length === 0 ? (
-                <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-                  明细稍后就绪
-                </span>
-              ) : (
-                data.top.map((p) => (
-                  <div
-                    key={`${p.pid}-${p.name}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "space-between",
-                      fontSize: 11,
-                      color: "rgba(255,255,255,0.72)",
-                    }}
-                  >
-                    <span
-                      style={{
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        maxWidth: 250,
-                      }}
-                    >
-                      {p.name}
-                    </span>
-                    <span style={{ fontVariantNumeric: "tabular-nums", color: "#FF9F0A" }}>
-                      {Math.round(p.cpu)}%
-                    </span>
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
+          ))
         )}
       </div>
     </div>
@@ -304,6 +482,19 @@ function Bolt() {
   return (
     <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden>
       <path d="M6.4 0.5 1 7.2h3.3L4.3 12.5 9.8 5.6H6.4L6.4 0.5Z" fill="#FF9F0A" />
+    </svg>
+  );
+}
+
+/** 内存条图标（§13.3）：描边 + 三颗存储颗粒，颜色随严重等级 */
+function MemChip({ color }: { color: string }) {
+  return (
+    <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden>
+      <rect x="0.6" y="1.6" width="9.8" height="9.8" rx="1.5" stroke={color} strokeWidth="1.1" />
+      <rect x="2.2" y="3.4" width="1.9" height="3.2" fill={color} />
+      <rect x="4.6" y="3.4" width="1.9" height="3.2" fill={color} />
+      <rect x="7" y="3.4" width="1.6" height="3.2" fill={color} />
+      <path d="M2.4 11.4v1.2M5.5 11.4v1.2M8.6 11.4v1.2" stroke={color} strokeWidth="1.1" />
     </svg>
   );
 }
