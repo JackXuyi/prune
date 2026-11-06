@@ -2,6 +2,7 @@ import {
   cpuReadout,
   diskReadout,
   memoryReadout,
+  netDirectionReadout,
   netReadout,
   portReadout,
 } from "../lib/statsReadout";
@@ -10,21 +11,21 @@ import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
-import { NetReading } from "./stats/NetReading";
+import { NetDirectionReading } from "./stats/NetReading";
 import { StatsCard } from "./stats/StatsCard";
 
 /** 下钻目标：统计卡只导航，不做任何清理/结束动作（M9 §4） */
 export type DrillTab = "overview" | "disk" | "ports" | "net";
 
 /**
- * 统计 tab（M9 + M16）：系统级总览，作为默认页。
+ * 统计 tab（M9 + M16 + v6）：系统级总览，作为默认页。
  *
- * 五个域各一张卡：内存 / CPU / 硬盘 / 端口 / 网络。读数一律来自
- * `lib/statsReadout.ts` —— 菜单栏面板的紧凑版用的是同一批函数，所以两边的
- * 数字、口径、空值文案天然一致，不存在「两份实现各算一遍」的分叉。
+ * 六张卡：内存 / CPU / 硬盘 / 端口 / 下载 / 上传（v6 起网络按方向拆成两卡）。
+ * 读数一律来自 `lib/statsReadout.ts` —— 菜单栏面板的紧凑版用的是同一批函数，
+ * 所以两边的数字、口径、空值文案天然一致，不存在「两份实现各算一遍」的分叉。
  *
- * 布局：2×2 四卡 + 第 3 行网络卡横跨两列。卡高 `min-h-[140px]` 是算出来的：
- * 三行卡 + 标题块 + 页脚 = 574 px，刚好放进 592 px 内容区（方案 §5.1）。
+ * 布局：3 行 × 2 列。卡高 `min-h-[140px]` 是算出来的：三行卡 + 标题块 + 页脚
+ * = 574 px，刚好放进 592 px 内容区（方案 §5.1）。
  *
  * 假事实红线（方案 §8）：没扫描/读不到一律「尚未扫描 / 不可读」，绝不填 0。
  */
@@ -49,6 +50,9 @@ export function StatsBoard({
   const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known);
   const port = portReadout(ports);
   const net = netReadout(netSample, netHistory);
+  // 方向读数（M16 v6）：下载 / 上传各一张卡，口径在 readout 层派生
+  const netDown = netDirectionReadout(netSample, netHistory, "down");
+  const netUp = netDirectionReadout(netSample, netHistory, "up");
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -86,15 +90,21 @@ export function StatsBoard({
           readout={port}
           onOpen={() => onDrill("ports")}
         />
-        <div className="col-span-2">
-          <StatsCard
-            title="网络"
-            caption="物理网卡合计 · 虚拟接口单列不计入，VPN 不会双计"
-            readout={net}
-            body={<NetReading readout={net} />}
-            onOpen={() => onDrill("net")}
-          />
-        </div>
+        {/* 网络拆成两卡（M16 v6）：行数不变（3 行），574/592 高度算式原样成立 */}
+        <StatsCard
+          title="下载"
+          caption="物理网卡合计 · 虚拟接口不计入，VPN 不会双计"
+          readout={net}
+          body={<NetDirectionReading readout={netDown} />}
+          onOpen={() => onDrill("net")}
+        />
+        <StatsCard
+          title="上传"
+          caption="物理网卡合计 · 与下载各自刻度，量级常差 10 倍"
+          readout={net}
+          body={<NetDirectionReading readout={netUp} />}
+          onOpen={() => onDrill("net")}
+        />
       </div>
 
       <p className="mt-4 text-[10px] leading-relaxed text-ink-faint">

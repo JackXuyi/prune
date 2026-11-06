@@ -1,13 +1,13 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { LeakBanner } from "../components/LeakCard";
-import { NetStatsRow, StatsRow } from "../components/stats/StatsRow";
+import { NetDirectionRow, StatsRow } from "../components/stats/StatsRow";
 import { formatRelative } from "../lib/format";
 import { openMain } from "../lib/ipc";
 import {
   cpuReadout,
   diskReadout,
   memoryReadout,
-  netReadout,
+  netDirectionReadout,
   portReadout,
 } from "../lib/statsReadout";
 import { useVolumeInfo } from "../lib/useVolumeInfo";
@@ -20,9 +20,9 @@ import { Badge } from "../components/primitives";
 import { UpdateCard } from "../components/UpdateCard";
 
 /**
- * 菜单栏面板（380×400）：单页统计。
+ * 菜单栏面板（380×432）：单页统计。
  *
- * 窗口高度贴合内容（394 + 6 余量，算式见 `tray.rs: PANEL_H`），不是固定 560：
+ * 窗口高度贴合内容（426 + 6 余量，算式见 `tray.rs: PANEL_H`），不是固定 560：
  * 面板只有一屏、没有 tab 切换，多出来的高度只会是底部空白。
  *
  * 原来的「应用」「概况」两个 tab 都已撤掉——应用级明细在主窗口「应用资源」，
@@ -101,7 +101,9 @@ export function MenuBarPanel() {
 }
 
 /**
- * 单页统计（M16）。五行读数与主窗口统计页同源，只是密度不同。
+ * 单页统计（M16 + v6）。六行读数与主窗口统计页同源，只是密度不同。
+ * 网络从 64 px 例外行拆成下载 / 上传两条 48 px 标准行（v6），面板高度
+ * 随之 400 → 432（算式见 `tray.rs: PANEL_H`）。
  *
  * 端口只做一次性 init（有快照就只读），网速只 init 不提速——面板不做任何
  * 轮询，所有数字都来自已有的常采 / 常驻采样。
@@ -126,7 +128,9 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
   const cpu = cpuReadout(snapshot?.cpu);
   const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known);
   const port = portReadout(ports);
-  const net = netReadout(netSample, netHistory);
+  // 方向读数（M16 v6）：网络行拆成下载 / 上传两行，口径在 readout 层派生
+  const netDown = netDirectionReadout(netSample, netHistory, "down");
+  const netUp = netDirectionReadout(netSample, netHistory, "up");
   const families = snapshot?.families.length ?? 0;
 
   return (
@@ -147,7 +151,8 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
           onOpen={() => void openMain(undefined, "disk")}
         />
         <StatsRow title="CPU" readout={cpu} />
-        <NetStatsRow readout={net} onOpen={() => void openMain(undefined, "net")} />
+        <NetDirectionRow readout={netDown} onOpen={() => void openMain(undefined, "net")} />
+        <NetDirectionRow readout={netUp} onOpen={() => void openMain(undefined, "net")} />
         <StatsRow title="端口" readout={port} onOpen={() => void openMain(undefined, "ports")} />
       </div>
 

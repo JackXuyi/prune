@@ -48,10 +48,32 @@ export interface NetReadout extends Readout {
   /** 各自归一化的走势（主窗口双线用） */
   downSeries: number[];
   upSeries: number[];
-  /** down+up 合并序列（面板单线用） */
-  totalSeries: number[];
   avgDownText: string;
   avgUpText: string;
+}
+
+/** 方向（M16 v6）：下载 / 上传各自成卡成行后，读数按方向派生 */
+export type NetDirection = "down" | "up";
+
+export interface NetDirectionReadout {
+  dir: NetDirection;
+  /** 原始 bps；0 在 ok 下是「真的没有」，warmup / unavailable 下不可信 */
+  bps: number;
+  /** 数字与单位拆开，给大号读数排版用 */
+  main: string;
+  unit: string;
+  /** 该方向的走势序列（各自归一化，两处界面共用） */
+  series: number[];
+  /** 近 5 min 时间加权均值，已格式化，如 "90.7 KB/s"（不含箭头） */
+  avgText: string;
+  /** 今日累计，已格式化；today 为 null（未落库）时是 null —— 不是 0 */
+  todayText: string | null;
+  /** 本次会话单拍峰值，已格式化；无读数时为 null（时间不在此显示：peakAt 双方向共用） */
+  peakText: string | null;
+  /** 会话累计（自启动起），已格式化 */
+  sessionText: string | null;
+  status: ReadoutStatus;
+  note?: string;
 }
 
 // ---------------------------------------------------------------- 内存
@@ -175,14 +197,12 @@ export function netReadout(
 ): NetReadout {
   const downSeries = history.map((p) => p.downBps);
   const upSeries = history.map((p) => p.upBps);
-  const totalSeries = history.map((p) => p.downBps + p.upBps);
   const avg = weightedAverage(history);
   const base = {
     downBps: sample?.downBps ?? 0,
     upBps: sample?.upBps ?? 0,
     downSeries,
     upSeries,
-    totalSeries,
     avgDownText: `↓ ${formatSpeed(avg.downBps)}`,
     avgUpText: `↑ ${formatSpeed(avg.upBps)}`,
   };
@@ -220,6 +240,62 @@ export function netReadout(
       sample.peakDownBps > 0 ? `峰值 ↓ ${formatSpeed(sample.peakDownBps)}` : null,
     ]),
   };
+}
+
+// ---------------------------------------------------------------- 方向读数（M16 v6）
+
+/**
+ * 单个方向的完整读数：总览页「下载 / 上传」两卡与面板两行共用，
+ * 口径仍只在这里定义一次。输入是已有数据源，零新增 IPC、零新增采样。
+ */
+export function netDirectionReadout(
+  sample: NetTotalSample | null,
+  history: NetTotalPoint[],
+  dir: NetDirection,
+): NetDirectionReadout {
+  const down = dir === "down";
+  const series = history.map((p) => (down ? p.downBps : p.upBps));
+  const avg = weightedAverage(history);
+  const avgText = down ? formatSpeed(avg.downBps) : formatSpeed(avg.upBps);
+  const bps = down ? (sample?.downBps ?? 0) : (sample?.upBps ?? 0);
+  const today = sample?.today ?? null;
+  const todayText = today
+    ? formatBytes(down ? today.downBytes : today.upBytes)
+    : null;
+  const peakBps = down ? (sample?.peakDownBps ?? 0) : (sample?.peakUpBps ?? 0);
+  const sessionBytes = down
+    ? sample?.sessionDownBytes
+    : sample?.sessionUpBytes;
+
+  const make = (
+    main: string,
+    unit: string,
+    status: ReadoutStatus,
+    note?: string,
+  ): NetDirectionReadout => ({
+    dir,
+    bps,
+    main,
+    unit,
+    series,
+    avgText,
+    todayText,
+    peakText: status === "ok" && peakBps > 0 ? formatSpeed(peakBps) : null,
+    sessionText: sessionBytes != null ? formatBytes(sessionBytes) : null,
+    status,
+    note,
+  });
+
+  if (!sample) return make("—", "", "warmup", "采样中…");
+  if (sample.status === "warmup") {
+    return make("—", "", "warmup", "采样中…（首拍只建基线，约 2 s）");
+  }
+  if (sample.status === "unavailable") {
+    // 读不到 ≠ 没有流量：不显示 0，main 用「—」+ 原因
+    return make("—", "", "unavailable", sample.note ?? "系统网卡计数器读不到");
+  }
+  const speed = splitSpeed(bps);
+  return make(speed.value, speed.unit, "ok");
 }
 
 // ---------------------------------------------------------------- 共用小工具

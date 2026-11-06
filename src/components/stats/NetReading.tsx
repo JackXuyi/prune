@@ -1,96 +1,69 @@
-import { splitSpeed, type NetReadout } from "../../lib/statsReadout";
+import type { NetDirectionReadout } from "../../lib/statsReadout";
 import { Sparkline } from "../Sparkline";
 
 /**
- * 网络卡主体（M16，主窗口 960 用）：双读数 + 各自归一化的走势。
+ * 方向读数主体（M16 v6）：总览页「下载 / 上传」各占一张卡，每卡一块。
  *
- * 上下行量级常差 10 倍，共享纵轴会把上传压成一条直线，所以两条线各自画、
- * 各自归一化；再加上 `baselineZero`，空闲时的几十 KB/s 抖动不会被放大成满屏尖峰。
+ * 拆卡前两个方向挤在同一张卡里共享脚注，读数只有 19 px；拆开后每卡与
+ * 其它卡同级：24 px 主读数 + 各自归一化的走势 + 方向专属脚注。
+ *
+ * 走势仍然各自归一化（上下行量级常差 10 倍，共享纵轴会把上传压平），
+ * `baselineZero` 让空闲时的几十 KB/s 抖动不被放大成满屏尖峰。
+ *
+ * 峰值只显示数值不显示时间：`peakAt` 是双方向共用的单一时戳，逐方向标
+ * 会误读成「该方向在该时刻达到峰值」；时间只在网络 tab 的会话峰值里出现。
  */
-export function NetReading({ readout }: { readout: NetReadout }) {
+export function NetDirectionReading({ readout }: { readout: NetDirectionReadout }) {
   const ok = readout.status === "ok";
-  const extra = readout.sub.slice(1); // sub[0] 是「近 5 min 平均」，与下面的 sparkline 重复
+  const down = readout.dir === "down";
+  const arrow = down ? "↓" : "↑";
+  const toneText = down ? "text-accent" : "text-info";
+
+  if (!ok) {
+    return (
+      <p className="text-[11px] leading-relaxed text-ink-faint">
+        {readout.note ?? "—"}
+        {down ? (
+          <span className="block">读不到和「没有流量」是两件事，这里不显示 0。</span>
+        ) : null}
+      </p>
+    );
+  }
+
+  const tooltip = [
+    readout.peakText ? `本次会话峰值 ${arrow} ${readout.peakText}` : null,
+    readout.sessionText ? `会话累计 ${readout.sessionText}（自启动起）` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
-    <div>
-      <div className="grid grid-cols-2 gap-6">
-        <Direction
-          arrow="↓"
-          tone="accent"
-          bps={readout.downBps}
-          series={readout.downSeries}
-          ok={ok}
-          label="下载（物理网卡合计）"
-        />
-        <Direction
-          arrow="↑"
-          tone="info"
-          bps={readout.upBps}
-          series={readout.upSeries}
-          ok={ok}
-          label="上传（物理网卡合计）"
-        />
-      </div>
-      <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-0.5 text-[10px] text-ink-faint">
-        {ok ? (
-          <>
-            <span>
-              近 5 min{" "}
-              <span className="text-ink-dim">
-                {readout.avgDownText} / {readout.avgUpText}
-              </span>
-            </span>
-            {extra.map((s) => (
-              <span key={s}>{s}</span>
-            ))}
-          </>
-        ) : (
-          <span>{readout.note ?? "—"}</span>
-        )}
-      </div>
-    </div>
-  );
-}
-
-function Direction({
-  arrow,
-  tone,
-  bps,
-  series,
-  ok,
-  label,
-}: {
-  arrow: string;
-  tone: "accent" | "info";
-  bps: number;
-  series: number[];
-  ok: boolean;
-  label: string;
-}) {
-  const { value, unit } = splitSpeed(bps);
-  const text = tone === "accent" ? "text-accent" : "text-info";
-
-  return (
-    <div title={label}>
+    <div title={tooltip}>
       <div className="flex items-baseline gap-1.5">
-        <span className={`text-[12px] leading-none ${text}`}>{arrow}</span>
-        {ok ? (
-          <>
-            <span className={`font-mono text-[19px] leading-none tabular-nums ${text}`}>{value}</span>
-            <span className="text-[10px] text-ink-faint">{unit}</span>
-          </>
-        ) : (
-          <span className="font-mono text-[19px] leading-none text-ink-faint">—</span>
-        )}
+        <span className={`text-[13px] leading-none ${toneText}`}>{arrow}</span>
+        <span className={`font-mono text-[24px] leading-none tabular-nums ${toneText}`}>
+          {readout.main}
+        </span>
+        <span className="text-[11px] text-ink-faint">{readout.unit}</span>
       </div>
-      <div className="mt-1 h-[24px]">
-        {series.length >= 2 ? (
-          <Sparkline values={series} height={24} tone={tone} baselineZero />
+      <div className="mt-1 h-[26px]">
+        {readout.series.length >= 2 ? (
+          <Sparkline
+            values={readout.series}
+            height={26}
+            tone={down ? "accent" : "info"}
+            baselineZero
+          />
         ) : (
-          <div className="flex h-[24px] items-center text-[9.5px] text-ink-faint/70">
-            {ok ? "走势积累中（每秒一个点）" : "—"}
+          <div className="flex h-[26px] items-center text-[9.5px] text-ink-faint/70">
+            走势积累中（每秒一个点）
           </div>
         )}
+      </div>
+      <div className="mt-1 truncate text-[10px] leading-none text-ink-faint" dir="ltr">
+        {readout.todayText != null
+          ? `近 5 min ${readout.avgText} · 今日 ${readout.todayText}`
+          : `近 5 min ${readout.avgText}`}
       </div>
     </div>
   );

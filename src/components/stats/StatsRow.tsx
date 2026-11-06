@@ -1,8 +1,7 @@
 import type { ReactNode } from "react";
 
 import { formatPercent } from "../../lib/format";
-import type { NetReadout, Readout } from "../../lib/statsReadout";
-import { formatSpeed } from "../../types/net";
+import type { NetDirectionReadout, Readout } from "../../lib/statsReadout";
 import { Meter } from "../primitives";
 import { Sparkline } from "../Sparkline";
 import { Reading, TagDot } from "./StatsCard";
@@ -89,67 +88,92 @@ export function StatsRow({
 }
 
 /**
- * 面板网络行（M16）：64 px，是 48 px 规则的唯一例外。
+ * 面板方向行（M16 v6）：网络从一条 64 px 例外行拆成两条 48 px 标准行。
  *
- * 压到 48 就只剩 4 px 走势，等于没有；所以单独放宽 16 px，换来一条 18 px
- * 合并走势（下行 + 上行）与一行「近 5 min / 今日」次读数。
+ * 下载 / 上传各占一行，方向在对齐的位置各有一份读数与迷你走势——原来两个
+ * 读数挤一行右侧、合并走势分不出方向。走势仍各自归一化（量级常差 10 倍），
+ * `baselineZero` 让空闲噪声不被放大。
+ *
+ * 面板是「瞄一眼」场景：副读数只留近 5 min 均值一条，今日 / 峰值 / 会话
+ * 累计进 `title`（全量脚注），明细在主窗口网络 tab。
  */
-export function NetStatsRow({
+export function NetDirectionRow({
   readout,
   onOpen,
 }: {
-  readout: NetReadout;
+  readout: NetDirectionReadout;
   onOpen?: () => void;
 }) {
   const ok = readout.status === "ok";
-  const sub = readout.sub.slice(0, 2).join(" · ");
+  const down = readout.dir === "down";
+  const title = down ? "下载" : "上传";
+  const arrow = down ? "↓" : "↑";
+  const arrowText = down ? "text-accent" : "text-info";
+  const valueText = down ? "text-accent" : "text-info";
+  const fullText = [
+    ok ? `近 5 min ${readout.avgText}` : null,
+    readout.todayText ? `今日 ${readout.todayText}` : null,
+    readout.peakText ? `峰值 ${readout.peakText}` : null,
+    readout.sessionText ? `会话累计 ${readout.sessionText}` : null,
+    !ok ? (readout.note ?? "—") : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
 
   return (
     <button
       type="button"
       onClick={onOpen}
       disabled={!onOpen}
-      title={readout.sub.join(" · ")}
-      className={`flex h-16 w-full flex-col justify-center gap-0.5 rounded-md px-1 text-left transition-colors ${
+      title={fullText}
+      className={`flex h-12 w-full flex-col justify-center gap-0.5 rounded-md px-1 text-left transition-colors ${
         onOpen ? "hover:bg-white/[0.04]" : "cursor-default"
       }`}
     >
       <div className="flex w-full items-center gap-2">
-        <span className="flex shrink-0 items-center gap-1.5 text-[11px] text-ink-dim">
-          <span className="text-accent">⇅</span>
-          <span className="font-medium">网络</span>
+        <span className="flex min-w-0 items-center gap-1.5 text-[11px] text-ink-dim">
+          <span className={`shrink-0 ${arrowText}`}>{arrow}</span>
+          <span className="truncate font-medium">{title}</span>
         </span>
         <span className="flex-1" />
         {ok ? (
-          <>
-            <span className="shrink-0 font-mono text-[13px] leading-none font-medium tabular-nums text-accent">
-              ↓ {formatSpeed(readout.downBps)}
+          <span className="flex shrink-0 items-baseline gap-1">
+            <span
+              className={`font-mono text-[13.5px] leading-none font-medium tabular-nums ${valueText}`}
+            >
+              {readout.main}
             </span>
-            <span className="shrink-0 font-mono text-[13px] leading-none font-medium tabular-nums text-info">
-              ↑ {formatSpeed(readout.upBps)}
-            </span>
-          </>
+            <span className="text-[10px] text-ink-faint">{readout.unit}</span>
+          </span>
         ) : (
-          <span className="max-w-[62%] shrink-0 truncate text-[10px] text-ink-faint">
+          <span className="max-w-[58%] shrink-0 truncate text-[10px] text-ink-faint">
             {readout.note ?? "—"}
           </span>
         )}
       </div>
-
-      {ok ? (
-        <>
-          <div className="h-[18px] w-full">
-            {readout.totalSeries.length >= 2 ? (
-              <Sparkline values={readout.totalSeries} height={18} baselineZero />
-            ) : (
-              <div className="flex h-[18px] items-center text-[9.5px] text-ink-faint/70">
-                走势积累中（每秒一个点）
-              </div>
-            )}
-          </div>
-          <div className="w-full truncate text-[9.5px] leading-none text-ink-faint">{sub}</div>
-        </>
-      ) : null}
+      <div className="flex w-full items-center gap-2">
+        {ok ? (
+          <>
+            <span className="w-[44%] shrink-0">
+              {readout.series.length >= 2 ? (
+                <Sparkline
+                  values={readout.series}
+                  height={14}
+                  tone={down ? "accent" : "info"}
+                  baselineZero
+                />
+              ) : (
+                <span className="block h-[14px] text-[9px] leading-[14px] text-ink-faint/70">
+                  走势积累中
+                </span>
+              )}
+            </span>
+            <span className="min-w-0 flex-1 truncate text-[10px] leading-none text-ink-faint">
+              近 5 min {readout.avgText}
+            </span>
+          </>
+        ) : null}
+      </div>
     </button>
   );
 }
