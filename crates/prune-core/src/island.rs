@@ -174,6 +174,177 @@ impl CpuMonitor {
     }
 }
 
+// ───────────────────────── 内存异常（M15.6） ─────────────────────────
+
+use crate::mem::PressureLevel;
+
+/// 内存阈值组。GUI 侧从 settings.json 读（`island.swap_pct` / `island.mem_sustain_sec`）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MemThresholds {
+    /// swap 占用率触发阈值（%），默认 80。**钳制上限 95 就是关闭位**：
+    /// 拉到 95 后通道 C 仍可用但几乎永远不触发，不值得单独加开关键。
+    pub swap_pct: f32,
+    /// Warning / swap 通道共用的持续窗口（秒），默认 30
+    pub sustain_sec: u64,
+}
+
+impl Default for MemThresholds {
+    fn default() -> Self {
+        Self {
+            swap_pct: 80.0,
+            sustain_sec: 30,
+        }
+    }
+}
+
+impl MemThresholds {
+    pub fn clamped(self) -> Self {
+        Self {
+            swap_pct: self.swap_pct.clamp(50.0, 95.0),
+            sustain_sec: self.sustain_sec.clamp(10, 300),
+        }
+    }
+}
+
+/// 一次内存异常提报。GB / 换出速率 / 压缩器占用由 GUI 侧从自己的采样源填
+/// （核心层不持有 sysinfo），这里只带判定结论。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MemAlert {
+    /// 触发时刻的内核压力档
+    pub pressure: PressureLevel,
+    /// 命中的通道：压力 / swap / 两者同时
+    pub trigger: MemTrigger,
+    /// 触发时刻 swap 占用率（%）
+    pub swap_ratio_pct: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MemTrigger {
+    /// 压力通道（A 立即 / B 持续）
+    Pressure,
+    /// swap 占用破阈值且持续
+    Swap,
+    /// 同一拍两条通道都满足
+    Both,
+}
+
+/// 内存异常判定：**水平量看状态持续**，与 CPU 的达标率完全不同型。
+///
+/// 三通道独立滞回（见方案 §12.1）：
+/// - A `Critical` 立即触发（内核已在挑杀进程对象，无需再忍），回 Normal 才重新武装；
+/// - B `Warning` 持续 `sustain_sec` 才触发（Warning 会长期挂着），回 Normal 重新武装；
+/// - C swap ≥ `swap_pct` 持续 `sustain_sec`，掉到 `swap_pct − 10` 才重新武装
+///   —— swap 是慢变量，等它归零等于永远不再报。
+///
+/// Warning / swap 的持续采用**连续计时**：中途出现一拍低于线的样本就清零重来。
+/// 偶发抖动本就不该累积成「持续」。
+#[derive(Debug)]
+pub struct MemMonitor {
+    critical_armed: bool,
+    warn_armed: bool,
+    /// Warning 连续计时起点；None = 当前不在 Warning
+    warn_started_ms: Option<u64>,
+    swap_armed: bool,
+    /// swap 连续计时起点；None = 当前低于阈值
+    swap_started_ms: Option<u64>,
+}
+
+impl Default for MemMonitor {
+    fn default() -> Self {
+        // 武装位全部 true：新造出来的监视器必须能触发。派生 Default 会给
+        // bool 一个 false，三条通道天生哑火——这个坑单测当场抓出来了。
+        Self {
+            critical_armed: true,
+            warn_armed: true,
+            warn_started_ms: None,
+            swap_armed: true,
+            swap_started_ms: None,
+        }
+    }
+}
+
+impl MemMonitor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 配置变更时调用：三条通道全部重新武装 + 清计时。
+    /// 理由同 CpuMonitor::reset——旧计时是按旧阈值走的。
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// 投入一个采样。`swap_ratio_pct` 为占用率 ×100；swap 读不到时传负值
+    /// （如 -1.0），通道 C 会安静跳过而不是拿 0% 误判「充裕」。
+    pub fn observe(
+        &mut self,
+        now_ms: u64,
+        pressure: PressureLevel,
+        swap_ratio_pct: f32,
+        th: &MemThresholds,
+    ) -> Option<MemAlert> {
+        let th = th.clamped();
+        let sustain_ms = th.sustain_sec * 1000;
+
+        // 通道 A：Critical 立即。滞回线是 Normal——Critical 降回 Warning 仍算紧张。
+        if pressure == PressureLevel::Critical && self.critical_armed {
+            self.critical_armed = false;
+            return Some(MemAlert {
+                pressure,
+                trigger: MemTrigger::Pressure,
+                swap_ratio_pct,
+            });
+        }
+        if pressure == PressureLevel::Normal {
+            self.critical_armed = true;
+            self.warn_armed = true;
+            self.warn_started_ms = None;
+        }
+
+        // 通道 B：Warning 持续
+        let mut warn_fired = false;
+        if pressure == PressureLevel::Warning {
+            let started = *self.warn_started_ms.get_or_insert(now_ms);
+            if self.warn_armed && now_ms.saturating_sub(started) >= sustain_ms {
+                self.warn_armed = false;
+                self.warn_started_ms = Some(now_ms);
+                warn_fired = true;
+            }
+        } else if pressure == PressureLevel::Critical {
+            // Critical 打断 Warning 计时：A 已经把这次提报带走了
+            self.warn_started_ms = None;
+        }
+
+        // 通道 C：swap 持续。负比率 = 读不到，安静跳过。
+        let mut swap_fired = false;
+        if swap_ratio_pct >= th.swap_pct {
+            let started = *self.swap_started_ms.get_or_insert(now_ms);
+            if self.swap_armed && now_ms.saturating_sub(started) >= sustain_ms {
+                self.swap_armed = false;
+                self.swap_started_ms = Some(now_ms);
+                swap_fired = true;
+            }
+        } else if swap_ratio_pct >= 0.0 {
+            self.swap_started_ms = None;
+            if swap_ratio_pct < th.swap_pct - HYSTERESIS_PCT {
+                self.swap_armed = true;
+            }
+        }
+
+        let trigger = match (warn_fired, swap_fired) {
+            (true, true) => MemTrigger::Both,
+            (true, false) => MemTrigger::Pressure,
+            (false, true) => MemTrigger::Swap,
+            (false, false) => return None,
+        };
+        Some(MemAlert {
+            pressure,
+            trigger,
+            swap_ratio_pct,
+        })
+    }
+}
+
 /// 全局频控：任意事件每小时不超过 `max_per_hour` 次。
 ///
 /// 同类事件的 10 分钟抑制由事件自身的 cooldown 承担（CPU 侧是滞回 + cooldown），
@@ -198,8 +369,8 @@ impl RateLimiter {
         self.fired_ms.clear();
     }
 
-    /// 允许则记录并返回 true；拒绝不记录（否则被拒的时刻也会占坑）。
-    pub fn allow(&mut self, now_ms: u64) -> bool {
+    /// 清理已过一小时窗口的时间戳。
+    fn prune_expired(&mut self, now_ms: u64) {
         const HOUR_MS: u64 = 3_600_000;
         while let Some(&t) = self.fired_ms.front() {
             if now_ms.saturating_sub(t) >= HOUR_MS {
@@ -208,7 +379,21 @@ impl RateLimiter {
                 break;
             }
         }
-        if self.fired_ms.len() as u32 >= self.max_per_hour {
+    }
+
+    /// 只查不记：配额还有余量吗。
+    ///
+    /// 「per-event 闸 + 全局闸」串联判断时必须先查后记：若直接对第一道闸
+    /// `allow()`（记录）再查第二道闸，第二道闸拒绝时第一道闸的配额已被
+    /// 白白吃掉一次。
+    pub fn would_allow(&mut self, now_ms: u64) -> bool {
+        self.prune_expired(now_ms);
+        self.fired_ms.len() < self.max_per_hour as usize
+    }
+
+    /// 允许则记录并返回 true；拒绝不记录（否则被拒的时刻也会占坑）。
+    pub fn allow(&mut self, now_ms: u64) -> bool {
+        if !self.would_allow(now_ms) {
             return false;
         }
         self.fired_ms.push_back(now_ms);
@@ -221,6 +406,10 @@ impl RateLimiter {
 /// 与滞回是两道独立的闸：滞回防「持续高位的重复提报」，冷却防「降下来又升上去
 /// 的反复横跳」——后者在编译 / 渲染场景里很常见。
 pub const CPU_COOLDOWN_MS: u64 = 10 * 60 * 1000;
+
+/// 内存事件的冷却时间。与 CPU 相同量级：内存是慢变量，触发后 10 分钟内
+/// 形势不太可能从「该报」变成「不该报」。
+pub const MEM_COOLDOWN_MS: u64 = CPU_COOLDOWN_MS;
 
 #[cfg(test)]
 mod tests {
@@ -374,5 +563,168 @@ mod tests {
         assert!(!rl.allow(2000));
         // 一小时后第一个时间戳过期，额度回到 1
         assert!(rl.allow(3_600_001));
+    }
+
+    // ───────────── MemMonitor ─────────────
+
+    use crate::mem::PressureLevel as PL;
+
+    fn mem_th() -> MemThresholds {
+        MemThresholds::default()
+    }
+
+    /// 喂一串 (压力档, swap 占用率)，间隔 2 s，返回第一次触发。
+    fn feed_mem(
+        m: &mut MemMonitor,
+        levels: &[PL],
+        ratios: &[f32],
+        start_ms: u64,
+    ) -> Option<MemAlert> {
+        levels
+            .iter()
+            .zip(ratios.iter().chain(std::iter::repeat(&ratios[ratios.len() - 1])))
+            .enumerate()
+            .filter_map(|(i, (lv, r))| m.observe(start_ms + i as u64 * 2000, *lv, *r, &mem_th()))
+            .next()
+    }
+
+    #[test]
+    fn mem_critical_fires_immediately() {
+        let mut m = MemMonitor::new();
+        let a = feed_mem(&mut m, &[PL::Critical], &[30.0], 0);
+        assert!(a.is_some(), "内核判 Critical 应立即触发，无需持续窗口");
+        assert_eq!(a.unwrap().trigger, MemTrigger::Pressure);
+    }
+
+    #[test]
+    fn mem_warning_needs_sustain_window() {
+        let mut m = MemMonitor::new();
+        // 28 s（14 个点）不够 30 s
+        let got = feed_mem(&mut m, &[PL::Warning; 14], &[30.0], 0);
+        assert!(got.is_none(), "28 s 不应触发");
+        // 第 15 个点（28 s 起，30 s 处到达）凑满持续窗口
+        let got = feed_mem(&mut m, &[PL::Warning; 2], &[30.0], 28_000);
+        assert!(got.is_some(), "持续 30 s 的 Warning 应触发");
+    }
+
+    #[test]
+    fn mem_warning_lapse_resets_sustain_timer() {
+        let mut m = MemMonitor::new();
+        // Warning 28 s → Normal 一拍 → 再 Warning 28 s：两段都不满 30 s
+        let seg = [PL::Warning; 14];
+        assert!(feed_mem(&mut m, &seg, &[30.0], 0).is_none());
+        assert!(feed_mem(&mut m, &[PL::Normal], &[30.0], 28_000).is_none());
+        assert!(
+            feed_mem(&mut m, &seg, &[30.0], 30_000).is_none(),
+            "中断后计时清零，连续性不足不应触发"
+        );
+    }
+
+    #[test]
+    fn mem_warning_rearms_only_at_normal() {
+        let mut m = MemMonitor::new();
+        assert!(feed_mem(&mut m, &[PL::Warning; 16], &[30.0], 0).is_some(), "首次触发");
+        // Warning 挂着不放：不应重复报
+        assert!(
+            feed_mem(&mut m, &[PL::Warning; 60], &[30.0], 34_000).is_none(),
+            "未回 Normal 前不应重复触发"
+        );
+        // 回 Normal → 重新武装 → 再持续 Warning 30 s → 再报
+        assert!(feed_mem(&mut m, &[PL::Normal], &[30.0], 154_000).is_none());
+        let later = 156_000;
+        assert!(
+            feed_mem(&mut m, &[PL::Warning; 16], &[30.0], later).is_some(),
+            "回到 Normal 重新武装后应能再次触发"
+        );
+    }
+
+    #[test]
+    fn mem_swap_fires_after_sustain() {
+        let mut m = MemMonitor::new();
+        let got = feed_mem(&mut m, &[PL::Normal; 16], &[94.0], 0);
+        assert!(got.is_some(), "swap 94% 持续 30 s 应触发");
+        assert_eq!(got.unwrap().trigger, MemTrigger::Swap);
+    }
+
+    #[test]
+    fn mem_swap_dip_resets_but_short_dip_does_not_rearm() {
+        let mut m = MemMonitor::new();
+        // 28 s 达标 → 掉到 75%（低于 80 但高于 70 滞回线）→ 计时清零但不重武装
+        assert!(feed_mem(&mut m, &[PL::Normal; 14], &[94.0], 0).is_none());
+        assert!(feed_mem(&mut m, &[PL::Normal], &[75.0], 28_000).is_none());
+        assert!(
+            feed_mem(&mut m, &[PL::Normal; 14], &[94.0], 30_000).is_none(),
+            "未掉到 70 以下前不重新武装，即便攒满持续窗口也不该再报"
+        );
+        // 掉到 70 以下 → 重新武装 → 再持续 → 再报
+        assert!(feed_mem(&mut m, &[PL::Normal; 3], &[60.0], 58_000).is_none());
+        let later = 64_000;
+        assert!(
+            feed_mem(&mut m, &[PL::Normal; 16], &[94.0], later).is_some(),
+            "掉到滞回线以下重新武装后应能再次触发"
+        );
+    }
+
+    #[test]
+    fn mem_both_channels_fire_same_tick() {
+        let mut m = MemMonitor::new();
+        // Warning 持续 30 s 且 swap 同时 94%：同拍命中两条 → Both
+        let got = feed_mem(&mut m, &[PL::Warning; 16], &[94.0], 0);
+        let a = got.expect("两通道同拍应触发");
+        assert_eq!(a.trigger, MemTrigger::Both);
+        assert_eq!(a.pressure, PL::Warning);
+    }
+
+    #[test]
+    fn mem_critical_preempts_warning_accumulation() {
+        let mut m = MemMonitor::new();
+        // Warning 攒 14 s（未触发）→ 突然 Critical → 立即报 Critical
+        assert!(feed_mem(&mut m, &[PL::Warning; 7], &[30.0], 0).is_none());
+        let got = feed_mem(&mut m, &[PL::Critical], &[30.0], 14_000);
+        let a = got.expect("Critical 应立即抢占");
+        assert_eq!(a.pressure, PL::Critical);
+    }
+
+    #[test]
+    fn mem_missing_swap_data_does_not_fire_channel_c() {
+        let mut m = MemMonitor::new();
+        // swap 读不到（负比率），压力一直 Normal → 永不触发
+        assert!(feed_mem(&mut m, &[PL::Normal; 30], &[-1.0], 0).is_none());
+    }
+
+    #[test]
+    fn mem_reset_clears_all_channels() {
+        let mut m = MemMonitor::new();
+        assert!(feed_mem(&mut m, &[PL::Warning; 16], &[94.0], 0).is_some());
+        m.reset();
+        // 触发过的通道必须重新武装：再喂同样序列，仍要能走满整个持续窗口
+        assert!(feed_mem(&mut m, &[PL::Warning; 3], &[94.0], 100_000).is_none());
+    }
+
+    #[test]
+    fn mem_thresholds_clamped() {
+        let bad = MemThresholds {
+            swap_pct: 0.0,
+            sustain_sec: 0,
+        }
+        .clamped();
+        assert_eq!(bad.swap_pct, 50.0);
+        assert_eq!(bad.sustain_sec, 10);
+
+        let high = MemThresholds {
+            swap_pct: 99.0,
+            sustain_sec: 99_999,
+        }
+        .clamped();
+        assert_eq!(high.swap_pct, 95.0);
+        assert_eq!(high.sustain_sec, 300);
+    }
+
+    #[test]
+    fn would_allow_does_not_consume_quota() {
+        let mut rl = RateLimiter::new(1);
+        assert!(rl.would_allow(0), "查一次不消耗配额");
+        assert!(rl.allow(0), "查完还能放行");
+        assert!(!rl.would_allow(1000), "满额后查询应返回 false");
     }
 }
