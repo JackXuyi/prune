@@ -26,6 +26,16 @@ mod updater;
 #[cfg(target_os = "macos")]
 mod popover;
 
+// 灵动岛（M15，docs/m15-dynamic-island-plan.md）。非 macOS 走 stub 空实现，
+// 保证命令注册与模块路径在两端一致
+#[cfg(target_os = "macos")]
+mod island;
+#[cfg(target_os = "macos")]
+mod island_geo;
+#[cfg(not(target_os = "macos"))]
+#[path = "island_stub.rs"]
+mod island;
+
 /// 占位命令：暴露核心版本，验证前端 ↔ Rust 链路。
 #[tauri::command]
 fn app_info() -> serde_json::Value {
@@ -37,9 +47,15 @@ fn app_info() -> serde_json::Value {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
-        // GitHub 源自动升级（docs/updater-plan.md）：endpoint 在 tauri.conf.json
-        .plugin(tauri_plugin_updater::Builder::new().build())
+    // updater：GitHub 源自动升级（docs/updater-plan.md），endpoint 在 tauri.conf.json
+    let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build());
+
+    // NSPanel 插件（M15）：必须注册，否则 PanelBuilder::build 里 `state()` 找不到
+    // WebviewPanelManager，会在主线程 panic（且无法 unwind，直接 abort）
+    #[cfg(target_os = "macos")]
+    let builder = builder.plugin(tauri_nspanel::init());
+
+    builder
         .invoke_handler(tauri::generate_handler![
             app_info,
             updater::update_check,
@@ -68,7 +84,14 @@ pub fn run() {
             net_sampler::net_total_snapshot,
             net_sampler::net_total_history,
             net_sampler::net_traffic_recent,
-            net_sampler::net_total_set_active
+            net_sampler::net_total_set_active,
+            island::island_set_expanded,
+            island::island_hide,
+            island::island_ready,
+            island::island_reposition,
+            island::island_settings_get,
+            island::island_settings_set,
+            island::island_status
         ])
         .setup(|app| {
             // 资源守门员形态：常驻菜单栏，不占 Dock
@@ -76,6 +99,14 @@ pub fn run() {
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
 
             tray::create(app.handle())?;
+
+            // 灵动岛（M15）：建 NSPanel 并启动 hover / CPU 两条后台循环。
+            // 失败只记日志——岛是增强项，不能因为它起不来就让整个 App 打不开
+            // （纯外接屏、非 macOS、AppKit 调用失败都会走到这里）
+            if let Err(e) = island::setup(app.handle()) {
+                eprintln!("[m15-island] 初始化失败（不影响主功能）: {e}");
+            }
+            island::spawn_loops(app.handle());
 
             // 内存序列库：落在 app data 目录；打不开就退回纯内存模式（不阻塞采样）
             let store = app.path().app_data_dir().ok().and_then(|dir| {
