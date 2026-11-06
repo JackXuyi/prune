@@ -104,7 +104,7 @@ impl IconTheme {
 
     /// 播放顺序（索引指向 `frames()`）。一轮播完才可能换速 —— 见 tray::run_anim。
     /// - 剪刀：[0,1,2,3,2,1] 往返 6 拍，避免开合动画首尾同帧造成的顿感
-    /// - 鲸鱼：0..8 顺序播放 = 一次完整尾鳍往复（下压 → 摆平 → 上扬 → 回位）
+    /// - 鲸鱼：0..8 顺序播放 = 一次完整游动往复（尾鳍 ±25° + 身体反向俯仰 ±7°）
     pub fn beats(self) -> &'static [usize] {
         match self {
             Self::Scissors => &SCISSORS_BEATS,
@@ -209,18 +209,21 @@ mod tests {
         assert_eq!(IconTheme::from_u8(42), IconTheme::Scissors);
     }
 
-    /// 内嵌 PNG 必须能解码且是正方形——换皮肤最常见的坑是资源路径写错，
-    /// 那样编译期就 panic，这里提前在 CI 里暴露
+    /// 内嵌 PNG 必须能解码——换皮肤最常见的坑是资源路径写错，
+    /// 那样编译期就 panic，这里提前在 CI 里暴露。
+    /// 尺寸只要求「高 ≤ 宽」：鲸鱼皮为拉长尾鳍力臂特意用 4:3 宽幅
+    /// （64×48 / 44×33），菜单栏按高度适配、宽度自然延展。
     #[test]
-    fn every_theme_has_decodable_square_icons() {
+    fn every_theme_has_decodable_icons() {
         for theme in IconTheme::ALL {
             let icon = theme.static_icon();
-            assert_eq!(icon.width(), icon.height(), "{} 静态图非正方形", theme.id());
+            assert!(icon.width() >= icon.height(), "{} 静态图宽高异常", theme.id());
 
             let frames = theme.frames();
             assert!(frames.len() >= 2, "{} 帧数不足以构成动画", theme.id());
             for (i, frame) in frames.iter().enumerate() {
-                assert_eq!(frame.width(), frame.height(), "{} 第 {i} 帧非正方形", theme.id());
+                assert_eq!(frame.width(), frames[0].width(), "{} 第 {i} 帧宽度漂移", theme.id());
+                assert_eq!(frame.height(), frames[0].height(), "{} 第 {i} 帧高度漂移", theme.id());
                 assert!(frame.width() > 0, "{} 第 {i} 帧尺寸为 0", theme.id());
             }
         }
