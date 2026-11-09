@@ -18,7 +18,7 @@ import {
   splitIfaces,
   weightedAverage,
 } from "../types/net";
-import { Badge, Meter } from "./primitives";
+import { Badge } from "./primitives";
 import { MeterBar } from "./charts/MeterBar";
 import { Sparkline } from "./Sparkline";
 
@@ -356,7 +356,6 @@ function maxRate(list: IfaceRate[]): number {
 }
 
 function IfaceRow({ iface, maxBps }: { iface: IfaceRate; maxBps: number }) {
-  const ratio = ifaceTotalBps(iface) / maxBps;
   return (
     <li className="flex items-center gap-3">
       <span className="w-[64px] shrink-0 truncate font-mono text-[11px] text-ink" title={iface.name}>
@@ -369,7 +368,13 @@ function IfaceRow({ iface, maxBps }: { iface: IfaceRate; maxBps: number }) {
         ↑ {formatSpeed(iface.upBps)}
       </span>
       <span className="min-w-0 flex-1">
-        <Meter ratio={ratio} tone={ifaceTotalBps(iface) > 0 ? "accent" : "neutral"} height={4} />
+        <MeterBar
+          value={ifaceTotalBps(iface)}
+          max={maxBps}
+          tone={ifaceTotalBps(iface) > 0 ? "accent" : "neutral"}
+          height={4}
+          label={`${iface.name} 合计 ${formatSpeed(ifaceTotalBps(iface))}`}
+        />
       </span>
       <span className="w-[74px] shrink-0 text-right font-mono text-[10px] tabular-nums text-ink-faint">
         {formatBytes(iface.sessionDownBytes + iface.sessionUpBytes)}
@@ -412,7 +417,13 @@ function VirtualIfaces({ ifaces, maxBps }: { ifaces: IfaceRate[]; maxBps: number
                 ↑ {formatSpeed(i.upBps)}
               </span>
               <span className="min-w-0 flex-1">
-                <Meter ratio={ifaceTotalBps(i) / maxBps} tone="neutral" height={3} />
+                <MeterBar
+                  value={ifaceTotalBps(i)}
+                  max={maxBps}
+                  tone="neutral"
+                  height={3}
+                  label={`${i.name} 合计 ${formatSpeed(ifaceTotalBps(i))}`}
+                />
               </span>
               <span className="w-[52px] shrink-0 text-right text-[9.5px] text-ink-faint">
                 {ifaceKindLabel(i.kind)}

@@ -4,6 +4,7 @@ import { formatBytes, formatRelative } from "../lib/format";
 import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { StackBar } from "./charts/StackBar";
+import { BarList } from "./charts/BarList";
 import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
 import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
@@ -300,6 +301,35 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
           </div>
         ))}
       </div>
+
+      {/* 浪费 vs 可用双段条（§7.6）：「浪费比 3.2 : 1」的比例一眼可见，数字仍保留 */}
+      <StackBar
+        className="mt-2.5"
+        height={5}
+        ariaLabel={`跨平台浪费 ${formatBytes(dw.bytes)}，本机可用 ${formatBytes(dw.nativeBytes)}${dw.ratio != null ? `，浪费比 ${dw.ratio.toFixed(1)} 比 1` : ""}`}
+        segments={[
+          { key: "waste", label: "跨平台浪费", value: dw.bytes, tone: "accent" },
+          { key: "native", label: "本机可用", value: dw.nativeBytes, tone: "neutral" },
+        ]}
+      />
+      <p className="mt-1 text-[10px] text-ink-faint">
+        浪费 {formatBytes(dw.bytes)} · 本机可用 {formatBytes(dw.nativeBytes)}
+        {dw.ratio != null ? ` · 浪费比 ${dw.ratio.toFixed(1)} : 1` : ""}
+      </p>
+
+      {/* 各平台浪费分布（§7.6「多实体比大小」）：谁是大头一眼看出 */}
+      {dw.byPlatform.length > 1 ? (
+        <BarList
+          className="mt-2"
+          rows={dw.byPlatform.map((p) => ({
+            key: p.platform,
+            label: p.platform,
+            value: p.bytes,
+            display: `${p.entryCount} 个 · ${formatBytes(p.bytes)}`,
+            title: `${p.platform}：${p.entryCount} 个跨平台缓存包，共 ${formatBytes(p.bytes)}`,
+          }))}
+        />
+      ) : null}
 
       <details className="mt-2">
         <summary className="cursor-pointer text-[10.5px] text-ink-faint hover:text-ink-dim">

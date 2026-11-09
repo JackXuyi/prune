@@ -16,6 +16,7 @@ import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
 import { formatBytes, formatPercent } from "../lib/format";
 import { NetDirectionReading } from "./stats/NetReading";
+import { Sparkline } from "./Sparkline";
 import { StatsCard } from "./stats/StatsCard";
 
 /**
@@ -75,6 +76,11 @@ export function StatsBoard({
   // swap 阈值条（总览内存卡脚注）：读不到就不渲染，绝不画 0
   const swap = snapshot?.swap;
   const swapRatio = swap && swap.total > 0 ? swap.used / swap.total : null;
+
+  // CPU 近 10 min 走势（§7.6）：history 随快照下发（60 点 @10 s），零新增采样；
+  // 点数不足 2 不渲染——一条线段画不出「尖峰还是持续」
+  const cpuHistory = snapshot?.cpu?.history ?? [];
+  const cpuPeak = cpuHistory.length > 0 ? Math.max(...cpuHistory) : null;
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -190,6 +196,30 @@ export function StatsBoard({
           caption="整机每核平均（0–100%）· 与进程的单核口径不同，不能相减"
           readout={cpu}
           onOpen={() => onDrill("resources")}
+          footnote={
+            cpuHistory.length >= 2 ? (
+              <div>
+                <div className="flex items-baseline justify-between text-[10px] text-ink-faint">
+                  <span>
+                    近 10 min
+                    {cpuPeak != null ? (
+                      <>
+                        {" "}
+                        · 峰值{" "}
+                        <span className="font-mono tabular-nums text-ink-dim">
+                          {Math.round(cpuPeak)}%
+                        </span>
+                      </>
+                    ) : null}
+                  </span>
+                  <span>10 s 一个点 · 看尖峰还是持续</span>
+                </div>
+                <div className="mt-1">
+                  <Sparkline values={cpuHistory} height={26} tone="accent" />
+                </div>
+              </div>
+            ) : null
+          }
         />
         <StatsCard
           title="硬盘"
