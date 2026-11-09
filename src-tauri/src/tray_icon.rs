@@ -7,11 +7,9 @@
 //! 现有主题：
 //! - [`IconTheme::Scissors`]  Lucide 剪刀，**黑色模板图** —— macOS 由系统按菜单栏
 //!   深浅色反色，视觉上与系统图标同质（默认）
-//! - [`IconTheme::WhaleLogo`] 蓝鲸线稿，与剪刀**同风格**：Lucide 24 网格描边
-//!   字形，macOS 黑色模板图（系统反色）/ Windows 品牌色 #34D399
-//!   （M13 起取代鲸鱼娘，持久化 id 保持 `whale` 不变，已选鲸鱼娘的用户升级后
-//!   自动落到新皮；M17 去除 DeepSeek 品牌皮并改为线稿风格，
-//!   目录名 `whale-logo` 为历史遗留，随 id 一起保留）
+//! - [`IconTheme::Cat`] 奔跑小猫线稿，与剪刀**同风格**：实心剪影，macOS 黑色
+//!   模板图（系统反色）/ Windows 品牌色 #34D399（M22 起取代鲸鱼皮；已选鲸鱼
+//!   的用户升级后自动落到小猫，见 `parse` 对旧 id `whale` 的兼容映射）
 //!
 //! 再加一套图标只需动本模块 4 个地方（`id` / `label` / `static_icon` / `frames`），
 //! 菜单勾选与持久化由 `IconTheme::ALL` 自动跟随，tray.rs 无需改动。
@@ -27,44 +25,50 @@ const SETTING_TRAY_ICON: &str = "trayIconTheme";
 pub enum IconTheme {
     /// 剪刀（默认）：黑色模板图
     Scissors,
-    /// 蓝鲸线稿：与剪刀同风格的描边字形（M17 起去除 DeepSeek 品牌皮，id 不变）
-    WhaleLogo,
+    /// 奔跑小猫：与剪刀同风格的实心剪影（M22 起取代鲸鱼皮）
+    Cat,
 }
 
 impl IconTheme {
     /// 菜单展示顺序 = 数组顺序
-    pub const ALL: [IconTheme; 2] = [Self::Scissors, Self::WhaleLogo];
+    pub const ALL: [IconTheme; 2] = [Self::Scissors, Self::Cat];
 
     /// 持久化值 & 菜单项 ID 后缀（稳定标识，不要跟着 label 改）
     pub fn id(self) -> &'static str {
         match self {
             Self::Scissors => "scissors",
-            Self::WhaleLogo => "whale",
+            Self::Cat => "cat",
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
             Self::Scissors => "剪刀（默认）",
-            Self::WhaleLogo => "鲸鱼",
+            Self::Cat => "小猫",
         }
     }
 
+    /// 未知值一律退回默认主题（settings.json 被手改成乱七八糟时不至于没图标）。
+    /// 旧 id `whale` 兼容映射到小猫：M22 鲸鱼皮被取代，已选鲸鱼的用户
+    /// 升级后自动落到小猫，而不是被静默重置成剪刀。
     pub fn parse(raw: &str) -> Option<Self> {
+        if raw == "whale" {
+            return Some(Self::Cat);
+        }
         Self::ALL.iter().copied().find(|t| t.id() == raw)
     }
 
     pub fn as_u8(self) -> u8 {
         match self {
             Self::Scissors => 0,
-            Self::WhaleLogo => 1,
+            Self::Cat => 1,
         }
     }
 
     /// 未知值一律退回默认主题（settings.json 被手改成乱七八糟时不至于没图标）
     pub fn from_u8(v: u8) -> Self {
         match v {
-            1 => Self::WhaleLogo,
+            1 => Self::Cat,
             _ => Self::Scissors,
         }
     }
@@ -80,12 +84,12 @@ impl IconTheme {
         #[cfg(target_os = "macos")]
         let bytes: &'static [u8] = match self {
             Self::Scissors => include_bytes!("../icons/tray.png"),
-            Self::WhaleLogo => include_bytes!("../icons/tray-whale-logo/macos.png"),
+            Self::Cat => include_bytes!("../icons/tray-cat/macos.png"),
         };
         #[cfg(not(target_os = "macos"))]
         let bytes: &'static [u8] = match self {
             Self::Scissors => include_bytes!("../icons/32x32.png"),
-            Self::WhaleLogo => include_bytes!("../icons/tray-whale-logo/win.png"),
+            Self::Cat => include_bytes!("../icons/tray-cat/win.png"),
         };
         // 编译期内嵌资源，坏了是构建期问题，直接 panic 比静默没图标好排查
         Image::from_bytes(bytes).expect("内置托盘图标损坏")
@@ -93,28 +97,28 @@ impl IconTheme {
 
     /// CPU 动画的帧（索引 0 与 `static_icon` 同尺寸，作为「静止」姿态）。
     ///
-    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，鲸鱼 6 帧「大幅游动」。
+    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，小猫 8 帧「前跃循环」。
     /// 播放顺序由 [`IconTheme::beats`] 给出，不要假设长度。
     pub fn frames(self) -> &'static [Image<'static>] {
         match self {
             Self::Scissors => scissors_frames(),
-            Self::WhaleLogo => whale_logo_frames(),
+            Self::Cat => cat_frames(),
         }
     }
 
     /// 播放顺序（索引指向 `frames()`）。一轮播完才可能换速 —— 见 tray::run_anim。
     /// - 剪刀：[0,1,2,3,2,1] 往返 6 拍，避免开合动画首尾同帧造成的顿感
-    /// - 鲸鱼：0..5 顺序播放 = 一次完整游动往复（尾鳍 ±30° + 身体反向俯仰 ±12°）
+    /// - 小猫：0..5 顺序播放 = 一次完整前跃（抬前脚 → 腾空前扑 → 落地回位）
     pub fn beats(self) -> &'static [usize] {
         match self {
             Self::Scissors => &SCISSORS_BEATS,
-            Self::WhaleLogo => &WHALE_BEATS,
+            Self::Cat => &CAT_BEATS,
         }
     }
 }
 
 const SCISSORS_BEATS: [usize; 6] = [0, 1, 2, 3, 2, 1];
-const WHALE_BEATS: [usize; 6] = [0, 1, 2, 3, 4, 5];
+const CAT_BEATS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
 
 fn scissors_frames() -> &'static [Image<'static>] {
     static FRAMES: OnceLock<[Image<'static>; 4]> = OnceLock::new();
@@ -138,26 +142,30 @@ fn scissors_frames() -> &'static [Image<'static>] {
     arr
 }
 
-fn whale_logo_frames() -> &'static [Image<'static>] {
+fn cat_frames() -> &'static [Image<'static>] {
     static FRAMES: OnceLock<Vec<Image<'static>>> = OnceLock::new();
     FRAMES.get_or_init(|| {
         #[cfg(target_os = "macos")]
-        let bytes: [&'static [u8]; 6] = [
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f0.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f1.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f2.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f3.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f4.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/macos/f5.png"),
+        let bytes: [&'static [u8]; 8] = [
+            include_bytes!("../icons/tray-anim/cat/macos/f0.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f1.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f2.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f3.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f4.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f5.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f6.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f7.png"),
         ];
         #[cfg(not(target_os = "macos"))]
-        let bytes: [&'static [u8]; 6] = [
-            include_bytes!("../icons/tray-anim/whale-logo/win/f0.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f1.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f2.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f3.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f4.png"),
-            include_bytes!("../icons/tray-anim/whale-logo/win/f5.png"),
+        let bytes: [&'static [u8]; 8] = [
+            include_bytes!("../icons/tray-anim/cat/win/f0.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f1.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f2.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f3.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f4.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f5.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f6.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f7.png"),
         ];
         bytes
             .iter()
@@ -201,13 +209,15 @@ mod tests {
             assert_eq!(IconTheme::from_u8(theme.as_u8()), theme);
         }
         assert_eq!(IconTheme::parse("no-such-theme"), None);
+        // M22 旧鲸鱼 id 兼容映射到小猫（已选鲸鱼的用户升级后自动落新皮）
+        assert_eq!(IconTheme::parse("whale"), Some(IconTheme::Cat));
         // settings.json 被手改成脏值时退回默认主题，而不是没图标
         assert_eq!(IconTheme::from_u8(42), IconTheme::Scissors);
     }
 
     /// 内嵌 PNG 必须能解码——换皮肤最常见的坑是资源路径写错，
     /// 那样编译期就 panic，这里提前在 CI 里暴露。
-    /// 尺寸只要求「高 ≤ 宽」：鲸鱼皮为拉长尾鳍力臂特意用 4:3 宽幅
+    /// 尺寸只要求「高 ≤ 宽」：小猫皮为奔跑姿态特意用 4:3 宽幅
     /// （64×48 / 44×33），菜单栏按高度适配、宽度自然延展。
     #[test]
     fn every_theme_has_decodable_icons() {

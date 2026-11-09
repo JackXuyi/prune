@@ -180,6 +180,9 @@ pub fn run() {
                 tray::run_anim(anim_handle).await;
             });
 
+            // 动画专用新鲜 CPU 源（M21）：1 Hz 轻采样 + EMA，让游速跟手不滞后
+            tauri::async_runtime::spawn(tray::run_cpu_watch());
+
             // 面板失焦即隐藏（技术方案 §6）
             if let Some(panel) = app.get_webview_window("panel") {
                 tray::attach_blur_to_hide(&panel);

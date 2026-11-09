@@ -9,7 +9,7 @@
 //!
 //! 运行 `pnpm tauri dev` 后观察 stdout 的 `[m0-tray]` 日志，并目测面板落点。
 
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -262,25 +262,29 @@ fn sync_checks(app: &AppHandle, active: IconTheme) {
 // ---- M6 · CPU 动画（docs/m6-tray-anim-plan.md）----
 // 帧资源随主题走（见 tray_icon.rs）：剪刀是黑色模板帧，鲸鱼是彩色游泳帧。
 
-/// 档位映射（方案 §3.1，整机 CPU 近 10 s 均值）→ **每帧**停留毫秒数。
+/// 档位映射（M21 重标定，M22 · B 按小猫 8 帧周期微调）→ **每帧**停留毫秒数。
 ///
-/// M11 起不再有「静止档」：皮的表意是「一直在动」（鲸鱼娘吃饭 / 鲸鱼游泳），
+/// M11 起不再有「静止档」：皮的表意是「一直在动」（小猫前跃），
 /// 停住不动的图标等于一张静态头像，看不出 CPU 忙闲。CPU 未知时也保持
-/// 慢速游动（700 ms/帧，一轮约 4.2 s），只比最闲档慢一档。
+/// 慢速跳跃（720 ms/帧），只比最闲档慢一档。
 ///
-/// 6 帧 = 一次大幅游动往复，所以「一轮时长 = 6 × 本值」：最闲约 4.8 s 游一轮，
-/// 满载约 0.57 s 一轮 —— 快慢差 8 倍，隔着屏幕也能分出「闲」和「忙」。
+/// 旧版（M6）800→95 ms 只有 8 倍，且中段各档只差 1.2~1.4 倍——人眼对
+/// <1.5 倍的节奏差不敏感，15%~60% 区间看起来一样快。M21 重标定为
+/// **闲 800 → 满载 65 ms（约 12 倍），相邻档 ≈1.4~1.5 倍递减**：
+/// 每档都是肉眼可辨的「明显快了一截」。帧数随主题不同（剪刀 6 拍 /
+/// 小猫 8 帧），一轮时长 = 帧数 × 本值：小猫最闲 6.4 s 一跃（悠然），
+/// 满载 0.52 s 一跃（连续扑跳）。
 fn anim_beat_ms(usage: Option<f32>) -> u64 {
     match usage {
-        None => 700, // CPU 未知：慢速但仍在游
+        None => 720, // CPU 未知：慢速但仍在跳
         Some(u) if u < 5.0 => 800,
-        Some(u) if u < 15.0 => 690,
-        Some(u) if u < 30.0 => 520,
-        Some(u) if u < 45.0 => 380,
-        Some(u) if u < 60.0 => 280,
-        Some(u) if u < 75.0 => 200,
-        Some(u) if u < 88.0 => 140,
-        Some(_) => 95,
+        Some(u) if u < 15.0 => 560,
+        Some(u) if u < 30.0 => 380,
+        Some(u) if u < 45.0 => 260,
+        Some(u) if u < 60.0 => 175,
+        Some(u) if u < 75.0 => 115,
+        Some(u) if u < 88.0 => 78,
+        Some(_) => 65,
     }
 }
 
@@ -289,6 +293,52 @@ fn current_cpu_usage(app: &AppHandle) -> Option<f32> {
     let state = app.try_state::<Arc<MemState>>()?;
     let guard = state.snapshot.lock().unwrap_or_else(|e| e.into_inner());
     guard.as_ref().and_then(|s| s.cpu.as_ref()).map(|c| c.usage)
+}
+
+// ---- M21 · 动画专用新鲜 CPU 源 ----
+//
+// 动画读 MemState 的 10 s 均值有两个体感问题：一是滞后——开个重负载任务
+// 要等最多 10 s 图标才加速，「因」和「果」断了就不直观；二是 10 s 窗口把
+// 短促的尖峰负载抹平了。这里自建一个 1 Hz 的轻量 CPU 轮（sysinfo 只刷
+// CPU，µs 级开销），EMA 平滑后放进原子量供动画逐帧读。
+//
+// tooltip 刻意不改：它显示的是与面板同源的 10 s 均值，两个通道各司其职
+// ——图标给「此刻的体感」，tooltip 给「面板里的那个数」。
+
+/// EMA 平滑后的整机 CPU（×100 定点）；`VALID=false` 时不可信（首轮基准未建立）
+static FRESH_CPU: AtomicU32 = AtomicU32::new(0);
+static FRESH_CPU_VALID: AtomicBool = AtomicBool::new(false);
+
+/// 读取动画用的新鲜 CPU；watcher 未就绪时退回 10 s 均值（宁可旧也不停摆）
+fn fresh_cpu_usage(app: &AppHandle) -> Option<f32> {
+    if FRESH_CPU_VALID.load(Ordering::Relaxed) {
+        return Some(FRESH_CPU.load(Ordering::Relaxed) as f32 / 100.0);
+    }
+    current_cpu_usage(app)
+}
+
+/// 动画专用 CPU watcher：1 Hz 一拍，EMA 平滑（α≈0.4）。
+/// 独立 `sysinfo::System` 只刷 CPU——与采样主循环完全解耦，
+/// 这里挂了不影响采样，采样忙不影响图标的响应速度。
+pub async fn run_cpu_watch() {
+    let mut sys = sysinfo::System::new();
+    // 首次 refresh 只是建基准（global_cpu_usage 此时恒 0），不能当读数用
+    sys.refresh_cpu_usage();
+    loop {
+        tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
+        sys.refresh_cpu_usage();
+        let u = sys.global_cpu_usage();
+        // 整数 EMA：ema = 0.4·new + 0.6·ema（×100 定点，四舍五入）
+        let new_x100 = (u * 100.0).round() as u32;
+        let old = FRESH_CPU.load(Ordering::Relaxed);
+        let ema = if FRESH_CPU_VALID.load(Ordering::Relaxed) {
+            (40 * new_x100 + 60 * old + 50) / 100
+        } else {
+            new_x100 // 首个有效样本直接落位
+        };
+        FRESH_CPU.store(ema, Ordering::Relaxed);
+        FRESH_CPU_VALID.store(true, Ordering::Relaxed);
+    }
 }
 
 /// 换帧。macOS 必须用组合 API 原子换帧——先 `set_icon` 再
@@ -332,8 +382,9 @@ fn set_frame(app: &AppHandle, frame: Option<usize>) {
 /// CPU 动画循环（T2）：tokio spawn 于 setup，与采样循环解耦——
 /// 采样失败不影响图标，图标失败不影响采样（方案 §4.2 约束 4）。
 ///
-/// 播放顺序来自主题的 [`IconTheme::beats`]：剪刀 6 拍往返开合，鲸鱼 6 拍
-/// 尾鳍往复。节奏按 CPU 逐帧重算 —— CPU 快照 10 s 才刷新一次，逐帧读与
+/// 播放顺序来自主题的 [`IconTheme::beats`]：剪刀 6 拍往返开合，小猫 6 拍
+/// 前跃循环（抬前脚 → 腾空前扑 → 落地回位）。节奏按 CPU 逐帧重算 —— CPU 来自
+/// M21 的 1 Hz EMA watcher（`fresh_cpu_usage`），最快 1 s 跟手；逐帧读与
 /// 逐轮读等价，但切换主题/开关时能立刻跟上，不用等一轮跑完。
 pub async fn run_anim(app: AppHandle) {
     loop {
@@ -349,7 +400,7 @@ pub async fn run_anim(app: AppHandle) {
                 break;
             }
             set_frame(&app, Some(beat));
-            tokio::time::sleep(std::time::Duration::from_millis(anim_beat_ms(current_cpu_usage(
+            tokio::time::sleep(std::time::Duration::from_millis(anim_beat_ms(fresh_cpu_usage(
                 &app,
             ))))
             .await;
@@ -797,8 +848,8 @@ pub fn attach_blur_to_hide(panel: &WebviewWindow) {
 mod tests {
     use super::{anim_beat_ms, compose_numbers, format_mem_gb, format_speed};
 
-    /// CPU 越高吃得越快：档位必须严格递减，且首尾差 ≥5 倍。
-    /// 差太小的话菜单栏里只是一团在抖，分不出「闲」和「忙」。
+    /// CPU 越高吃得越快：档位必须严格递减，且首尾差 ≥10 倍（M21 重标定后
+    /// 实际 ~15 倍）。差太小的话菜单栏里只是一团在抖，分不出「闲」和「忙」。
     #[test]
     fn eating_gets_faster_as_cpu_rises() {
         let mut prev = u64::MAX;
@@ -808,12 +859,12 @@ mod tests {
             prev = ms;
         }
         assert!(
-            anim_beat_ms(Some(0.0)) >= anim_beat_ms(Some(99.0)) * 5,
-            "满载与空闲的节奏差不足 5 倍"
+            anim_beat_ms(Some(0.0)) >= anim_beat_ms(Some(99.0)) * 10,
+            "满载与空闲的节奏差不足 10 倍"
         );
     }
 
-    /// 鲸鱼 Logo 的表意就是「在游」，CPU 未知也不能停成一张静态图
+    /// 小猫皮的表意就是「在跳」，CPU 未知也不能停成一张静态图
     #[test]
     fn unknown_cpu_keeps_chewing() {
         let ms = anim_beat_ms(None);
