@@ -4,7 +4,16 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
-import type { DayTraffic, NetSpeedSample, NetTotalPoint, NetTotalSample, PortSnapshot } from "../types/net";
+import type {
+  DayTraffic,
+  NetDiag,
+  NetDiagCapability,
+  NetSpeedSample,
+  NetTotalPoint,
+  NetTotalSample,
+  PortSnapshot,
+  SpeedResult,
+} from "../types/net";
 
 /** 浏览器里跑 vite 时没有任何 Tauri 注入，需要显式兜底而不是静默失败 */
 export function isTauri(): boolean {
@@ -180,4 +189,26 @@ export function updatePending(): Promise<UpdateStatus> {
 /** 下载并安装待更新，完成后应用自动重启 */
 export function updateInstall(): Promise<void> {
   return invoke<void>("update_install");
+}
+
+// ---------------------------------------------------------------- 网络诊断（net-diag-plan）
+
+/** 跑一轮分层诊断（~5 s，手动触发；结果同时存后端供报告导出） */
+export function netDiagRun(): Promise<NetDiag> {
+  return invoke<NetDiag>("net_diag_run");
+}
+
+/** 测速 + bufferbloat（macOS networkQuality，~30 s）。Windows 上会返回 Err（capability 门控） */
+export function netDiagSpeedRun(): Promise<SpeedResult> {
+  return invoke<SpeedResult>("net_diag_speed_run");
+}
+
+/** 诊断能力：前端据 speedTest 决定是否渲染测速卡（不硬编码平台） */
+export function netDiagCapability(): Promise<NetDiagCapability> {
+  return invoke<NetDiagCapability>("net_diag_capability");
+}
+
+/** Markdown 诊断报告（基于最近一轮；复制到剪贴板由前端做） */
+export function netDiagReport(): Promise<string> {
+  return invoke<string>("net_diag_report");
 }

@@ -1,23 +1,29 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import type { DayTraffic, IfaceRate, NetTotalSample, NetTotalStatus } from "../types/net";
+import type { DayTraffic, IfaceRate, LayerProbe, NetTotalSample, NetTotalStatus } from "../types/net";
 import { formatBytes, formatClock, recentDays } from "../lib/format";
 import { useMemStore } from "../stores/memStore";
+import { useNetDiagStore } from "../stores/netDiagStore";
 import { useNetSpeedStore } from "../stores/netStore";
 import { TRAFFIC_DAYS, useNetTotalStore } from "../stores/netTotalStore";
 import {
+  DIAG_THRESHOLDS,
+  formatMbps,
   formatSpeed,
   ifaceKindLabel,
   ifaceTotalBps,
   netSpeedOfPids,
+  probeTone,
+  rpmLevelLabel,
   splitIfaces,
   weightedAverage,
 } from "../types/net";
-import { Badge, Meter } from "./primitives";
+import { Badge, CompareBar, Meter } from "./primitives";
 import { Sparkline } from "./Sparkline";
 
 /**
- * 网络 tab（M14）：本机下载 / 上传速率、走势、网卡分布、今日流量、按应用排名。
+ * 网络 tab（M14 / M17）：本机下载 / 上传速率、走势、网卡分布、今日流量、按应用排名；
+ * M17 起拆成「监测 / 诊断」两个二级页，诊断页图表化展示分层探测结果。
  *
  * 三条纪律（方案 §3 / §7）：
  * - 主数字只算**物理网卡**：开 VPN 时 `utun3` 与 `en0` 是同一批字节，相加等于双计
@@ -26,10 +32,14 @@ import { Sparkline } from "./Sparkline";
  *
  * 组件内不订阅、不采样：数据全部来自 store，保持「谁可见谁负责」的既有分工。
  */
+type NetSubPage = "monitor" | "diag";
+
 export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
   const sample = useNetTotalStore((s) => s.sample);
   const history = useNetTotalStore((s) => s.history);
   const days = useNetTotalStore((s) => s.days);
+
+  const [page, setPage] = useState<NetSubPage>("monitor");
 
   const status: NetTotalStatus = sample?.status ?? "warmup";
   const { physical, virtual } = splitIfaces(sample?.ifaces ?? []);
@@ -39,16 +49,20 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      <div className="flex items-baseline justify-between">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-[15px] font-semibold tracking-tight">网络</h1>
           <p className="mt-0.5 text-[11px] text-ink-faint">
-            系统口径的下载 / 上传速率 · 只算物理网卡（虚拟接口单列，避免与 VPN 重复计数）
+            {page === "monitor"
+              ? "系统口径的下载 / 上传速率 · 只算物理网卡（虚拟接口单列，避免与 VPN 重复计数）"
+              : "分层定位慢在哪：DNS → 路由器 → 出口 · 手动触发，不常驻"}
           </p>
         </div>
-        <span className="text-[10px] text-ink-faint">实时 1 s · 仅物理网卡</span>
+        <Segmented page={page} onChange={setPage} />
       </div>
 
+      {page === "monitor" ? (
+        <>
       {status === "unavailable" ? (
         <p className="mt-3 rounded-lg bg-warn/[0.08] px-3 py-2 text-[11px] leading-relaxed text-warn">
           不可读：{sample?.note ?? "系统网卡计数器读不到"}。这里不显示 0
@@ -107,6 +121,10 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
         每分钟落库），未运行时段无法回填。按应用来自 nettop，与网卡口径不必相等
         ——一份按网卡、一份按进程，差几个百分点属正常。
       </p>
+        </>
+      ) : (
+        <DiagPage />
+      )}
     </div>
   );
 }
@@ -491,6 +509,341 @@ function AppRanking({
       )}
     </section>
   );
+}
+
+// ---------------------------------------------------------------- 二级页切换
+
+/** 网络 tab 的二级页：监测（速率/流量）与 诊断（分层探测） */
+function Segmented({
+  page,
+  onChange,
+}: {
+  page: NetSubPage;
+  onChange: (p: NetSubPage) => void;
+}) {
+  const items: { key: NetSubPage; label: string }[] = [
+    { key: "monitor", label: "监测" },
+    { key: "diag", label: "诊断" },
+  ];
+  return (
+    <div
+      className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5"
+      role="tablist"
+      aria-label="网络子页"
+    >
+      {items.map((it) => {
+        const active = page === it.key;
+        return (
+          <button
+            key={it.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(it.key)}
+            className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
+              active
+                ? "bg-white/[0.08] font-medium text-ink"
+                : "text-ink-faint hover:text-ink-dim"
+            }`}
+          >
+            {it.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 诊断页（net-diag-plan §5，M17 图表化）
+
+/**
+ * 诊断二级页：分层横条图（DNS / 网关 / 出口）+ 一条主因结论 + 测速卡。
+ *
+ * 纪律（§7）：阈值逐行展示（不搞黑盒）；探测失败显示「探测失败」不是 0；
+ * 手动触发，running 态禁用重复点击；failed 与「连不上路由器」严格区分。
+ */
+function DiagPage() {
+  const diag = useNetDiagStore((s) => s.diag);
+  const running = useNetDiagStore((s) => s.running);
+  const copied = useNetDiagStore((s) => s.copied);
+  const run = useNetDiagStore((s) => s.run);
+  const copyReport = useNetDiagStore((s) => s.copyReport);
+  const resetCopied = useNetDiagStore((s) => s.resetCopied);
+
+  useEffect(() => {
+    if (!copied) return;
+    const t = setTimeout(resetCopied, 1500);
+    return () => clearTimeout(t);
+  }, [copied, resetCopied]);
+
+  const done = diag?.status === "done" && diag;
+
+  return (
+    <>
+      <div className="mt-4 flex items-center justify-between">
+        <span className="text-[10px] text-ink-faint">
+          一轮约 5 s · 探测失败显示失败，不显示 0
+        </span>
+        <button
+          type="button"
+          onClick={() => void run()}
+          disabled={running}
+          className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] disabled:opacity-50"
+        >
+          {running ? "诊断中…" : "开始诊断"}
+        </button>
+      </div>
+
+      {!diag || diag.status === "idle" ? (
+        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
+          没跑过诊断。点「开始诊断」探测 DNS、路由器、出口三层，
+          每层画一条横柱（中位数）并标出阈值刻度，最后给出一条主因结论。
+        </p>
+      ) : diag.status === "failed" ? (
+        <p className="mt-3 rounded-lg bg-warn/[0.08] px-3 py-2 text-[11px] leading-relaxed text-warn">
+          无法诊断：{diag.note ?? "未知原因"}。这是探测机制本身失败，
+          与「连不上路由器」是两件事。
+        </p>
+      ) : running ? (
+        <p className="mt-3 text-[11px] text-ink-faint">
+          探测中…（DNS → 网关 → 出口 → portal，全程串行不出中间结论）
+        </p>
+      ) : done ? (
+        <>
+          <section className="mt-3 space-y-5 border-b border-hairline-soft pb-4">
+            <LayerChart
+              name="DNS"
+              sub="解析 www.apple.com · 系统解析器（含缓存），低值不代表无 DNS 问题"
+              probe={done.dns}
+              threshold={DIAG_THRESHOLDS.dnsMs}
+            />
+            <LayerChart
+              name={done.gateway ? `路由器 ${done.gateway}` : "路由器"}
+              sub="网关 :80 连接耗时"
+              probe={done.lan}
+              threshold={DIAG_THRESHOLDS.lanMs}
+            />
+            <LayerChart
+              name="出口"
+              sub={
+                done.jitterMs != null
+                  ? `1.1.1.1:443（被拦自动回退 223.5.5.5:443）· 抖动 ±${done.jitterMs.toFixed(1)} ms（阈值 ${DIAG_THRESHOLDS.jitterMs} ms）`
+                  : "1.1.1.1:443（被拦自动回退 223.5.5.5:443）连接耗时"
+              }
+              probe={done.wan}
+              threshold={DIAG_THRESHOLDS.wanLanGapMs}
+            />
+          </section>
+
+          {done.captive === "suspected" ? (
+            <p className="mt-3 text-[11px] text-warn">
+              检测到疑似登录页（酒店 / 机场 Wi-Fi）——打开浏览器完成认证后重新诊断。
+            </p>
+          ) : null}
+
+          {done.verdict ? (
+            <div className="mt-3 rounded-lg bg-white/[0.04] px-3 py-2.5">
+              <div className="text-[12px] font-medium text-ink">→ 主因：{done.verdict.label}</div>
+              <div className="mt-0.5 text-[10.5px] leading-relaxed text-ink-faint">
+                {done.verdict.advice}（规则：{done.verdict.rule}）
+              </div>
+            </div>
+          ) : null}
+
+          <p className="mt-2 text-[10px] text-ink-faint">
+            Wi-Fi 信号层 v2 提供，本版未含；阈值是经验值，全部标在柱图刻度上。
+          </p>
+
+          <button
+            type="button"
+            onClick={() => void copyReport()}
+            className="mt-2 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
+            title="生成 Markdown 报告并复制，可粘贴给 AI 分析"
+          >
+            {copied ? "✓ 已复制" : "复制诊断报告"}
+          </button>
+        </>
+      ) : null}
+
+      <SpeedCard />
+    </>
+  );
+}
+
+/**
+ * 分层横条图：填充条 = 中位数，竖刻度 = 判定阈值，圆点 = 原始样本。
+ *
+ * 横轴从 0 到 `max(阈值×1.6, 读数×1.08)`：阈值始终可见，读数超阈值时自然越线。
+ * 探测失败（median null）不画柱——0 柱会被读成「很快」，违背「不显示 0」纪律。
+ */
+function LayerChart({
+  name,
+  sub,
+  probe,
+  threshold,
+}: {
+  name: string;
+  sub: string;
+  probe: LayerProbe | null;
+  threshold: number;
+}) {
+  const tone = probeTone(probe, threshold);
+  const fill = tone === "danger" ? "bg-danger" : tone === "warn" ? "bg-warn" : "bg-accent";
+  const text = tone === "danger" ? "text-danger" : tone === "warn" ? "text-warn" : "text-ink";
+  const median = probe?.medianMs ?? null;
+  const samples = probe?.samples ?? [];
+  const scaleMax = Math.max(threshold * 1.6, median ?? 0, ...samples, 1) * 1.08;
+  const pct = (v: number) => Math.min(100, (v / scaleMax) * 100);
+
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="min-w-0 text-[11.5px] text-ink">
+          {name}
+          <span className="ml-1.5 text-[9.5px] text-ink-faint">{sub}</span>
+        </span>
+        <span className={`shrink-0 font-mono text-[12px] tabular-nums ${text}`}>
+          {median != null ? `${median.toFixed(1)} ms` : probe?.note ?? "探测失败"}
+        </span>
+      </div>
+
+      {median == null ? (
+        <p className="mt-1.5 text-[10px] text-danger/80">
+          本层没有可用读数，柱图省略——「没有读数」和「0 ms」是两件事。
+        </p>
+      ) : (
+        <>
+          <div className="relative mt-2 h-2 rounded-full bg-white/[0.05]">
+            <div
+              className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-500 ${fill}`}
+              style={{ width: `${pct(median)}%` }}
+            />
+            <div
+              className="absolute -inset-y-1 w-px bg-ink-faint/70"
+              style={{ left: `${pct(threshold)}%` }}
+              title={`阈值 ${threshold} ms`}
+            />
+          </div>
+          {samples.length > 1 ? (
+            <div className="relative mt-1 h-2">
+              {samples.map((s, i) => (
+                <span
+                  key={i}
+                  className="absolute top-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink-faint/60"
+                  style={{ left: `${pct(s)}%` }}
+                  title={`样本 ${i + 1}：${s.toFixed(1)} ms`}
+                />
+              ))}
+            </div>
+          ) : null}
+          <div className="mt-0.5 flex items-baseline justify-between text-[9.5px] text-ink-faint">
+            <span>
+              {samples.length} 次样本 · 中位数 {median.toFixed(1)} ms
+            </span>
+            <span>阈值 {threshold} ms（竖刻度）</span>
+          </div>
+          {probe?.note ? (
+            <p className="mt-1 text-[9.5px] leading-relaxed text-warn">{probe.note}</p>
+          ) : null}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 测速（macOS only，capability 门控）
+
+/**
+ * 测速卡：系统 networkQuality + RPM（bufferbloat 官方口径），图表化为对照条。
+ * Windows 无系统级等价物 → capability 为 false 时**整卡不渲染**（W2 先例：
+ * 隐藏优于「不可用」占位），不是显示一个灰按钮。
+ */
+function SpeedCard() {
+  const capability = useNetDiagStore((s) => s.capability);
+  const speed = useNetDiagStore((s) => s.speed);
+  const speedRunning = useNetDiagStore((s) => s.speedRunning);
+  const runSpeed = useNetDiagStore((s) => s.runSpeed);
+
+  if (!capability?.speedTest) return null;
+
+  const peak = speed ? Math.max(speed.downBps, speed.upBps, 1) : 1;
+
+  return (
+    <section className="mt-5 border-t border-hairline-soft pt-4">
+      <div className="flex items-center justify-between">
+        <SectionHead title="测速 & 负载响应" hint="系统 networkQuality · 约 30 s" />
+        <button
+          type="button"
+          onClick={() => void runSpeed()}
+          disabled={speedRunning}
+          className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] disabled:opacity-50"
+        >
+          {speedRunning ? "测速中…" : "开始测速"}
+        </button>
+      </div>
+
+      {speedRunning ? (
+        <p className="mt-2 text-[11px] text-ink-faint">
+          测速中…（期间网络会被占满，下载 / 上传 / 负载下延迟各测一段）
+        </p>
+      ) : speed ? (
+        <div className="mt-2.5 space-y-2.5">
+          <CompareBar
+            label="下载"
+            value={formatMbps(speed.downBps)}
+            ratio={speed.downBps / peak}
+            tone="accent"
+          />
+          <CompareBar
+            label="上传"
+            value={formatMbps(speed.upBps)}
+            ratio={speed.upBps / peak}
+            tone="info"
+          />
+          <div className="flex items-baseline justify-between gap-3">
+            <span className="text-[11px] text-ink-dim">
+              RPM · 负载下响应度
+              <span className="ml-1.5 text-[9.5px] text-ink-faint">
+                base_rtt {speed.baseRttMs.toFixed(0)} ms
+              </span>
+            </span>
+            <span className="flex shrink-0 items-center gap-1.5">
+              <span className="font-mono text-[13px] tabular-nums text-ink">
+                {speed.rpm.toFixed(0)}
+              </span>
+              <Badge tone={rpmTone(speed.rpmLevel)}>{rpmLevelLabel(speed.rpmLevel)}</Badge>
+            </span>
+          </div>
+          <p
+            className="text-[10px] leading-relaxed text-ink-faint"
+            title="RPM 是 Apple 的「负载下响应度」：满速下载/上传时连接的响应能力，直接对应视频会议会不会卡"
+          >
+            RPM 是 Apple 的「负载下响应度」：满速传输时还能保持多少响应，直接对应视频会议会不会卡。
+            与 WhyFi 的 Cloudflare 口径不同，属 Apple 官方标准。
+          </p>
+        </div>
+      ) : (
+        <p className="mt-2 text-[11px] text-ink-faint">
+          没跑过测速。点「开始测速」拿吞吐与 RPM（bufferbloat 官方口径），约 30 s。
+        </p>
+      )}
+    </section>
+  );
+}
+
+/** Apple RPM 分级 → 徽标语义色（只做文案色映射，不发明新阈值） */
+function rpmTone(level: string): "danger" | "warn" | "accent" | "neutral" {
+  switch (level) {
+    case "Poor":
+      return "danger";
+    case "Low":
+      return "warn";
+    case "Medium":
+    case "Good":
+      return "accent";
+    default:
+      return "neutral";
+  }
 }
 
 // ---------------------------------------------------------------- 小工具

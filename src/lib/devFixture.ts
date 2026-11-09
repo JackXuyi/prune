@@ -12,6 +12,7 @@ import type { AppDisk, BundleMap, DiskLeaf } from "../types/appdisk";
 import type { LeakItem, LeakReport, MemSnapshot, ProcMem, WorkspaceRef } from "../types/mem";
 import type {
   DayTraffic,
+  NetDiag,
   NetSpeedSample,
   NetTotalPoint,
   NetTotalSample,
@@ -19,6 +20,7 @@ import type {
   PortEntry,
   PortSnapshot,
   Proto,
+  SpeedResult,
 } from "../types/net";
 import { dayString } from "./format";
 
@@ -703,4 +705,44 @@ export function devTrafficDays(): DayTraffic[] {
     });
   }
   return out;
+}
+
+/**
+ * 网络诊断 fixture：形态取自方案 §5 示例（出口偏高 + 阈值透明），
+ * 让浏览器走查能同时看到「正常行 + 偏高行 + 主因结论」三种渲染。
+ */
+export function devNetDiag(): NetDiag {
+  return {
+    at: Math.floor(Date.now() / 1000) - 40,
+    status: "done",
+    note: null,
+    dns: { medianMs: 28.0, samples: [31.0, 28.0, 25.0], note: null },
+    lan: {
+      medianMs: 3.2,
+      samples: [3.1, 3.2, 3.4],
+      note: null,
+    },
+    wan: { medianMs: 210.5, samples: [205.0, 210.5, 208.0, 212.0, 207.0], note: null },
+    jitterMs: 2.6,
+    gateway: "192.168.1.1",
+    captive: "none",
+    verdict: {
+      label: "出口/运营商延迟高（差值 207 ms）",
+      advice: "你的宽带问题，Prune 无能为力，找 ISP",
+      rule: "WAN − LAN > 100 ms",
+    },
+    ssid: "Home-WiFi",
+  };
+}
+
+/** 测速 fixture：量级按真实家用宽带给 */
+export function devSpeedResult(): SpeedResult {
+  return {
+    at: Math.floor(Date.now() / 1000) - 100,
+    downBps: 86.2e6,
+    upBps: 21.4e6,
+    rpm: 320.0,
+    rpmLevel: "Medium",
+    baseRttMs: 28.9,
+  };
 }

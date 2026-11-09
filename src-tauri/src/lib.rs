@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 mod commands;
+mod net_diag;
 mod net_sampler;
 mod port_sampler;
 mod sampler;
@@ -85,6 +86,10 @@ pub fn run() {
             net_sampler::net_total_history,
             net_sampler::net_traffic_recent,
             net_sampler::net_total_set_active,
+            net_diag::net_diag_run,
+            net_diag::net_diag_speed_run,
+            net_diag::net_diag_capability,
+            net_diag::net_diag_report,
             island::island_set_expanded,
             island::island_hide,
             island::island_ready,
@@ -128,6 +133,8 @@ pub fn run() {
             // M14：每日流量也落在同一个 prune.db（`net_daily`）。库打不开就传 None，
             // 网络 tab 的「今日」显示「不可用」，实时速率与会话累计照常工作
             app.manage(Arc::new(net_sampler::TotalNetState::new(store)));
+            // 网络诊断（docs/net-diag-plan.md）：按需短任务，只存最近一轮结果供报告导出
+            app.manage(net_diag::NetDiagState::new());
             app.manage(Arc::new(updater::UpdateState::new()));
 
             // 启动静默检查更新（延迟 5 s，发现新版才广播事件，否则沉默）

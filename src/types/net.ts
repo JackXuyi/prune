@@ -392,3 +392,101 @@ export function weightedAverage(points: NetTotalPoint[]): { downBps: number; upB
   if (span === 0) return { downBps: 0, upBps: 0 };
   return { downBps: down / span, upBps: up / span };
 }
+
+// ---------------------------------------------------------------- 网络诊断（net-diag-plan）
+//
+// 与 prune_core::net::diag 一一对应（camelCase）。改这里必须同步 Rust 侧。
+
+/** 诊断状态机。failed = 探测机制本身失败；「连不上路由器」是 done + 结论，两者严格区分 */
+export type DiagStatus = "idle" | "running" | "done" | "failed";
+
+/** captive portal：none = 正常公网；suspected = 疑似登录页；unknown = 探测失败不下结论 */
+export type CaptiveState = "none" | "suspected" | "unknown";
+
+/** 单层探测。medianMs null = 探测失败（**不是 0**） */
+export interface LayerProbe {
+  medianMs: number | null;
+  /** 原始样本，UI 可展开 */
+  samples: number[];
+  note: string | null;
+}
+
+/** 分层结论。规则与阈值一并给 UI，不搞黑盒 */
+export interface NetVerdict {
+  label: string;
+  advice: string;
+  rule: string;
+}
+
+export interface NetDiag {
+  at: number;
+  status: DiagStatus;
+  /** 非空 = 必须显示的原因（failed 时必填） */
+  note: string | null;
+  dns: LayerProbe | null;
+  lan: LayerProbe | null;
+  wan: LayerProbe | null;
+  /** 出口抖动 = WAN 样本平均绝对偏差（MAD） */
+  jitterMs: number | null;
+  gateway: string | null;
+  captive: CaptiveState | null;
+  verdict: NetVerdict | null;
+  /** 报告用。读不到就 null，不下假结论 */
+  ssid: string | null;
+}
+
+/** 手动测速（macOS networkQuality）。Windows 上整卡隐藏（capability 门控） */
+export interface SpeedResult {
+  at: number;
+  /** bps，前端格式化 */
+  downBps: number;
+  upBps: number;
+  /** Apple「responsiveness」：负载下响应度，bufferbloat 的官方口径 */
+  rpm: number;
+  /** Apple 原文分级，前端映射中文 */
+  rpmLevel: string;
+  baseRttMs: number;
+}
+
+export interface NetDiagCapability {
+  speedTest: boolean;
+}
+
+/** 判定阈值（§4.3）。与 Rust LAN_SLOW_MS 等常量同步，UI 逐行展示——阈值不搞黑盒 */
+export const DIAG_THRESHOLDS = {
+  lanMs: 50,
+  wanLanGapMs: 100,
+  jitterMs: 30,
+  dnsMs: 300,
+} as const;
+
+/** Apple RPM 分级 → 中文（自造公式不做，只做文案映射） */
+export function rpmLevelLabel(level: string): string {
+  switch (level) {
+    case "Poor":
+      return "很差";
+    case "Low":
+      return "较差";
+    case "Medium":
+      return "尚可";
+    case "Good":
+      return "良好";
+    default:
+      return level || "—";
+  }
+}
+
+/** Mbps 展示（networkQuality 的吞吐单位是 bps） */
+export function formatMbps(bps: number): string {
+  const mbps = bps / 1_000_000;
+  return mbps >= 100 ? `${Math.round(mbps)} Mbps` : `${mbps.toFixed(1)} Mbps`;
+}
+
+/** 单层读数行用的语义色：正常 accent / 超 warn / 失败 danger */
+export function probeTone(
+  probe: LayerProbe | null,
+  thresholdMs: number,
+): "accent" | "warn" | "danger" {
+  if (!probe || probe.medianMs == null) return "danger";
+  return probe.medianMs > thresholdMs ? "warn" : "accent";
+}

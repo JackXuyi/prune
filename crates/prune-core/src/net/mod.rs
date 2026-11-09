@@ -22,6 +22,8 @@ pub mod traffic;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof
 #[cfg(windows)]
 pub mod win_ports;
+/// 网络诊断（docs/net-diag-plan.md）：DNS / 网关 / 出口三层探测 + 分层判定
+pub mod diag;
 
 use serde::{Deserialize, Serialize};
 

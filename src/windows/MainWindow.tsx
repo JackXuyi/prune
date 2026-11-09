@@ -22,6 +22,7 @@ import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, nu
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
+import { useNetDiagStore } from "../stores/netDiagStore";
 import { useNetSpeedStore } from "../stores/netStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
@@ -149,7 +150,10 @@ export function MainWindow() {
    * - 网速：只 `init`（订阅 net://total + 拉一次快照/历史），**不提速**；
    *   `setActive` 仍然只属于「网络」tab。少了这一步，统计页的网络卡会永远停在
    *   「采样中…」——`initNetTotal` 的唯一调用点本来在下面的 net 分支里。
+   *   网络诊断（net-diag-plan）同场初始化：诊断是手动短任务，init 只拉 capability，
+   *   不起任何采样循环。
    */
+  const initNetDiag = useNetDiagStore((s) => s.init);
   useEffect(() => {
     if (tab !== "stats") return;
     void initPorts();
@@ -193,11 +197,12 @@ export function MainWindow() {
       return;
     }
     void initNetTotal();
+    void initNetDiag(); // 诊断 capability：拉一次，不起采样循环
     void setNetTotalActive(true);
     return () => {
       void setNetTotalActive(false);
     };
-  }, [tab, initNetTotal, setNetTotalActive]);
+  }, [tab, initNetTotal, setNetTotalActive, initNetDiag]);
 
   const families = snapshot?.families ?? [];
   const selected = useMemo(

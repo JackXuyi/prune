@@ -18,7 +18,10 @@ trash = "5"
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [
   "Win32_Foundation",
+  # 网络诊断：GetIpForwardTable2 拿默认网关；MIB_IPFORWARD_ROW2 内嵌 NET_LUID_LH
+  #（Ndis feature），两者必须一起开
   "Win32_NetworkManagement_IpHelper",
+  "Win32_NetworkManagement_Ndis",
   "Win32_Networking_WinSock",
   "Win32_System_ProcessStatus",
   "Win32_System_SystemInformation",
