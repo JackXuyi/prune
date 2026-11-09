@@ -55,7 +55,9 @@ export function DomainCard({
 
   const inner = (
     <>
-      <div className="flex items-center gap-2">
+      {/* w-full：WKWebView 里 button 作 flex 容器时交叉轴 stretch 不生效，
+          子元素会收缩成内容宽（右对齐/撑满全失效），必须显式给宽度 */}
+      <div className="flex w-full items-center gap-2">
         <span
           className="grid size-[26px] shrink-0 place-items-center rounded-lg"
           style={{
@@ -74,7 +76,7 @@ export function DomainCard({
           />
         ) : null}
       </div>
-      <div className="mt-3 flex flex-1 flex-col">
+      <div className="mt-3 flex w-full flex-1 flex-col">
         {readout.status !== "ok" && !body ? (
           // 假事实红线：读不到 / 未就绪显示原因，绝不显示 0
           <p className="text-[11px] leading-relaxed text-ink-faint">{readout.note ?? "—"}</p>

@@ -554,7 +554,8 @@ function ResourceCard({
         dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"
       }`}
     >
-      <div className="flex items-start gap-2">
+      {/* w-full：WKWebView 里 button 作 flex 容器时交叉轴 stretch 不生效（同 DomainCard） */}
+      <div className="flex w-full items-start gap-2">
         <AppIcon
           family={family.name}
           icon={icon}
@@ -612,7 +613,7 @@ function ResourceCard({
         />
       </div>
 
-      <div className={dense ? "mt-1 space-y-[3px]" : "mt-1.5 space-y-[5px]"}>
+      <div className={dense ? "mt-1 w-full space-y-[3px]" : "mt-1.5 w-full space-y-[5px]"}>
           {/* UI v4 排行榜条：CPU 紫 + 内存蓝双 mini-bar，域色即语义（§3.2） */}
           <MetricRow
             dense={dense}
@@ -691,14 +692,15 @@ function MetricRow({
     <div
       className={
         dense
-          ? "grid grid-cols-[24px_84px_minmax(0,1fr)] items-center gap-1.5"
-          : "grid grid-cols-[30px_92px_minmax(0,1fr)] items-center gap-2"
+          ? "grid grid-cols-[24px_minmax(0,1fr)_84px] items-center gap-1.5"
+          : "grid grid-cols-[30px_minmax(0,1fr)_92px] items-center gap-2"
       }
       title={hint}
     >
       <span className={dense ? "text-[9.5px] text-ink-faint" : "text-[10px] text-ink-faint"}>
         {label}
       </span>
+      <span className="min-w-0">{bar}</span>
       <span
         className={`truncate text-right font-mono tabular-nums text-ink-dim ${textClass} ${
           dense ? "text-[11px]" : ""
@@ -706,7 +708,6 @@ function MetricRow({
       >
         {text}
       </span>
-      <span className="min-w-0">{bar}</span>
     </div>
   );
 }
