@@ -82,6 +82,25 @@ body {
   }
 }
 
+/* 清理完成飘字（UI v4 §6.4）：+N GB 从金额上浮起并淡出 */
+@keyframes prune-float-up {
+  0% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  25% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-18px);
+  }
+}
+
+.prune-float-up {
+  animation: prune-float-up 2.4s ease-out infinite;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .prune-anim {
     animation: none !important;

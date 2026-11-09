@@ -20,7 +20,8 @@ import {
 } from "../types/net";
 import { Badge } from "./primitives";
 import { MeterBar } from "./charts/MeterBar";
-import { Sparkline } from "./Sparkline";
+import { AreaChart } from "./charts/AreaChart";
+import { TrackProgress, type TrackNode } from "./charts/TrackProgress";
 
 /**
  * 网络 tab（M14 / M17）：本机下载 / 上传速率、走势、网卡分布、今日流量、按应用排名；
@@ -76,6 +77,7 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
           arrow="↓"
           label="下载"
           tone="accent"
+          chartColor="var(--color-domain-net)"
           status={status}
           bps={sample?.downBps ?? 0}
           values={downSeries}
@@ -84,6 +86,7 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
           arrow="↑"
           label="上传"
           tone="info"
+          chartColor="var(--color-domain-cpu)"
           status={status}
           bps={sample?.upBps ?? 0}
           values={upSeries}
@@ -137,6 +140,7 @@ function DirectionReading({
   arrow,
   label,
   tone,
+  chartColor,
   status,
   bps,
   values,
@@ -144,12 +148,14 @@ function DirectionReading({
   arrow: string;
   label: string;
   tone: "accent" | "info";
+  /** UI v4：走势面积图用域色（↓ 青 / ↑ 紫），与主读数文字色解耦 */
+  chartColor: string;
   status: NetTotalStatus;
   bps: number;
   values: number[];
 }) {
   const { value, unit } = splitSpeed(bps);
-  const valueTone = tone === "accent" ? "text-accent" : "text-info";
+  const valueTone = tone === "accent" ? "text-domain-net" : "text-domain-cpu";
   const ready = status !== "warmup";
 
   return (
@@ -176,7 +182,12 @@ function DirectionReading({
       </div>
       <div className="mt-2">
         {values.length >= 2 ? (
-          <Sparkline values={values} height={52} tone={tone} />
+          <AreaChart
+            values={values}
+            color={chartColor}
+            height={52}
+            ariaLabel={`${label}近 5 分钟走势，每秒一个点`}
+          />
         ) : (
           <div className="flex h-[52px] items-center justify-center rounded-lg border border-dashed border-hairline-soft text-[10px] text-ink-faint">
             走势积累中（每秒一个点）
@@ -292,6 +303,8 @@ function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
     }),
   );
   const recorded = labels.filter((k) => map.has(k)).length;
+  // UI v4（§6.5）：今天（最后一个标签日）的柱发光——「现在进行时」一眼可辨
+  const todayKey = labels[labels.length - 1];
 
   return (
     <div className="mt-2">
@@ -300,23 +313,29 @@ function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
           const t = map.get(k);
           const pct = t ? ((t.downBytes + t.upBytes) / max) * 100 : 0;
           const upShare = t && t.downBytes + t.upBytes > 0 ? t.upBytes / (t.downBytes + t.upBytes) : 0;
+          const isToday = k === todayKey && t != null;
           return (
             <div
               key={k}
               className="flex h-full min-w-0 flex-1 flex-col justify-end"
               title={
                 t
-                  ? `${k} · ↓ ${formatBytes(t.downBytes)} / ↑ ${formatBytes(t.upBytes)}`
+                  ? `${k}${isToday ? "（今天）" : ""} · ↓ ${formatBytes(t.downBytes)} / ↑ ${formatBytes(t.upBytes)}`
                   : `${k} · 没有记录（Prune 未运行）`
               }
             >
               {t ? (
                 <div
                   className="flex w-full flex-col overflow-hidden rounded-[2px]"
-                  style={{ height: `${Math.max(4, pct)}%` }}
+                  style={{
+                    height: `${Math.max(4, pct)}%`,
+                    ...(isToday
+                      ? { boxShadow: "0 0 10px color-mix(in srgb, var(--color-domain-net) 55%, transparent)" }
+                      : {}),
+                  }}
                 >
-                  <div className="bg-info/70" style={{ height: `${upShare * 100}%` }} />
-                  <div className="flex-1 bg-accent/80" />
+                  <div className={isToday ? "bg-domain-cpu" : "bg-info/70"} style={{ height: `${upShare * 100}%` }} />
+                  <div className={`flex-1 ${isToday ? "bg-domain-net" : "bg-accent/80"}`} />
                 </div>
               ) : (
                 <div className="h-px w-full bg-white/[0.09]" />
@@ -330,7 +349,7 @@ function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
           <span
             key={k}
             className={`min-w-0 flex-1 text-center text-[9px] ${
-              map.has(k) ? "text-ink-faint" : "text-ink-faint/50"
+              k === todayKey ? "font-medium text-domain-net" : map.has(k) ? "text-ink-faint" : "text-ink-faint/50"
             }`}
           >
             {k.slice(5)}
@@ -641,7 +660,14 @@ function DiagPage() {
         </p>
       ) : done ? (
         <>
-          <section className="mt-3 space-y-5 border-b border-hairline-soft pb-4">
+          {/* UI v4（§6.5）诊断轨道：DNS → 网关 → 出口逐段点亮，先看「断在哪」再看细节 */}
+          <section className="mt-3 rounded-xl border border-hairline-soft bg-white/[0.02] px-4 py-3.5">
+            <TrackProgress
+              ariaLabel="分层探测轨道：DNS → 路由器 → 出口"
+              nodes={diagTrackNodes(done)}
+            />
+          </section>
+          <section className="mt-4 space-y-5 border-b border-hairline-soft pb-4">
             <LayerChart
               name="DNS"
               sub="解析 www.apple.com · 系统解析器（含缓存），低值不代表无 DNS 问题"
@@ -705,6 +731,33 @@ function DiagPage() {
       <SpeedCard />
     </>
   );
+}
+
+/**
+ * 诊断轨道节点：median null = 探测失败（红叉）；超阈值 = 该层是瓶颈（红叉 + 读数）；
+ * 正常 = 绿勾 + 中位数。sub 一律给读数，让轨道自己说话。
+ */
+function diagTrackNodes(done: {
+  dns: LayerProbe | null;
+  lan: LayerProbe | null;
+  wan: LayerProbe | null;
+}): TrackNode[] {
+  const node = (label: string, probe: LayerProbe | null, threshold: number): TrackNode => {
+    const median = probe?.medianMs ?? null;
+    if (median == null) {
+      return { label, sub: probe?.note ?? "探测失败", state: "fail" };
+    }
+    return {
+      label,
+      sub: `${median.toFixed(0)} ms`,
+      state: median > threshold ? "fail" : "ok",
+    };
+  };
+  return [
+    node("DNS", done.dns, DIAG_THRESHOLDS.dnsMs),
+    node("路由器", done.lan, DIAG_THRESHOLDS.lanMs),
+    node("出口", done.wan, DIAG_THRESHOLDS.wanLanGapMs),
+  ];
 }
 
 /**

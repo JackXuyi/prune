@@ -38,13 +38,14 @@ const PROC_WARN = 20;
 
 type SortKey = "mem" | "cpu" | "procs" | "disk" | "ports" | "down";
 
-const SORTS: { key: SortKey; label: string }[] = [
-  { key: "mem", label: "内存" },
-  { key: "cpu", label: "CPU" },
+/** UI v4：排序 chip 带域色点——颜色即语义（§3.2），mem 蓝 / cpu 紫 / net 青 */
+const SORTS: { key: SortKey; label: string; dot?: string }[] = [
+  { key: "mem", label: "内存", dot: "var(--color-info)" },
+  { key: "cpu", label: "CPU", dot: "var(--color-domain-cpu)" },
   { key: "procs", label: "进程" },
   { key: "disk", label: "磁盘" },
   { key: "ports", label: "端口" },
-  { key: "down", label: "下载" },
+  { key: "down", label: "下载", dot: "var(--color-domain-net)" },
 ];
 
 interface Row {
@@ -357,6 +358,17 @@ export function AppResourceBoard({
                 }`}
                 title={`按${s.label}排序${active ? "（再点切换升降序）" : ""}`}
               >
+                {s.dot ? (
+                  <span
+                    aria-hidden
+                    className="mr-1 inline-block size-[6px] rounded-full align-middle"
+                    style={{
+                      background: s.dot,
+                      opacity: active ? 1 : 0.35,
+                      boxShadow: active ? `0 0 6px color-mix(in srgb, ${s.dot} 60%, transparent)` : undefined,
+                    }}
+                  />
+                ) : null}
                 {s.label}
                 {active ? <span className="ml-0.5 text-[9px]">{desc ? "▾" : "▴"}</span> : null}
               </button>
@@ -594,12 +606,26 @@ function ResourceCard({
         </div>
 
         <div className={dense ? "mt-1 space-y-[3px]" : "mt-1.5 space-y-[5px]"}>
+          {/* UI v4 排行榜条：CPU 紫 + 内存蓝双 mini-bar，域色即语义（§3.2） */}
+          <MetricRow
+            dense={dense}
+            label="CPU"
+            text={cpuShort(cpu)}
+            hint="单核口径，可超过 100%"
+            bar={
+              <CellBar
+                ratio={denom.cpu > 0 && cpu != null ? cpu / denom.cpu : 0}
+                tone="cpu"
+                show={denom.cpu > 0 && cpu != null}
+              />
+            }
+          />
           <MetricRow
             dense={dense}
             label="内存"
             text={`${exact ? "" : "≈"}${formatBytes(mem)}`}
             hint="footprint 口径，含被换出到磁盘的部分；未深探的子进程按 RSS 计入（下界）"
-            bar={<CellBar ratio={denom.mem > 0 ? mem / denom.mem : 0} tone="accent" show={denom.mem > 0} />}
+            bar={<CellBar ratio={denom.mem > 0 ? mem / denom.mem : 0} tone="mem" show={denom.mem > 0} />}
           />
           <MetricRow
             dense={dense}
@@ -628,7 +654,7 @@ function ResourceCard({
               bar={
                 <CellBar
                   ratio={denom.down > 0 && net ? net.downBps / denom.down : 0}
-                  tone="neutral"
+                  tone="net"
                   show={denom.down > 0 && !!net && net.downBps > 0}
                 />
               }

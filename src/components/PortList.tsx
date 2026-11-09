@@ -3,6 +3,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronRightIcon } from "./icons";
 import { Badge } from "./primitives";
 import { StackBar } from "./charts/StackBar";
+import { DotMatrix } from "./charts/DotMatrix";
+import { EmptyState } from "./EmptyArt";
 import { formatClock } from "../lib/format";
 import { usePortStore } from "../stores/portStore";
 import {
@@ -146,24 +148,39 @@ export function PortBoard({
           还没有扫描结果。点右上角「刷新」扫一轮——这不代表没有端口占用。
         </p>
       ) : filtered.length === 0 ? (
-        <p className="mt-4 text-[11px] text-ink-faint">
-          {entries.length === 0
-            ? "当前用户可见范围内没有进程监听端口。"
-            : `没有匹配「${query}」的端口。`}
-        </p>
+        entries.length === 0 ? (
+          <EmptyState
+            title="很干净，没有监听端口 ✂️"
+            note="当前用户可见范围内没有进程监听端口。扫描过了才是这个结论——不是没扫。"
+          />
+        ) : (
+          <p className="mt-4 text-[11px] text-ink-faint">{`没有匹配「${query}」的端口。`}</p>
+        )
       ) : (
         <>
-          {/* 分组占比条（§7.6）：看一眼有多少是「自己人」；扫描后才有数据 */}
+          {/* UI v4（§6.6）点阵仪表盘：一端口一点，琥珀=对外 / 绿=关注层 / 灰=其他，
+              hover 出「端口 · 进程」；占比堆叠条保留作分母视角 */}
           {allEntries.length > 0 ? (
             <div className="mt-3">
               <div className="flex items-baseline justify-between">
-                <span className="text-[11px] font-medium text-ink-dim">分组占比</span>
+                <span className="text-[11px] font-medium text-ink-dim">端口仪表盘</span>
                 <span className="text-[10px] text-ink-faint">
                   关注 {watchedOnly} · 对外 {exposedOnly} · 其他 {otherN}（已折叠）
                 </span>
               </div>
+              <DotMatrix
+                className="mt-2"
+                ariaLabel={`端口点阵：关注层 ${watchedOnly}，对外暴露 ${exposedOnly}，其他 ${otherN}`}
+                items={allEntries.map((e) => {
+                  const p = primaryOf(e);
+                  return {
+                    tone: e.exposure === "any" ? "warn" : e.watched ? "accent" : "neutral",
+                    title: `${e.port} · ${p ? p.comm : "内核持有"}`,
+                  };
+                })}
+              />
               <StackBar
-                className="mt-1.5"
+                className="mt-2.5"
                 ariaLabel={`端口分组：关注层 ${watchedOnly}，对外暴露 ${exposedOnly}，其他 ${otherN}`}
                 segments={[
                   { key: "w", label: "关注层", value: watchedOnly, tone: "accent" },

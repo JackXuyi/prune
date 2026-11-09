@@ -11,7 +11,7 @@ import { ReclaimBoard } from "../components/ReclaimBoard";
 import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
 import { StackBar } from "../components/charts/StackBar";
-import { MeterBar } from "../components/charts/MeterBar";
+import { RingGauge } from "../components/charts/RingGauge";
 import { StatsBoard } from "../components/StatsBoard";
 import {
   ChevronRightIcon,
@@ -604,42 +604,84 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
         </p>
       </div>
 
-      <div className="grid grid-cols-2 gap-x-8 gap-y-5 border-b border-hairline-soft pb-5">
-        <Stat label="物理内存" value={numOf(physicalTotal)} unit={unitOf(physicalTotal)} />
-        <Stat
-          label="已用"
-          value={formatBytes(snapshot.physicalUsedBytes ?? 0)}
-          hint={physicalTotal > 0 ? formatPercent((snapshot.physicalUsedBytes ?? 0) / physicalTotal) : undefined}
-        />
-        <Stat label="可用" value={formatBytes(freeBytes)} hint={freeBytesHint(compressorBytes)} />
-        {compressorBytes != null ? (
-          <Stat label="压缩内存" value={formatBytes(compressorBytes)} hint="vm_stat 压缩页" />
-        ) : null}
-        <Stat
-          label="swap 已用"
-          value={formatPercent(swapRatio)}
-          tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
-          hint={swapHint}
-        />
-        {swap.total > 0 ? (
-          <div className="col-span-2" title="虚线刻度 = 75% / 90% 阈值；swap 配置为 0 时不画条">
-            <MeterBar
-              value={swap.used}
-              max={swap.total}
-              tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
-              thresholds={[0.75, 0.9]}
-              height={5}
-              label={`swap 已用 ${formatPercent(swapRatio)}，阈值刻度 75 与 90`}
-            />
-            <div className="mt-1 flex items-baseline justify-between text-[9.5px] text-ink-faint">
-              <span>
-                {formatBytes(swap.used)} / {formatBytes(swap.total)}
-              </span>
-              <span>阈值 75% / 90%（虚线刻度）</span>
-            </div>
-          </div>
-        ) : null}
+      {/* UI v4（§6.3）：左统计 + 右压力环。环比值口径随平台 metrics 不同，
+          caption 写明换算，不冒充「占用率」 */}
+      <div className="flex items-start gap-6 border-b border-hairline-soft pb-5">
+        <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-8 gap-y-5">
+          <Stat label="物理内存" value={numOf(physicalTotal)} unit={unitOf(physicalTotal)} />
+          <Stat
+            label="已用"
+            value={formatBytes(snapshot.physicalUsedBytes ?? 0)}
+            hint={physicalTotal > 0 ? formatPercent((snapshot.physicalUsedBytes ?? 0) / physicalTotal) : undefined}
+          />
+          <Stat label="可用" value={formatBytes(freeBytes)} hint={freeBytesHint(compressorBytes)} />
+          {compressorBytes != null ? (
+            <Stat label="压缩内存" value={formatBytes(compressorBytes)} hint="vm_stat 压缩页" />
+          ) : null}
+          <Stat
+            label="swap 已用"
+            value={formatPercent(swapRatio)}
+            tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
+            hint={swapHint}
+          />
+        </div>
+        {pressure ? <PressureRing pressure={pressure} /> : null}
       </div>
+
+      {swap.total > 0 ? (
+        <div className="border-b border-hairline-soft pb-5" title="轨道渐变即阈值：过 75% 转黄、过 90% 转红；swap 配置为 0 时不画">
+          {/* UI v4 swap 渐变科技条：阈值直接画在轨道色带上（§6.3） */}
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] text-ink-dim">swap 占用</span>
+            <span className="font-mono text-[11px] tabular-nums text-ink-dim">
+              {formatBytes(swap.used)} / {formatBytes(swap.total)}
+              {swap.fileCount != null ? ` · ${swap.fileCount} 个 swapfile` : " · pagefile"}
+            </span>
+          </div>
+          <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/[0.05]">
+            {/* 阈值色带：0–75% 绿 → 75–90% 黄 → 90%+ 红，固定铺满轨道 */}
+            <div
+              className="absolute inset-0"
+              style={{
+                background:
+                  "linear-gradient(90deg, var(--color-accent) 0%, var(--color-accent) 75%, var(--color-warn) 75%, var(--color-warn) 90%, var(--color-danger) 90%)",
+                opacity: 0.28,
+              }}
+            />
+            {/* 实际占用填充 */}
+            <div
+              className="prune-anim absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
+              style={{
+                width: `${Math.min(100, swapRatio * 100)}%`,
+                background:
+                  swapRatio >= 0.9
+                    ? "var(--color-danger)"
+                    : swapRatio >= 0.75
+                      ? "var(--color-warn)"
+                      : "var(--color-accent)",
+                boxShadow:
+                  swapRatio >= 0.75
+                    ? "0 0 8px color-mix(in srgb, var(--color-warn) 45%, transparent)"
+                    : undefined,
+              }}
+            />
+            <div
+              className="absolute -inset-y-0.5 w-px bg-ink-faint/80"
+              style={{ left: "75%" }}
+              title="预警阈值 75%"
+            />
+            <div
+              className="absolute -inset-y-0.5 w-px bg-ink-faint/80"
+              style={{ left: "90%" }}
+              title="危险阈值 90%"
+            />
+          </div>
+          <div className="mt-1 flex items-baseline justify-between text-[9.5px] text-ink-faint">
+            <span>{formatPercent(swapRatio)} 已用</span>
+            <span>色带阈值 75% / 90%（竖刻度）</span>
+          </div>
+        </div>
+      ) : null}
 
       {pressure ? (
         <section className="border-b border-hairline-soft pb-5">
@@ -711,6 +753,49 @@ function freeBytesHint(compressorBytes: number | null): string {
   return compressorBytes == null ? "系统可用物理内存" : "Pages free";
 }
 
+/**
+ * 内存压力环（UI v4 §6.3）：黄=Warning / 红=Critical 发光弧。
+ * 比值口径随平台 metrics 不同：occupancy 是占用率（raw/100），
+ * kernel 是 1/2/4 档（raw/4）——caption 写明换算，不冒充占用率。
+ */
+function PressureRing({
+  pressure,
+}: {
+  pressure: { raw: number; metric: "kernel" | "occupancy" };
+}) {
+  const ratio = pressure.metric === "occupancy" ? pressure.raw / 100 : pressure.raw / 4;
+  const critical = pressure.metric === "occupancy" ? pressure.raw >= 92 : pressure.raw >= 4;
+  const warning = !critical && (pressure.metric === "occupancy" ? pressure.raw >= 80 : pressure.raw >= 2);
+  const color = critical
+    ? "var(--color-danger)"
+    : warning
+      ? "var(--color-warn)"
+      : "var(--color-accent)";
+
+  return (
+    <div className="shrink-0" title={pressureCaption(pressure)}>
+      <RingGauge
+        segments={[{ value: Math.max(0.04, Math.min(1, ratio)), color }]}
+        size={104}
+        stroke={9}
+        ariaLabel={`内存压力：${pressureCaption(pressure)}`}
+      >
+        <div className="text-center">
+          <span
+            className="block font-mono text-[20px] leading-none tabular-nums"
+            style={{ color, textShadow: `0 0 12px color-mix(in srgb, ${color} 45%, transparent)` }}
+          >
+            {Math.round(Math.min(1, ratio) * 100)}
+          </span>
+          <span className="mt-0.5 block text-[9px] text-ink-faint">
+            {pressure.metric === "occupancy" ? "占用 %" : "内核档"}
+          </span>
+        </div>
+      </RingGauge>
+    </div>
+  );
+}
+
 /** 压力行的原始值说明：两个平台的 raw 含义完全不同 */
 function pressureCaption(pressure: { raw: number; metric: "kernel" | "occupancy" }): string {
   if (pressure.metric === "occupancy") {
@@ -738,15 +823,29 @@ function VictimRow({
           onKillMenu(proc, e.clientX, e.clientY);
         }}
         title="点击查看明细 · 右键结束进程"
-        className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
+        className="w-full rounded-md px-1 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
       >
-        <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink">{proc.name}</span>
-        <span className="shrink-0 font-mono text-[11px] tabular-nums text-warn">
-          {formatBytes(proc.swapped ?? 0)}
-        </span>
-        <span className="w-14 shrink-0 text-right text-[10px] text-ink-faint">
-          {ratio != null ? formatPercent(ratio) : "—"}
-        </span>
+        <div className="flex w-full items-center gap-2">
+          <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink">{proc.name}</span>
+          <span className="shrink-0 font-mono text-[11px] tabular-nums text-warn">
+            {formatBytes(proc.swapped ?? 0)}
+          </span>
+          <span className="w-14 shrink-0 text-right text-[10px] text-ink-faint">
+            {ratio != null ? formatPercent(ratio) : "—"}
+          </span>
+        </div>
+        {/* UI v4（§6.3）：换出占比红橙渐变条——「大部分在磁盘上」一眼可见 */}
+        {ratio != null && ratio > 0 ? (
+          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-white/[0.06]" aria-hidden>
+            <div
+              className="prune-anim h-full rounded-full transition-[width] duration-500"
+              style={{
+                width: `${Math.min(100, ratio * 100)}%`,
+                background: "linear-gradient(90deg, var(--color-warn), var(--color-danger))",
+              }}
+            />
+          </div>
+        ) : null}
       </button>
     </li>
   );

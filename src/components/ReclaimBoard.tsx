@@ -1,15 +1,17 @@
 import { useEffect, useState } from "react";
 
-import { formatBytes, formatRelative } from "../lib/format";
+import { formatBytes, formatPercent, formatRelative } from "../lib/format";
 import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { StackBar } from "./charts/StackBar";
 import { BarList } from "./charts/BarList";
+import { RingGauge } from "./charts/RingGauge";
+import { EmptyState } from "./EmptyArt";
 import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
 import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
 
-/** M4/S2：存储 tab 顶部的卷容量条（已用/总量 + 可回收相当于剩余空间的比例） */
+/** M4/S2：存储 tab 顶部的卷容量环（UI v4 §6.4：细环 + 环心百分比，替代文字条） */
 function VolumeBar({
   volume,
   reclaimable,
@@ -21,23 +23,38 @@ function VolumeBar({
   const usedRatio = volume.totalBytes > 0 ? used / volume.totalBytes : 0;
   const reclaimOfFree =
     volume.userAvailableBytes > 0 ? reclaimable / volume.userAvailableBytes : 0;
+  // 容量越满环越红（80% 预警），环色即语义
+  const ringColor =
+    usedRatio >= 0.9 ? "var(--color-danger)" : usedRatio >= 0.8 ? "var(--color-warn)" : "var(--color-domain-net)";
 
   return (
-    <section className="mt-4 border-b border-hairline-soft pb-4">
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] font-medium text-ink-dim">卷容量</span>
-        <span className="font-mono text-[11px] tabular-nums text-ink-dim">
-          已用 {formatBytes(used)} / {formatBytes(volume.totalBytes)}
-          <span className="ml-2 text-ink">剩余 {formatBytes(volume.userAvailableBytes)}</span>
+    <section className="mt-4 flex items-center gap-4 border-b border-hairline-soft pb-4">
+      <RingGauge
+        segments={[{ value: Math.max(0.04, usedRatio), color: ringColor }]}
+        size={72}
+        stroke={6}
+        ariaLabel={`卷已用 ${formatPercent(usedRatio)}：${formatBytes(used)} / ${formatBytes(volume.totalBytes)}`}
+      >
+        <span className="font-mono text-[13px] tabular-nums text-ink">
+          {Math.round(usedRatio * 100)}
+          <span className="text-[8px] text-ink-faint">%</span>
         </span>
+      </RingGauge>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-baseline justify-between">
+          <span className="text-[11px] font-medium text-ink-dim">卷容量</span>
+          <span className="font-mono text-[11px] tabular-nums text-ink-dim">
+            已用 {formatBytes(used)} / {formatBytes(volume.totalBytes)}
+            <span className="ml-2 text-ink">剩余 {formatBytes(volume.userAvailableBytes)}</span>
+          </span>
+        </div>
+        <p className="mt-1.5 text-[10px] text-ink-faint">
+          可回收 <span className="font-mono tabular-nums text-accent">{formatBytes(reclaimable)}</span>
+          {reclaimOfFree > 0
+            ? ` · 相当于剩余空间的 ${Math.round(reclaimOfFree * 100)}%`
+            : ""}
+        </p>
       </div>
-      <Meter ratio={usedRatio} tone="neutral" height={5} className="mt-2" />
-      <p className="mt-1.5 text-[10px] text-ink-faint">
-        可回收 <span className="font-mono tabular-nums text-accent">{formatBytes(reclaimable)}</span>
-        {reclaimOfFree > 0
-          ? ` · 相当于剩余空间的 ${Math.round(reclaimOfFree * 100)}%`
-          : ""}
-      </p>
     </section>
   );
 }
@@ -90,6 +107,8 @@ export function ReclaimBoard() {
           <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
           {scanning ? "扫描中" : "立即扫描"}
         </button>
+        {/* UI v4（§6.7）：剪刀线稿空态——等待扫描也有情绪 */}
+        {!scanning ? <EmptyState title="还没有扫描结果" note="扫描是只读统计，不会动任何文件。" /> : null}
       </div>
     );
   }
@@ -123,6 +142,11 @@ export function ReclaimBoard() {
       {/* M4/S2 存储域分母：可回收的 GB 从此有上下文 */}
       {report.volume ? <VolumeBar volume={report.volume} reclaimable={report.totals.reclaimable} /> : null}
 
+      {/* UI v4（§6.7）：扫完了但没有可回收项——「很干净」是正反馈不是缺数据 */}
+      {report.totals.reclaimable === 0 ? (
+        <EmptyState title="很干净，没什么可剪的 ✂️" note="跨平台二进制、可再生缓存、项目依赖都没有明显浪费。" />
+      ) : null}
+
       <ReclaimStack totals={report.totals} />
 
       <LayerBar totals={report.totals} />
@@ -136,7 +160,16 @@ export function ReclaimBoard() {
       ) : null}
 
       {lastReclaimed ? (
-        <div className="mt-3 flex items-center justify-between rounded-lg bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
+        <div className="relative mt-3 flex items-center justify-between rounded-lg bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
+          {/* UI v4（§6.4）清理完成飘字：+N GB 从右上浮起，尊重 reduced-motion */}
+          {lastReclaimed.bytes > 0 ? (
+            <span
+              className="prune-float-up pointer-events-none absolute right-4 top-1 font-mono text-[13px] font-semibold tabular-nums"
+              aria-hidden
+            >
+              +{formatBytes(lastReclaimed.bytes)}
+            </span>
+          ) : null}
           <span>
             已移入废纸篓 {lastReclaimed.moved} 项 · {formatBytes(lastReclaimed.bytes)}
             {lastReclaimed.skipped > 0 ? ` · 跳过 ${lastReclaimed.skipped} 个已消失条目` : ""}
