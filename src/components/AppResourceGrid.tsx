@@ -109,6 +109,19 @@ function cpuShort(v: number | null): string {
   return `${Math.round(v)}%`;
 }
 
+/** 值列专用短格式：单位只留一个尾缀（`↓3.8k ↑120 B/s`），完整读数在 hover 里 */
+function compactSpeed(bps: number): string {
+  if (!Number.isFinite(bps) || bps < 1) return "0";
+  const units = ["B", "k", "M", "G"];
+  let v = bps;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v >= 100 ? Math.round(v) : v.toFixed(1).replace(/\.0$/, "")}${units[i]}`;
+}
+
 /**
  * 应用资源板（M10）：每个应用一张卡，横向对比进程 / CPU / 内存 / 磁盘 / 端口 / 网速。
  *
@@ -513,7 +526,6 @@ function ResourceCard({
 }) {
   const { family, members, mem, cpu, procs, disk, ports, exposed, conns, net } = row;
   const exact = isExact(family);
-  const cpuTone = cpu != null && cpu >= 100 ? "text-danger" : "text-ink-dim";
 
   const netText =
     netStatus == null
@@ -524,7 +536,8 @@ function ResourceCard({
           ? "不可读"
           : net == null
             ? "—"
-            : null;
+            : // 双向合并为一个短串：/s 只留一个尾缀（`↓3.8k ↑120 B/s`），完整读数在 hover 里
+              `↓${compactSpeed(net.downBps)} ↑${compactSpeed(net.upBps)}/s`;
 
   const diskText = disk
     ? `${disk.partial ? "≥ " : ""}${formatBytes(disk.bytes)}`
@@ -585,10 +598,7 @@ function ResourceCard({
             dense ? "mt-0.5 pl-[16px] text-[9.5px]" : "mt-0.5 flex-wrap pl-[18px] text-[10px]"
           }`}
         >
-          <span className={`font-mono tabular-nums ${cpuTone}`} title="单核口径，可超过 100%">
-            {cpuShort(cpu)} CPU
-          </span>
-          <span>·</span>
+          {/* CPU% 已由下方紫色 mini-bar 行承担，副标题不再重复（去冗余） */}
           <span
             title={
               portsReady
@@ -612,6 +622,7 @@ function ResourceCard({
             label="CPU"
             text={cpuShort(cpu)}
             hint="单核口径，可超过 100%"
+            textClass={cpu != null && cpu >= 100 ? "text-danger" : ""}
             bar={
               <CellBar
                 ratio={denom.cpu > 0 && cpu != null ? cpu / denom.cpu : 0}
@@ -643,13 +654,12 @@ function ResourceCard({
           {showNet ? (
             <MetricRow
               label="网速"
-              text={
-                netText ??
-                (net
-                  ? `↓${formatSpeed(net.downBps)} ↑${formatSpeed(net.upBps)}`
-                  : "—")
+              text={netText ?? "—"}
+              hint={
+                net
+                  ? `下载 ${formatSpeed(net.downBps)} · 上传 ${formatSpeed(net.upBps)} · 1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大`
+                  : "1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大"
               }
-              hint="1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大"
               textClass="text-[10px]"
               bar={
                 <CellBar
@@ -696,8 +706,8 @@ function MetricRow({
     <div
       className={
         dense
-          ? "grid grid-cols-[24px_72px_minmax(0,1fr)] items-center gap-1.5"
-          : "grid grid-cols-[30px_78px_minmax(0,1fr)] items-center gap-2"
+          ? "grid grid-cols-[24px_84px_minmax(0,1fr)] items-center gap-1.5"
+          : "grid grid-cols-[30px_92px_minmax(0,1fr)] items-center gap-2"
       }
       title={hint}
     >
