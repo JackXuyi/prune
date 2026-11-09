@@ -378,6 +378,26 @@
   .tile .tc { margin-top:6px; }
   .tile .tn { margin-top:5px; font-size:9px; color:var(--ink-faint); }
 
+  /* 近 7 天历史（v1.1）：三轨柱形，各自量纲；缺记录画灰虚线，不补 0 */
+  .dhist { padding:12px 18px 2px; }
+  .dhist .hh { display:flex; align-items:center; gap:6px; font-size:10px; color:var(--ink-dim); }
+  .dhist .hh .t { font-size:11px; font-weight:560; color:var(--ink); }
+  .dhist .hh .grow { flex:1; }
+  .dhist .hh .chip { padding:2px 7px; border-radius:999px; font-size:9px; color:var(--ink-faint);
+    border:1px solid var(--hairline); }
+  .dhist .hh .chip.on { color:#a78bfa; border-color:rgba(167,139,250,.35); background:rgba(167,139,250,.10); }
+  .dhist .hh .cov { font-family:var(--mono); font-size:9px; color:var(--accent); margin-left:4px; }
+  .dhist .trow { display:grid; grid-template-columns:32px minmax(0,1fr) 150px; gap:9px; align-items:end;
+    margin-top:8px; }
+  .dhist .tl { font-size:9px; color:var(--ink-faint); padding-bottom:2px; }
+  .dhist .bars { display:flex; align-items:flex-end; gap:4px; height:30px; }
+  .dhist .bars i { display:block; flex:1; border-radius:2px 2px 0 0; min-height:1px; }
+  .dhist .bars i.gap { background:transparent; border-top:1px dashed rgba(255,255,255,.14); height:1px !important; }
+  .dhist .tr { text-align:right; font-family:var(--mono); font-variant-numeric:tabular-nums;
+    font-size:9px; color:var(--ink-faint); padding-bottom:1px; }
+  .dhist .tr b { color:var(--ink-dim); font-weight:560; }
+  .dhero .btn.copy { color:#a78bfa; border-color:rgba(167,139,250,.32); background:rgba(167,139,250,.10); }
+
   .ptable { padding:0 18px; margin-top:14px; }
   .ptable .phead { display:grid; grid-template-columns:minmax(0,1.6fr) 54px 48px 70px 70px minmax(0,1fr) 30px;
     gap:8px; padding:0 8px 6px; border-bottom:1px solid var(--hairline-soft);
@@ -1060,7 +1080,7 @@
   <section class="block">
     <div class="sec-no">11</div>
     <div class="sec-title">应用图标 + 应用详情 —— 找得到，也看得全</div>
-    <p class="sec-note">卡片左侧 28px 真实应用图标（系统 .icns 提取，失败落字母徽标），整卡点击进入详情；详情页 = Hero（64px 图标 + 路径 + 主操作）+ 四联资源卡 + 进程明细表 + 端口/工作区/泄漏证据。详见 <span class="num">docs/app-detail-icon-design.md</span>。</p>
+    <p class="sec-note">卡片左侧 28px 真实应用图标（系统 .icns 提取，失败落字母徽标），整卡点击进入详情；详情页 = Hero（64px 图标 + 路径 + 主操作 + 复制摘要）+ 四联资源卡 + <b>近 7 天三轨历史（24 h / 7 天，缺记录画灰虚线不补 0）</b> + 进程明细表 + 端口/工作区/泄漏证据。详见 <span class="num">docs/app-detail-icon-design.md</span> v1.1。</p>
     <div class="mock-row">
       <!-- 左：改版后的卡片（含图标） -->
       <div style="flex:1 1 380px; min-width:360px;">
@@ -1111,7 +1131,7 @@
 
       <!-- 右：应用详情页 -->
       <div style="flex:1 1 560px; min-width:540px;">
-        <div class="app detail-app" style="height:470px; display:flex; flex-direction:column; overflow:hidden;">
+        <div class="app detail-app" style="height:640px; display:flex; flex-direction:column; overflow:hidden;">
           <div class="dtop">
             <span class="back">← 返回应用</span>
             <div class="grow"></div>
@@ -1127,6 +1147,7 @@
               <div class="acts">
                 <span class="btn">在 Finder 显示</span>
                 <span class="btn danger">结束进程…</span>
+                <span class="btn copy">复制摘要</span>
               </div>
             </div>
           </div>
@@ -1176,6 +1197,52 @@
             </div>
           </div>
 
+          <!-- v1.1 近 7 天历史：三轨柱形 + 覆盖率 + 区间切换 -->
+          <div class="dhist">
+            <div class="hh"><span class="t">近 7 天</span><span class="grow"></span>
+              <span class="chip on">7 天</span><span class="chip">24 h</span><span class="cov">覆盖 96%</span>
+            </div>
+            <div class="trow">
+              <span class="tl">CPU</span>
+              <div class="bars">
+                <i style="height:22%;background:rgba(167,139,250,.70)" title="11-03 · 峰值 18%"></i>
+                <i style="height:48%;background:rgba(167,139,250,.70)" title="11-04 · 峰值 31%"></i>
+                <i style="height:80%;background:rgba(167,139,250,.70)" title="11-05 · 峰值 39%"></i>
+                <i class="gap" title="11-06 · 无记录（Prune 未运行）"></i>
+                <i style="height:100%;background:#a78bfa" title="11-07 · 峰值 42%（最高）"></i>
+                <i style="height:45%;background:rgba(167,139,250,.70)" title="11-08 · 峰值 28%"></i>
+                <i style="height:26%;background:rgba(167,139,250,.70)" title="今天 · 峰值 12%"></i>
+              </div>
+              <span class="tr">峰值 <b>42%</b> · 均值 9%</span>
+            </div>
+            <div class="trow">
+              <span class="tl">内存</span>
+              <div class="bars">
+                <i style="height:26%;background:rgba(106,169,255,.62)" title="11-03 · 峰值 4.1 GB"></i>
+                <i style="height:30%;background:rgba(106,169,255,.62)" title="11-04 · 峰值 4.6 GB"></i>
+                <i style="height:52%;background:rgba(106,169,255,.62)" title="11-05 · 峰值 6.8 GB"></i>
+                <i class="gap" title="11-06 · 无记录"></i>
+                <i style="height:88%;background:rgba(106,169,255,.85)" title="11-07 · 峰值 8.2 GB（最高）"></i>
+                <i style="height:60%;background:rgba(106,169,255,.62)" title="11-08 · 峰值 7.4 GB"></i>
+                <i style="height:72%;background:rgba(106,169,255,.62)" title="今天 · 7.1 GB"></i>
+              </div>
+              <span class="tr">峰值 <b>8.2 GB</b> · 今日 7.1</span>
+            </div>
+            <div class="trow">
+              <span class="tl">流量</span>
+              <div class="bars">
+                <i style="height:14%;background:linear-gradient(to top,#22d3ee 62%,#a78bfa 62%)" title="11-03 · ↓ 180 MB / ↑ 12 MB"></i>
+                <i style="height:18%;background:linear-gradient(to top,#22d3ee 62%,#a78bfa 62%)" title="11-04 · ↓ 240 MB / ↑ 18 MB"></i>
+                <i style="height:44%;background:linear-gradient(to top,#22d3ee 62%,#a78bfa 62%)" title="11-05 · ↓ 820 MB / ↑ 40 MB"></i>
+                <i class="gap" title="11-06 · 无记录"></i>
+                <i style="height:100%;background:linear-gradient(to top,#22d3ee 62%,#a78bfa 62%)" title="11-07 · ↓ 1.6 GB / ↑ 96 MB"></i>
+                <i style="height:20%;background:linear-gradient(to top,#22d3ee 62%,#a78bfa 62%)" title="11-08 · ↓ 320 MB / ↑ 22 MB"></i>
+                <i style="height:28%;background:linear-gradient(to top,#22d3ee 62%,#a78bfa 62%)" title="今天 · ↓ 450 MB / ↑ 24 MB"></i>
+              </div>
+              <span class="tr">↓ 合计 <b>3.4 GB</b> · ↑ 210 MB</span>
+            </div>
+          </div>
+
           <div class="secttl"><span class="t">进程明细（45）</span><span class="h">按内存降序 · 右键结束 · 点击看明细</span></div>
           <div class="ptable" style="margin-top:5px;">
             <div class="phead"><span>名称</span><span>pid</span><span>CPU</span><span>内存</span><span>换出</span><span>工作区</span><span></span></div>
@@ -1193,13 +1260,13 @@
 
           <div class="secttl" style="margin-bottom:10px;"><span class="t">工作区归属</span><span class="h">~/proj/prune 32 进程 · 5.1 GB · ~/proj/a 13 进程 · 2.0 GB</span></div>
         </div>
-        <div class="mock-cap"><b>S10 详情</b> · Hero + 四联资源卡（CPU 走势 / 内存双段 / 磁盘三层 / 网速 60s）+ 进程表 + 端口 chips + 工作区</div>
+        <div class="mock-cap"><b>S10 详情</b> · Hero（含复制摘要）+ 四联资源卡 + 近 7 天三轨历史（第 4 天灰虚线 = 无记录）+ 进程表 + 端口 chips + 工作区</div>
       </div>
     </div>
   </section>
 
   <div class="rule"></div>
-  <p class="sec-note" style="max-width:none;">红线不变：假事实红线（未扫描不显示 0）、口径透明（hover 一句话）、只读呈现 + 破坏性操作两步确认、可见性门控、下钻有来有回。全部动效尊重 prefers-reduced-motion。确认方案后按 S1–S5 拆解实施。</p>
+  <p class="sec-note" style="max-width:none;">红线不变：假事实红线（未扫描不显示 0、历史缺小时画灰柱）、口径透明（hover 一句话 / 历史 RSS vs 当前 footprint）、只读呈现 + 破坏性操作两步确认、可见性门控、下钻有来有回。全部动效尊重 prefers-reduced-motion。方案 v1.1 已确认四项决策，按 D1–D8 拆解实施。</p>
 </div>
 </body>
 </html>
