@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { CellBar } from "./CellBar";
 import { Sparkline } from "./Sparkline";
+import { StackBar } from "./charts/StackBar";
 import { ChevronRightIcon } from "./icons";
 import { devAppDisk, devBundles } from "../lib/devFixture";
 import { formatBytes } from "../lib/format";
@@ -283,6 +284,29 @@ export function AppResourceBoard({
   const remaining = filtered.length - DEFAULT_VISIBLE;
   const gated = !searching && filtered.length > DEFAULT_VISIBLE;
 
+  /**
+   * 条形基准标注（§7.6 拍板项）：denom 就是「该指标全体应用的最大值」——
+   * 当前排序字段的 Top1 满条、其余按差距缩短，跨排序不可比（切排序基准跟着换）。
+   * 端口是计数没有比例条，不标。
+   */
+  const benchText = (() => {
+    const v = sortKey === "ports" ? null : denom[sortKey];
+    if (v == null || v <= 0) return null;
+    switch (sortKey) {
+      case "mem":
+      case "disk":
+        return formatBytes(v);
+      case "down":
+        return formatSpeed(v);
+      case "cpu":
+        return `${Math.round(v)}%`;
+      case "procs":
+        return `${v} 个进程`;
+      default:
+        return null;
+    }
+  })();
+
   /** 大户 spotlight：只在「默认视图」出现，跟当前排序说的一致才不算自相矛盾 */
   const spotlight = !searching && sortKey === "mem" && desc && rows.length > 0;
   const top = (pick: (r: Row) => number | null) =>
@@ -362,6 +386,14 @@ export function AppResourceBoard({
                   ? "网速不可读"
                   : `网速 ${Math.round(net.intervalMs)} ms 差分 · 仅非回环`}
           </span>
+          {benchText ? (
+            <span
+              title="卡内比例条的分母 = 该指标全体应用的最大值；Top1 满条，其余按差距缩短。切换排序后基准跟着换，跨排序的条长不可直接比较"
+            >
+              {SORTS.find((s) => s.key === sortKey)?.label}条形基准{" "}
+              <span className="font-mono tabular-nums text-ink-dim">{benchText}</span>
+            </span>
+          ) : null}
           {spotlight ? (
             <>
               <span className="text-ink-faint/70">大户</span>
@@ -719,6 +751,18 @@ function ResourceDetail({
 
       {disk ? (
         <div className="mt-2 space-y-1">
+          {/* 三层构成条（§7.6）：缓存占多大比重一眼看出；数字文本仍逐行保留（V-01） */}
+          {!diskEmpty(disk) ? (
+            <StackBar
+              height={5}
+              ariaLabel={`磁盘三层构成：本体 ${formatBytes(disk.bundle?.bytes ?? 0)}，缓存 ${formatBytes(disk.cache?.bytes ?? 0)}，数据 ${formatBytes(disk.data?.bytes ?? 0)}`}
+              segments={[
+                { key: "bundle", label: "本体", value: disk.bundle?.bytes ?? 0, tone: "accent" },
+                { key: "cache", label: "缓存", value: disk.cache?.bytes ?? 0, tone: "info" },
+                { key: "data", label: "数据", value: disk.data?.bytes ?? 0, tone: "neutral" },
+              ]}
+            />
+          ) : null}
           {[
             { label: "本体", leaf: disk.bundle, hint: BUNDLE_READONLY_HINT },
             { label: "缓存", leaf: disk.cache, hint: CACHE_CLEAN_HINT },

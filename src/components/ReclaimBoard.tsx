@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { formatBytes, formatRelative } from "../lib/format";
 import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
+import { StackBar } from "./charts/StackBar";
 import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
 import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
@@ -121,6 +122,8 @@ export function ReclaimBoard() {
       {/* M4/S2 存储域分母：可回收的 GB 从此有上下文 */}
       {report.volume ? <VolumeBar volume={report.volume} reclaimable={report.totals.reclaimable} /> : null}
 
+      <ReclaimStack totals={report.totals} />
+
       <LayerBar totals={report.totals} />
 
       {scanning ? (
@@ -202,8 +205,37 @@ export function ReclaimBoard() {
   );
 }
 
-function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
-  const rows: { level: Level; tag: string; label: string; bytes: number; hint: string }[] = [
+/**
+ * 全量构成条（UX v3.1 §7.6）：L1–L4 一条堆叠，谁是大头一眼看出。
+ * 分母 = 各段之和（L4 计入总宽但为斜纹段），与 LayerBar 的逐行相对条互为补充；
+ * 总量为 0 时 StackBar 自身不渲染（不画空轨道冒充数据）。
+ */
+function ReclaimStack({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
+  return (
+    <div className="mt-4">
+      <div className="flex items-baseline justify-between">
+        <span className="text-[11px] font-medium text-ink-dim">可回收构成</span>
+        <span className="text-[10px] text-ink-faint">斜纹段 = 只给命令，不计入</span>
+      </div>
+      <StackBar
+        className="mt-2"
+        ariaLabel={`可回收构成：L1 ${formatBytes(totals.deadweight)}，L2 ${formatBytes(totals.l2)}，L3 ${formatBytes(totals.l3)}，L4 ${formatBytes(totals.l4)} 不计入`}
+        segments={[
+          { key: "l1", label: "L1 跨平台二进制", value: totals.deadweight, tone: "accent" },
+          { key: "l2", label: "L2 包管理器等缓存", value: totals.l2, tone: "info" },
+          { key: "l3", label: "L3 项目依赖 / 模拟器", value: totals.l3, tone: "neutral" },
+          { key: "l4", label: "L4 Docker 等高风险项", value: totals.l4, muted: true },
+        ]}
+      />
+      <p className="mt-1.5 text-[10px] text-ink-faint">
+        L1 {formatBytes(totals.deadweight)} · L2 {formatBytes(totals.l2)} · L3{" "}
+        {formatBytes(totals.l3)} · L4 {formatBytes(totals.l4)} 只给命令，不计入
+      </p>
+    </div>
+  );
+}
+
+function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {  const rows: { level: Level; tag: string; label: string; bytes: number; hint: string }[] = [
     { level: "l1", tag: "L1", label: "跨平台二进制", bytes: totals.deadweight, hint: "零后悔 · 你的 Mac 永远加载不了" },
     { level: "l2", tag: "L2", label: "包管理器等缓存", bytes: totals.l2, hint: "可再生 · 删了会重建，只慢下一次安装" },
     { level: "l3", tag: "L3", label: "项目依赖 / 模拟器", bytes: totals.l3, hint: "需判断 · 要重装或丢模拟器状态，逐个确认" },

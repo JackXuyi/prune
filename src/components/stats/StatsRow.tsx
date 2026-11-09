@@ -72,7 +72,8 @@ export function StatsRow({
       <div className="flex w-full items-center gap-2">
         {ok && readout.ratio != null ? (
           <span className="w-[44%] shrink-0">
-            <Meter ratio={readout.ratio} tone={readout.tone} height={4} />
+            {/* 3 px 面板规格（§7.6）：行高 48 px 预算下 4 px 会挤到副读数 */}
+            <Meter ratio={readout.ratio} tone={readout.tone} height={3} />
           </span>
         ) : null}
         <span

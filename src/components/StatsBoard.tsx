@@ -65,9 +65,10 @@ export function StatsBoard({
 
   const totals = report?.totals ?? null;
 
-  // 端口分组（总览卡脚注的 StackBar）：口径与 portReadout 一致
+  // 端口分组（总览卡脚注的 StackBar）：三段互斥——「对外暴露」可能同时命中
+  // 关注层，先扣掉再算其他，否则三段之和大于端口总数、比例虚增
   const portEntries = ports?.entries ?? [];
-  const watchedCount = portEntries.filter((e) => e.watched).length;
+  const watchedCount = portEntries.filter((e) => e.watched && e.exposure !== "any").length;
   const exposedCount = portEntries.filter((e) => e.exposure === "any").length;
   const otherCount = Math.max(0, portEntries.length - watchedCount - exposedCount);
 

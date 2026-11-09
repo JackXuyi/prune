@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronRightIcon } from "./icons";
 import { Badge } from "./primitives";
+import { StackBar } from "./charts/StackBar";
 import { formatClock } from "../lib/format";
 import { usePortStore } from "../stores/portStore";
 import {
@@ -72,6 +73,13 @@ export function PortBoard({
   const searching = query.trim() !== "";
   const visible = searching ? filtered : watched;
   const invisible = snapshot ? invisibleCount(snapshot.coverage) : 0;
+
+  // 分组占比（§7.6）：三段互斥——「对外暴露」可能同时命中关注层，先扣掉再算其他，
+  // 否则三段之和会大于端口总数、条形比例虚增。口径与总览端口卡一致。
+  const allEntries = snapshot?.entries ?? [];
+  const watchedOnly = allEntries.filter((e) => e.watched && e.exposure !== "any").length;
+  const exposedOnly = allEntries.filter((e) => e.exposure === "any").length;
+  const otherN = Math.max(0, allEntries.length - watchedOnly - exposedOnly);
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
@@ -145,6 +153,26 @@ export function PortBoard({
         </p>
       ) : (
         <>
+          {/* 分组占比条（§7.6）：看一眼有多少是「自己人」；扫描后才有数据 */}
+          {allEntries.length > 0 ? (
+            <div className="mt-3">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[11px] font-medium text-ink-dim">分组占比</span>
+                <span className="text-[10px] text-ink-faint">
+                  关注 {watchedOnly} · 对外 {exposedOnly} · 其他 {otherN}（已折叠）
+                </span>
+              </div>
+              <StackBar
+                className="mt-1.5"
+                ariaLabel={`端口分组：关注层 ${watchedOnly}，对外暴露 ${exposedOnly}，其他 ${otherN}`}
+                segments={[
+                  { key: "w", label: "关注层", value: watchedOnly, tone: "accent" },
+                  { key: "e", label: "对外暴露", value: exposedOnly, tone: "warn" },
+                  { key: "o", label: "其他", value: otherN, tone: "neutral" },
+                ]}
+              />
+            </div>
+          ) : null}
           <div className="mt-3 grid grid-cols-[74px_78px_minmax(0,1fr)_minmax(0,1.05fr)_54px] items-center gap-2.5 border-b border-hairline-soft px-2 pb-2 text-[10px] text-ink-faint">
             <span>端口</span>
             <span>暴露面</span>

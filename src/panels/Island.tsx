@@ -221,7 +221,13 @@ export function Island() {
         }}
       >
         {phase === "collapsed" && data && (data.kind === "cpu" ? (
-          <CollapsedRow notchH={notchH} icon={<Bolt />} label="CPU" accent={ORANGE}>
+          <CollapsedRow
+            notchH={notchH}
+            icon={<Bolt />}
+            label="CPU"
+            accent={ORANGE}
+            fill={data.avg / 100}
+          >
             {Math.round(data.avg)}%
           </CollapsedRow>
         ) : (
@@ -230,6 +236,7 @@ export function Island() {
             icon={<MemChip color={memColor(data.pressure)} />}
             label="换出"
             accent={memColor(data.pressure)}
+            fill={data.swapRatioPct / 100}
           >
             {data.swapUsedGb != null ? `${data.swapUsedGb.toFixed(1)}G` : `${Math.round(data.swapRatioPct)}%`}
           </CollapsedRow>
@@ -250,20 +257,24 @@ function memColor(p: MemPressure): string {
   return p === "critical" ? RED : ORANGE;
 }
 
-/** 折叠态三段式：图标 + 标签 + 读数，水平居中在挖孔下方的 17pt 内容条里 */
+/** 折叠态三段式：图标 + 标签 + 读数 + mini 条（§7.6），水平居中在挖孔下方的 17pt 内容条里 */
 function CollapsedRow({
   notchH,
   icon,
   label,
   accent,
+  /** mini 条填充 0–1；null = 读不到，不渲染条（不画 0 长度空轨道） */
+  fill,
   children,
 }: {
   notchH: number;
   icon: ReactNode;
   label: string;
   accent: string;
+  fill?: number | null;
   children: ReactNode;
 }) {
+  const clamped = fill != null && Number.isFinite(fill) ? Math.max(0, Math.min(1, fill)) : null;
   return (
     <div
       style={{
@@ -292,6 +303,30 @@ function CollapsedRow({
       >
         {children}
       </span>
+      {clamped != null ? (
+        <span
+          aria-hidden
+          title={`占比 ${Math.round(clamped * 100)}%`}
+          style={{
+            width: 30,
+            height: 4,
+            borderRadius: 2,
+            background: "rgba(255,255,255,0.14)",
+            overflow: "hidden",
+            display: "block",
+          }}
+        >
+          <span
+            style={{
+              display: "block",
+              width: `${clamped * 100}%`,
+              height: "100%",
+              borderRadius: 2,
+              background: accent,
+            }}
+          />
+        </span>
+      ) : null}
     </div>
   );
 }

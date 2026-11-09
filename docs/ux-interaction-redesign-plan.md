@@ -500,7 +500,7 @@
 | R3 下钻 + 返回 + 快捷键 | ✅ 已完成 | 总览/应用/网络/端口四处下钻带来源；标题栏「← 返回{来源}」chip；⌘1–6 / ⌘R / ⌘F（PortList + AppResourceGrid 搜索框）/ Escape |
 | R4 文案常量库 | ✅ 核心完成 | `lib/uiText.ts` 建立；新代码全部走常量；存量组件文案清扫留下一批 |
 | R5 面板对齐 + 设置弹层 | ✅ 核心完成 | 菜单栏面板跳转目标改 `memory`；设置弹层化完成；面板/岛 mini 条未做 |
-| R6 数字呈现层 | ✅ 核心完成 | `components/charts/` 四构件（MeterBar/StackBar/BarList/ThresholdBar）；已接线：总览可回收 StackBar、端口分组 StackBar、swap 阈值 MeterBar（75/90 刻度）、内存详情构成 StackBar；网络诊断页 M17 已内置阈值横条（保留原有实现）；**未接线（下一批）**：存储页全量 StackBar、应用卡 mini 条、网卡/按应用 BarList、面板/岛 mini 条 |
+| R6 数字呈现层 | ✅ 完成（两批） | 第一批：`components/charts/` 四构件 + 总览可回收 StackBar、swap 阈值 MeterBar、内存详情构成 StackBar；网络诊断页 M17 已内置阈值横条（保留原实现）。第二批（本次）：存储页全量构成 StackBar、内存概况 swap 阈值条、端口页分组占比 StackBar（三段互斥口径）、应用卡条形基准标注 + 磁盘三层 StackBar、按应用速率条（基准 = 本拍 Top1）、测速卡改千兆参考 MeterBar、面板 mini 条 3 px 规范、灵动岛折叠读数 mini 条（CPU 对 100% / swap 对 100%） |
 | 回归 | ✅ | `tsc --noEmit` 0 错误 + `vite build` 通过；IPC 采样调用零新增；端口/nettop 门控逻辑未动 |
 
 **拍板结果（采纳推荐）**：默认页 = 总览 + 可回收主卡；CPU 卡下钻 → 应用页；应用卡 mini 条基准 = 当前排序字段 Top1（实施时条旁标注基准）。

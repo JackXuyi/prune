@@ -10,6 +10,7 @@ import { ReclaimBoard } from "../components/ReclaimBoard";
 import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
 import { StackBar } from "../components/charts/StackBar";
+import { MeterBar } from "../components/charts/MeterBar";
 import { StatsBoard } from "../components/StatsBoard";
 import {
   ChevronRightIcon,
@@ -651,6 +652,24 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
           tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
           hint={swapHint}
         />
+        {swap.total > 0 ? (
+          <div className="col-span-2" title="虚线刻度 = 75% / 90% 阈值；swap 配置为 0 时不画条">
+            <MeterBar
+              value={swap.used}
+              max={swap.total}
+              tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
+              thresholds={[0.75, 0.9]}
+              height={5}
+              label={`swap 已用 ${formatPercent(swapRatio)}，阈值刻度 75 与 90`}
+            />
+            <div className="mt-1 flex items-baseline justify-between text-[9.5px] text-ink-faint">
+              <span>
+                {formatBytes(swap.used)} / {formatBytes(swap.total)}
+              </span>
+              <span>阈值 75% / 90%（虚线刻度）</span>
+            </div>
+          </div>
+        ) : null}
       </div>
 
       {pressure ? (

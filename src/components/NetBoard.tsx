@@ -18,7 +18,8 @@ import {
   splitIfaces,
   weightedAverage,
 } from "../types/net";
-import { Badge, CompareBar, Meter } from "./primitives";
+import { Badge, Meter } from "./primitives";
+import { MeterBar } from "./charts/MeterBar";
 import { Sparkline } from "./Sparkline";
 
 /**
@@ -458,6 +459,13 @@ function AppRanking({
 
   const shown = expanded ? rows : rows.slice(0, TOP_APPS);
   const restCount = rows.length - shown.length;
+  // 条形基准 = 本拍第一名（§7.6「多实体比大小」）：速率是瞬时值，基准跟着每拍走
+  const topBps = shown.length > 0
+    ? Math.max(
+        ...shown.map((r) => r.speed.downBps + r.speed.upBps),
+        1,
+      )
+    : 1;
   const degraded =
     netSample == null
       ? "采样中…（按应用需要 nettop，进入本 tab 后 1 s 内出数）"
@@ -485,7 +493,18 @@ function AppRanking({
                   title="在「应用资源」里看这个应用的完整画像"
                   className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.04]"
                 >
-                  <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink">{r.family}</span>
+                  <span className="w-[76px] shrink-0 truncate text-[11.5px] text-ink" title={r.family}>
+                    {r.family}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <MeterBar
+                      value={r.speed.downBps + r.speed.upBps}
+                      max={topBps}
+                      tone="accent"
+                      height={4}
+                      label={`${r.family} 合计 ${formatSpeed(r.speed.downBps + r.speed.upBps)}`}
+                    />
+                  </span>
                   <span className="w-[92px] shrink-0 text-right font-mono text-[11px] tabular-nums text-accent">
                     ↓ {formatSpeed(r.speed.downBps)}
                   </span>
@@ -773,7 +792,9 @@ function SpeedCard() {
 
   if (!capability?.speedTest) return null;
 
-  const peak = speed ? Math.max(speed.downBps, speed.upBps, 1) : 1;
+  /** 归一化参考：1 Gbps（§7.6）。万兆 / 2.5G 网卡会顶满——数字不会撒谎，
+   *  满条只说明「不低于参考值」，caption 里写明。 */
+  const GIGABIT_BPS = (1e9 * (1 - 0.024)) / 8; // 扣 TCP/IP 头开销的实际可用带宽
 
   return (
     <section className="mt-5 border-t border-hairline-soft pt-4">
@@ -795,18 +816,42 @@ function SpeedCard() {
         </p>
       ) : speed ? (
         <div className="mt-2.5 space-y-2.5">
-          <CompareBar
-            label="下载"
-            value={formatMbps(speed.downBps)}
-            ratio={speed.downBps / peak}
-            tone="accent"
-          />
-          <CompareBar
-            label="上传"
-            value={formatMbps(speed.upBps)}
-            ratio={speed.upBps / peak}
-            tone="info"
-          />
+          <div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[11px] text-ink-dim">下载</span>
+              <span className="font-mono text-xs tabular-nums text-ink">
+                {formatMbps(speed.downBps)}
+              </span>
+            </div>
+            <MeterBar
+              className="mt-1.5"
+              value={speed.downBps}
+              max={GIGABIT_BPS}
+              tone="accent"
+              height={5}
+              label={`下载 ${formatMbps(speed.downBps)}，参考千兆带宽`}
+            />
+          </div>
+          <div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[11px] text-ink-dim">上传</span>
+              <span className="font-mono text-xs tabular-nums text-ink">
+                {formatMbps(speed.upBps)}
+              </span>
+            </div>
+            <MeterBar
+              className="mt-1.5"
+              value={speed.upBps}
+              max={GIGABIT_BPS}
+              tone="info"
+              height={5}
+              label={`上传 ${formatMbps(speed.upBps)}，参考千兆带宽`}
+            />
+          </div>
+          <p className="text-[10px] text-ink-faint">
+            条形参考 = 千兆带宽的实际可用值（约 940 Mbps，已扣协议开销）；
+            2.5G / 万兆网卡会顶满，此时以数字为准。
+          </p>
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-[11px] text-ink-dim">
               RPM · 负载下响应度
