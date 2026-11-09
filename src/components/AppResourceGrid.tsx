@@ -1,12 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { CellBar } from "./CellBar";
+import { AppIcon } from "./AppIcon";
 import { Sparkline } from "./Sparkline";
 import { StackBar } from "./charts/StackBar";
 import { ChevronRightIcon } from "./icons";
 import { devAppDisk, devBundles } from "../lib/devFixture";
 import { formatBytes } from "../lib/format";
 import { appBundles, appDisk, isTauri } from "../lib/ipc";
+import { useAppIcons } from "../lib/useAppIcons";
 import {
   BUNDLE_READONLY_HINT,
   CACHE_CLEAN_HINT,
@@ -52,6 +54,8 @@ interface Row {
   family: FamilyMem;
   members: ProcMem[];
   pids: number[];
+  /** 主进程 exe：图标提取用（拿不到就 null → 字母徽标） */
+  exe: string | null;
   mem: number;
   cpu: number | null;
   procs: number;
@@ -90,6 +94,7 @@ function buildRows(
       family: f,
       members,
       pids,
+      exe: members.find((m) => m.exe)?.exe ?? null,
       mem: totalOf(f),
       cpu: f.cpu ?? null,
       procs: f.processCount,
@@ -137,8 +142,7 @@ export function AppResourceBoard({
   ports,
   net,
   refreshNonce = 0,
-  onOpenPorts,
-  onOpenProcess,
+  onOpenApp,
 }: {
   families: FamilyMem[];
   processes: ProcMem[];
@@ -146,8 +150,8 @@ export function AppResourceBoard({
   net: NetSpeedSample | null;
   /** 父级刷新按钮的计数：变化时强制重测磁盘本体 */
   refreshNonce?: number;
-  onOpenPorts?: (port: number) => void;
-  onOpenProcess?: (pid: number) => void;
+  /** D2：整卡点击进入应用详情（取消卡内展开态） */
+  onOpenApp?: (family: string) => void;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("mem");
   const [desc, setDesc] = useState(true);
@@ -160,7 +164,6 @@ export function AppResourceBoard({
     return () => window.removeEventListener("prune:focus-search", onFocus);
   }, []);
   const [showAll, setShowAll] = useState(false);
-  const [expanded, setExpanded] = useState<string | null>(null);
   const [bundles, setBundles] = useState<BundleMap | null>(null);
   const [bundleBusy, setBundleBusy] = useState(false);
 
@@ -298,6 +301,13 @@ export function AppResourceBoard({
   const remaining = filtered.length - DEFAULT_VISIBLE;
   const gated = !searching && filtered.length > DEFAULT_VISIBLE;
 
+  // D1：首屏 + 一屏滚动余量的图标（60 个上限在 Rust 侧钳制，这里只挑要渲染的）
+  const iconItems = useMemo(
+    () => visible.slice(0, 40).map((r) => ({ family: r.family.name, exe: r.exe })),
+    [visible],
+  );
+  const icons = useAppIcons(iconItems);
+
   /**
    * 条形基准标注（§7.6 拍板项）：denom 就是「该指标全体应用的最大值」——
    * 当前排序字段的 Top1 满条、其余按差距缩短，跨排序不可比（切排序基准跟着换）。
@@ -338,8 +348,6 @@ export function AppResourceBoard({
       setSortKey(key);
       setDesc(true);
     }
-    // 切排序时收起展开卡：它可能掉出前 12 名，展开态凭空消失更莫名其妙
-    setExpanded(null);
   };
 
   return (
@@ -351,7 +359,6 @@ export function AppResourceBoard({
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
-              setExpanded(null);
             }}
             placeholder="搜索应用…"
             className="w-[168px] rounded-md border border-hairline bg-white/[0.03] px-2 py-1 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
@@ -457,17 +464,12 @@ export function AppResourceBoard({
             <ResourceCard
               key={r.family.name}
               row={r}
-              expanded={expanded === r.family.name}
-              onToggle={() =>
-                setExpanded((cur) => (cur === r.family.name ? null : r.family.name))
-              }
+              icon={icons[r.family.name]}
+              onOpen={onOpenApp ? () => onOpenApp(r.family.name) : undefined}
               denom={denom}
               netStatus={net?.status ?? null}
               bundleReady={bundles != null}
               portsReady={ports != null}
-              history={historyRef.current.get(r.family.name) ?? []}
-              onOpenPorts={onOpenPorts}
-              onOpenProcess={onOpenProcess}
             />
           ))}
         </div>
@@ -494,37 +496,33 @@ export function AppResourceBoard({
   );
 }
 
-/** 一张卡：摘要（头 + 概览 + 三行指标）→ 点开跨两列长大，下半区放表格放不下的细节 */
+/** 一张卡：图标 + 名称 + 四行指标；**整卡点击进入详情**（D2，取消卡内展开） */
 function ResourceCard({
   row,
-  expanded,
-  onToggle,
+  icon,
+  onOpen,
   denom,
   netStatus,
   bundleReady,
   portsReady,
-  history,
   showNet = true,
   dense = false,
-  onOpenPorts,
-  onOpenProcess,
 }: {
   row: Row;
-  expanded: boolean;
-  onToggle: () => void;
+  /** 真实图标（data URL）；缺省落字母徽标 */
+  icon?: string;
+  /** 缺省时卡片不可点（面板等只读场景） */
+  onOpen?: () => void;
   denom: { mem: number; cpu: number; disk: number; down: number; procs: number };
   netStatus: NetSpeedSample["status"] | null;
   bundleReady: boolean;
   portsReady: boolean;
-  history: number[];
   /** 面板不采样网速：隐藏整行比显示「尚未采样」诚实（后者像坏了） */
   showNet?: boolean;
   /** 面板紧凑规格：收紧内边距与行距，3 张卡 + 入口必须在一屏内装下、不滚动 */
   dense?: boolean;
-  onOpenPorts?: (port: number) => void;
-  onOpenProcess?: (pid: number) => void;
 }) {
-  const { family, members, mem, cpu, procs, disk, ports, exposed, conns, net } = row;
+  const { family, mem, cpu, procs, disk, ports, exposed, conns, net } = row;
   const exact = isExact(family);
 
   const netText =
@@ -547,75 +545,74 @@ function ResourceCard({
       : "—";
 
   return (
-    <div
-      className={`col-span-1 flex flex-col rounded-xl border transition-colors ${
-        expanded
-          ? "col-span-2 border-hairline bg-white/[0.045]"
-          : "border-hairline-soft bg-white/[0.02] hover:border-hairline hover:bg-white/[0.035]"
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={!onOpen}
+      aria-label={onOpen ? `打开 ${family.name} 详情` : undefined}
+      className={`group col-span-1 flex w-full flex-col rounded-xl border border-hairline-soft bg-white/[0.02] text-left transition-colors hover:border-hairline hover:bg-white/[0.035] disabled:cursor-default disabled:hover:border-hairline-soft disabled:hover:bg-white/[0.02] ${
+        dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"
       }`}
     >
-      <div
-        role="button"
-        tabIndex={0}
-        onClick={onToggle}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" || e.key === " ") {
-            e.preventDefault();
-            onToggle();
-          }
-        }}
-        aria-expanded={expanded}
-        className={`cursor-pointer text-left ${dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"}`}
-      >
-        <div className="flex items-center gap-1.5">
-          <ChevronRightIcon
-            size={11}
-            className={`shrink-0 text-ink-faint transition-transform ${expanded ? "rotate-90" : ""}`}
-          />
-          <span
-            className={`min-w-0 flex-1 truncate leading-tight text-ink ${
-              dense ? "text-[12px]" : "text-[12.5px]"
+      <div className="flex items-start gap-2">
+        <AppIcon
+          family={family.name}
+          icon={icon}
+          size={28}
+          className="mt-0.5 transition-transform group-hover:scale-[1.03]"
+        />
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="flex items-baseline gap-2">
+            <span
+              className={`min-w-0 flex-1 truncate leading-tight text-ink ${
+                dense ? "text-[12px]" : "text-[12.5px]"
+              }`}
+            >
+              {family.name}
+            </span>
+            <span
+              className={`shrink-0 font-mono text-[10.5px] tabular-nums ${
+                procs >= PROC_WARN ? "text-warn" : "text-ink-dim"
+              }`}
+              title={
+                procs >= PROC_WARN
+                  ? `${procs} 个进程：Electron 家族常见，进程数多不等于占资源多`
+                  : `${procs} 个进程`
+              }
+            >
+              {procs} 进程
+            </span>
+          </div>
+
+          <div
+            className={`flex items-center gap-x-2 text-ink-faint ${
+              dense ? "mt-0.5 text-[9.5px]" : "mt-0.5 text-[10px]"
             }`}
           >
-            {family.name}
-          </span>
-          <span
-            className={`shrink-0 font-mono text-[10.5px] tabular-nums ${
-              procs >= PROC_WARN ? "text-warn" : "text-ink-dim"
-            }`}
-            title={
-              procs >= PROC_WARN
-                ? `${procs} 个进程：Electron 家族常见，进程数多不等于占资源多`
-                : `${procs} 个进程`
-            }
-          >
-            {procs} 进程
-          </span>
+            {/* CPU% 已由下方紫色 mini-bar 行承担，副标题不再重复（去冗余） */}
+            <span
+              title={
+                portsReady
+                  ? "只统计关注层端口；Electron 的内部 IPC 随机端口不计入"
+                  : "端口尚未扫描（「—」不代表没有占用）"
+              }
+            >
+              {!portsReady ? "端口未扫" : ports.length === 0 ? "— 端口" : `${ports.length} 端口`}
+              {exposed > 0 ? <span className="ml-0.5 text-warn">●</span> : null}
+            </span>
+            <span>·</span>
+            <span title={portsReady ? "ESTABLISHED 连接数" : "端口尚未扫描，连接数未知"}>
+              {conns == null ? "— 连接" : `${conns.established} 连接`}
+            </span>
+          </div>
         </div>
+        <ChevronRightIcon
+          size={12}
+          className="mt-1 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink-dim"
+        />
+      </div>
 
-        <div
-          className={`flex items-center gap-x-2 text-ink-faint ${
-            dense ? "mt-0.5 pl-[16px] text-[9.5px]" : "mt-0.5 flex-wrap pl-[18px] text-[10px]"
-          }`}
-        >
-          {/* CPU% 已由下方紫色 mini-bar 行承担，副标题不再重复（去冗余） */}
-          <span
-            title={
-              portsReady
-                ? "只统计关注层端口；Electron 的内部 IPC 随机端口不计入"
-                : "端口尚未扫描（「—」不代表没有占用）"
-            }
-          >
-            {!portsReady ? "端口未扫" : ports.length === 0 ? "— 端口" : `${ports.length} 端口`}
-            {exposed > 0 ? <span className="ml-0.5 text-warn">●</span> : null}
-          </span>
-          <span>·</span>
-          <span title={portsReady ? "ESTABLISHED 连接数" : "端口尚未扫描，连接数未知"}>
-            {conns == null ? "— 连接" : `${conns.established} 连接`}
-          </span>
-        </div>
-
-        <div className={dense ? "mt-1 space-y-[3px]" : "mt-1.5 space-y-[5px]"}>
+      <div className={dense ? "mt-1 space-y-[3px]" : "mt-1.5 space-y-[5px]"}>
           {/* UI v4 排行榜条：CPU 紫 + 内存蓝双 mini-bar，域色即语义（§3.2） */}
           <MetricRow
             dense={dense}
@@ -642,7 +639,7 @@ function ResourceCard({
             dense={dense}
             label="磁盘"
             text={diskText}
-            hint={`仅 .app 本体；${BUNDLE_READONLY_HINT}。缓存/数据在展开后按需测量`}
+            hint={`仅 .app 本体；${BUNDLE_READONLY_HINT}。缓存/数据在详情页按需测量`}
             bar={
               <CellBar
                 ratio={denom.disk > 0 && disk ? disk.bytes / denom.disk : 0}
@@ -671,19 +668,7 @@ function ResourceCard({
             />
           ) : null}
         </div>
-      </div>
-
-      {expanded ? (
-        <ResourceDetail
-          family={family}
-          members={members}
-          ports={ports}
-          history={history}
-          onOpenPorts={onOpenPorts}
-          onOpenProcess={onOpenProcess}
-        />
-      ) : null}
-    </div>
+    </button>
   );
 }
 
@@ -727,7 +712,12 @@ function MetricRow({
 }
 
 /** 展开区：只放卡片里没有的——磁盘三层按钮、端口清单、进程 Top 3、60 s 网速走势 */
-function ResourceDetail({
+/**
+ * 卡内细节（磁盘三层 / 端口 chips / Top3 / 走势）——**D4/D6 起迁到应用详情页**。
+ *
+ * 这里保留导出是为了详情页直接复用：不重写一套口径，避免两处数字对不上。
+ */
+export function ResourceDetail({
   family,
   members,
   ports,

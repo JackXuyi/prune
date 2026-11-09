@@ -98,6 +98,17 @@ pub fn net_diag_capability() -> serde_json::Value {
 /// 兜底的 `document.execCommand("copy")` 又要求同步用户手势——而报告文本要先
 /// 经一次 IPC 往返，手势已失效。改由原生命令写剪贴板，绕开 WebView 限制；
 /// 沿用项目「系统命令优先、零新依赖」纪律（同 networkQuality / route / netsh）。
+/// D7：把任意文本写入系统剪贴板（应用详情「复制诊断摘要」用）。
+///
+/// 与 `net_diag_copy_report` 共用同一条原生通道：Tauri 自定义协议下
+/// `navigator.clipboard` 常被拒，而 `execCommand` 要求同步用户手势——
+/// 文本要先经 IPC 拼装，手势已失效。
+#[tauri::command]
+pub fn clipboard_write(text: String) -> Result<usize, String> {
+    write_clipboard(&text)?;
+    Ok(text.chars().count())
+}
+
 #[tauri::command]
 pub fn net_diag_copy_report(state: State<'_, Arc<NetDiagState>>) -> Result<usize, String> {
     let text = report_text(&state)?;
@@ -131,13 +142,13 @@ fn report_text(state: &State<'_, Arc<NetDiagState>>) -> Result<String, String> {
 /// - Windows：PowerShell `Set-Clipboard`，先显式设 UTF-8 输入编码，
 ///   否则中文报告会按 OEM 代码页乱码（`clip.exe` 同理，不可用）
 #[cfg(target_os = "macos")]
-fn write_clipboard(text: &str) -> Result<(), String> {
+pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
     let mut cmd = Command::new("pbcopy");
     run_pipe(&mut cmd, text)
 }
 
 #[cfg(windows)]
-fn write_clipboard(text: &str) -> Result<(), String> {
+pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
     let mut cmd = Command::new("powershell");
     cmd.args([
         "-NoProfile",
@@ -149,7 +160,7 @@ fn write_clipboard(text: &str) -> Result<(), String> {
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-fn write_clipboard(_text: &str) -> Result<(), String> {
+pub(crate) fn write_clipboard(_text: &str) -> Result<(), String> {
     Err("当前平台未实现剪贴板写入（仅 macOS / Windows）".into())
 }
 

@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
+import type { HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
 import type {
   DayTraffic,
@@ -129,6 +130,30 @@ export function appDisk(
  */
 export function appBundles(items: BundleQuery[], force = false): Promise<BundleMap> {
   return invoke<BundleMap>("app_bundles", { items, force });
+}
+
+/**
+ * D1：批量取应用图标（一次 IPC）。返回 `family -> data:image/png;base64,...`；
+ * 拿不到的家族**不在 map 里**（前端落字母徽标，不显示占位灰图）。
+ */
+export function appIcons(items: IconQuery[]): Promise<IconMap> {
+  return invoke<IconMap>("app_icons", { items });
+}
+
+/**
+ * D3：某应用近 N 小时的历史聚合。
+ * 只返回**有记录的小时**，缺失由前端画灰柱（不补 0）。
+ */
+export function appHistory(family: string, hours: number): Promise<HistoryBucket[]> {
+  return invoke<HistoryBucket[]>("app_history", { family, hours });
+}
+
+/**
+ * D7：把文本写入系统剪贴板（Rust 侧 `pbcopy` / `Set-Clipboard`）。
+ * 返回写入字符数；不可用平台返回 Err（前端再走 navigator 兜底）。
+ */
+export function clipboardWrite(text: string): Promise<number> {
+  return invoke<number>("clipboard_write", { text });
 }
 
 // ---------------------------------------------------------------- 网速（M10）

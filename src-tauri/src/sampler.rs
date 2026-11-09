@@ -20,11 +20,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use prune_core::db::Store;
+use prune_core::db::{HourlyDelta, HourlyRow, Store};
 use prune_core::leak::{self, LeakReport};
 use prune_core::mem::process::Scanner;
 use prune_core::mem::{
-    self, CpuInfo, CpuLoad, MemSnapshot, MemSource, ProcMem, WorkspaceRef,
+    self, CpuInfo, CpuLoad, FamilyMem, MemSnapshot, MemSource, ProcMem, WorkspaceRef,
 };
 use prune_core::mem::system::{self, SystemMem};
 use prune_core::mem::workspace;
@@ -99,6 +99,96 @@ struct Prev {
     swap_file_count: Option<usize>,
 }
 
+// ---------------------------------------------------------------- D3 应用小时历史
+
+/// 小时历史落库节流：攒 60 s 写一次，避免每 10 s 一次事务
+const APP_HISTORY_FLUSH: Duration = Duration::from_secs(60);
+/// 历史保留 8 天（多留 1 天保证「7 整天」完整）
+const APP_HISTORY_RETAIN_SECS: i64 = 8 * 24 * 3600;
+
+/// 单家族的当前小时累计（增量，写完即清）
+#[derive(Default)]
+struct AppAcc {
+    rss_sum: u64,
+    rss_n: u32,
+    rss_peak: u64,
+    cpu_sum: f32,
+    cpu_n: u32,
+    cpu_peak: f32,
+    net_down: u64,
+    net_up: u64,
+}
+
+/// 应用小时历史聚合器（D3）。
+///
+/// 只有**一个**写入者语义：fast 轮累加 rss/cpu，net 采样累加流量，两者都经这里
+/// 合并后再按 60 s / 跨小时 flush 到 `app_hourly`。增量相加，重启不清零。
+struct AppHistoryAgg {
+    bucket: String,
+    acc: HashMap<String, AppAcc>,
+    last_flush: Instant,
+    last_prune_day: String,
+}
+
+impl AppHistoryAgg {
+    fn new(now: i64) -> Self {
+        Self {
+            bucket: prune_core::localtime::hour_string(now),
+            acc: HashMap::new(),
+            last_flush: Instant::now(),
+            last_prune_day: prune_core::localtime::day_string(now),
+        }
+    }
+}
+
+/// 把累计量写进 `app_hourly`（调用方持锁）。
+///
+/// `force = true` 用于跨小时：先把上一小时结清，再切桶。
+fn flush_app_history(store: &Option<Arc<Store>>, agg: &mut AppHistoryAgg, now: i64, force: bool) {
+    if !force && agg.last_flush.elapsed() < APP_HISTORY_FLUSH {
+        return;
+    }
+    agg.last_flush = Instant::now();
+
+    let Some(store) = store else { return };
+
+    let bucket = agg.bucket.clone();
+    let mut rows: Vec<HourlyDelta> = Vec::with_capacity(agg.acc.len());
+    for (family, a) in agg.acc.drain() {
+        if a.rss_n == 0 && a.cpu_n == 0 && a.net_down == 0 && a.net_up == 0 {
+            continue;
+        }
+        rows.push(HourlyDelta {
+            family,
+            bucket: bucket.clone(),
+            rss_sum: a.rss_sum,
+            rss_n: a.rss_n,
+            rss_peak: a.rss_peak,
+            cpu_sum: a.cpu_sum,
+            cpu_n: a.cpu_n,
+            cpu_peak: a.cpu_peak,
+            net_down: a.net_down,
+            net_up: a.net_up,
+        });
+    }
+
+    if let Err(e) = store.app_hourly_add(&rows, now) {
+        eprintln!("[d3-history] 小时历史写入失败（{} 行）: {e}", rows.len());
+    }
+
+    // 每天清一次 8 天前的桶（跨天判断，避免每小时都 DELETE）
+    let today = prune_core::localtime::day_string(now);
+    if agg.last_prune_day != today {
+        agg.last_prune_day = today;
+        let cutoff = prune_core::localtime::hour_string(now - APP_HISTORY_RETAIN_SECS);
+        match store.app_hourly_prune_before(&cutoff) {
+            Ok(n) if n > 0 => eprintln!("[d3-history] 清理过期小时桶 {n} 行"),
+            Ok(_) => {}
+            Err(e) => eprintln!("[d3-history] 清理失败: {e}"),
+        }
+    }
+}
+
 /// 采样器与命令共享的状态
 pub struct MemState {
     pub snapshot: Mutex<Option<MemSnapshot>>,
@@ -123,6 +213,8 @@ pub struct MemState {
     cpu_hist: Mutex<VecDeque<f32>>,
     /// 最近一次整机 CPU 读数。deep 轮重建快照时复用（进程 CPU 本就来自上一 fast 轮，口径一致）
     cpu_last: Mutex<Option<CpuInfo>>,
+    /// D3：应用小时历史聚合（fast 轮累加 rss/cpu，net 采样累加流量）
+    app_history: Mutex<AppHistoryAgg>,
 }
 
 impl MemState {
@@ -150,6 +242,7 @@ impl MemState {
             last_deep_ms: Mutex::new(0),
             cpu_hist: Mutex::new(VecDeque::with_capacity(CPU_HISTORY_CAP)),
             cpu_last: Mutex::new(None),
+            app_history: Mutex::new(AppHistoryAgg::new(now_secs())),
         }
     }
 
@@ -166,6 +259,75 @@ impl MemState {
         match &self.store {
             Some(store) => store.history(pid, since, limit).unwrap_or_default(),
             None => Vec::new(),
+        }
+    }
+
+    /// D3：把本轮家族读数累加进当前小时桶（fast 轮 10 s 一次）。
+    ///
+    /// 内存用 **RSS** 而不是 footprint：历史要的是连续序列，而深探只覆盖 top-12 家族；
+    /// 当前读数仍用 footprint，两套口径在 UI 脚注里分开写。
+    pub fn accumulate_app(&self, families: &[FamilyMem], now: i64) {
+        let bucket = prune_core::localtime::hour_string(now);
+        let mut agg = self
+            .app_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if agg.bucket != bucket {
+            // 跨小时：先把上一小时结清再切桶
+            flush_app_history(&self.store, &mut agg, now, true);
+            agg.acc.clear();
+            agg.bucket = bucket;
+        }
+
+        for f in families {
+            let acc = agg.acc.entry(f.name.clone()).or_default();
+            acc.rss_sum = acc.rss_sum.saturating_add(f.rss);
+            acc.rss_n = acc.rss_n.saturating_add(1);
+            acc.rss_peak = acc.rss_peak.max(f.rss);
+            if let Some(cpu) = f.cpu {
+                if f.cpu_covered > 0 && cpu.is_finite() && cpu >= 0.0 {
+                    acc.cpu_sum += cpu;
+                    acc.cpu_n = acc.cpu_n.saturating_add(1);
+                    acc.cpu_peak = acc.cpu_peak.max(cpu);
+                }
+            }
+        }
+
+        flush_app_history(&self.store, &mut agg, now, false);
+    }
+
+    /// D3：累加某家族的流量增量（后台低频网速轮调用，约 60 s 一次）。
+    pub fn add_app_net(&self, family: &str, down: u64, up: u64, now: i64) {
+        if down == 0 && up == 0 {
+            return;
+        }
+        let bucket = prune_core::localtime::hour_string(now);
+        let mut agg = self
+            .app_history
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+
+        if agg.bucket != bucket {
+            flush_app_history(&self.store, &mut agg, now, true);
+            agg.acc.clear();
+            agg.bucket = bucket;
+        }
+
+        let acc = agg.acc.entry(family.to_string()).or_default();
+        acc.net_down = acc.net_down.saturating_add(down);
+        acc.net_up = acc.net_up.saturating_add(up);
+
+        flush_app_history(&self.store, &mut agg, now, false);
+    }
+
+    /// D3：读某家族自 `from_bucket` 起的小时历史（只含有记录的小时）
+    pub fn app_history(&self, family: &str, from_bucket: &str) -> Result<Vec<HourlyRow>, String> {
+        match &self.store {
+            Some(store) => store
+                .app_hourly_get(family, from_bucket)
+                .map_err(|e| e.to_string()),
+            None => Ok(Vec::new()),
         }
     }
 }
@@ -226,6 +388,10 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
 
         let elapsed = started.elapsed().as_millis() as u64;
         *state.last_fast_ms.lock().unwrap_or_else(|e| e.into_inner()) = elapsed;
+
+        // D3：累加应用小时历史（60 s 节流写库，不计入本轮耗时）
+        state.accumulate_app(&snapshot.families, now_secs());
+
         *state.processes.lock().unwrap_or_else(|e| e.into_inner()) = merged;
         *state.snapshot.lock().unwrap_or_else(|e| e.into_inner()) = Some(snapshot.clone());
 

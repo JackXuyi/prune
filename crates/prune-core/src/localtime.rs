@@ -37,9 +37,19 @@ pub fn day_string(ts: i64) -> String {
     }
 }
 
+/// 本地小时桶 `YYYY-MM-DDTHH`（D3：应用历史的小时聚合键）。
+///
+/// 与 [`day_string`] 同一个 FFI 落点：字典序即时间序，可直接进 SQL 比较；
+/// 跨时区不做补偿（与日粒度同口径）。
+pub fn hour_string(ts: i64) -> String {
+    match local_time(ts) {
+        Some(t) => format!("{:04}-{:02}-{:02}T{:02}", t.year, t.month, t.day, t.hour),
+        None => "1970-01-01T00".to_string(),
+    }
+}
+
 /// 本地时区当日 00:00 的 Unix 秒
-pub fn day_start(now: u64) -> u64 {
-    let ts = now.min(i64::MAX as u64) as i64;
+pub fn day_start(now: u64) -> u64 {    let ts = now.min(i64::MAX as u64) as i64;
     match local_time(ts) {
         Some(t) => (ts - t.secs_of_day()).max(0) as u64,
         None => now.saturating_sub(now % 86_400),

@@ -80,6 +80,8 @@ pub fn run() {
             commands::port_set_active,
             commands::app_disk,
             commands::app_bundles,
+            commands::app_icons,
+            commands::app_history,
             net_sampler::net_speed_snapshot,
             net_sampler::net_speed_set_active,
             net_sampler::net_total_snapshot,
@@ -90,6 +92,7 @@ pub fn run() {
             net_diag::net_diag_speed_run,
             net_diag::net_diag_capability,
             net_diag::net_diag_copy_report,
+            net_diag::clipboard_write,
             island::island_set_expanded,
             island::island_hide,
             island::island_ready,
@@ -159,6 +162,12 @@ pub fn run() {
             let net_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 net_sampler::run_net_speed(net_handle).await;
+            });
+
+            // D3：后台 60 s 低频按应用流量采样（只喂小时历史，不推 UI）
+            let hist_net_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                net_sampler::run_app_net_history(hist_net_handle).await;
             });
 
             // 菜单栏数字的总网速（M13）：2 s 常驻轻采样（sysinfo，无子进程），

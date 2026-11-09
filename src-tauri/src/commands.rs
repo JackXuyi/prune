@@ -12,11 +12,12 @@
 //! - `reclaim_execute` 执行清理（走废纸篓，护栏在 prune-core）
 //! - `app_disk`       M8：按家族测量磁盘三层占用（按需 + TTL，绝不进定时轮）
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use prune_core::appdisk::{AppDisk, AppDiskCache, BundleQuery, BundleSize};
-use prune_core::db::Point;
+use prune_core::db::{HourlyRow, Point};
 use prune_core::disk::{DiskReport, VolumeInfo};
 use prune_core::mem::{MemSnapshot, ProcMem};
 use prune_core::net::PortSnapshot;
@@ -370,4 +371,121 @@ pub async fn reclaim_execute(
     });
 
     Ok(result)
+}
+
+// ---------------------------------------------------------------- 应用图标（D1）
+
+/// 前端一次请求的图标上限：首屏 12 + 一屏滚动余量足够，防止误传 348 个把 IPC 拖长
+const ICON_BATCH_MAX: usize = 64;
+/// 单应用转码预算：超过就按失败处理（前端落字母徽标），保证一批不被人拖住
+const ICON_BUDGET: std::time::Duration = std::time::Duration::from_millis(300);
+/// 并行度：sips 是独立进程，8 路实测能吃掉 30 个图标而不拖慢采样
+const ICON_CONCURRENCY: usize = 8;
+
+#[derive(serde::Deserialize)]
+pub struct IconQuery {
+    pub family: String,
+    pub exe: Option<String>,
+}
+
+/// 图标缓存根目录（只写自有目录，不碰系统位置）。
+///
+/// - macOS：`~/Library/Caches/com.xuyi.prune/icons`
+/// - Windows：`%LOCALAPPDATA%\com.xuyi.prune\icons`
+fn icon_cache_root() -> PathBuf {
+    let base = if cfg!(windows) {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else {
+        prune_core::paths::home_dir().map(|h| h.join("Library").join("Caches"))
+    };
+    base.unwrap_or_else(std::env::temp_dir)
+        .join("com.xuyi.prune")
+        .join("icons")
+}
+
+/// 批量取应用图标：返回 `family -> data:image/png;base64,...`。
+///
+/// 失败语义：单个家族失败（系统进程、无 icns、超预算）**不放进 map**，也不报错；
+/// 只有整批线程起不来才返回 `Err`。前端对缺失项统一落字母徽标。
+#[tauri::command]
+pub async fn app_icons(items: Vec<IconQuery>) -> Result<HashMap<String, String>, String> {
+    let items: Vec<IconQuery> = items.into_iter().take(ICON_BATCH_MAX).collect();
+    if items.is_empty() {
+        return Ok(HashMap::new());
+    }
+    let cache = icon_cache_root();
+
+    tauri::async_runtime::spawn_blocking(move || {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use std::sync::Mutex as StdMutex;
+
+        let items = &items;
+        let cursor = AtomicUsize::new(0);
+        let out: StdMutex<HashMap<String, String>> = StdMutex::new(HashMap::new());
+        let started = std::time::Instant::now();
+
+        std::thread::scope(|scope| {
+            for _ in 0..ICON_CONCURRENCY.min(items.len()) {
+                scope.spawn(|| loop {
+                    let i = cursor.fetch_add(1, Ordering::Relaxed);
+                    let Some(item) = items.get(i) else { break };
+                    let Some(exe) = item.exe.as_deref() else { continue };
+
+                    let t0 = std::time::Instant::now();
+                    let Ok(path) =
+                        prune_core::appicon::icon_png(exe, prune_core::appicon::ICON_SIZE, &cache)
+                    else {
+                        continue;
+                    };
+                    if t0.elapsed() > ICON_BUDGET {
+                        eprintln!(
+                            "[d1-icon] {} 转码超预算（{} ms），本次按失败处理",
+                            item.family,
+                            t0.elapsed().as_millis()
+                        );
+                        continue;
+                    }
+                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    let url = format!(
+                        "data:image/png;base64,{}",
+                        prune_core::base64::encode(&bytes)
+                    );
+                    if let Ok(mut map) = out.lock() {
+                        map.insert(item.family.clone(), url);
+                    }
+                });
+            }
+        });
+
+        let map = out.into_inner().unwrap_or_default();
+        eprintln!(
+            "[d1-icon] 请求 {} 个 · 命中 {} 个 · {} ms",
+            items.len(),
+            map.len(),
+            started.elapsed().as_millis()
+        );
+        Ok(map)
+    })
+    .await
+    .map_err(|e| format!("图标线程失败: {e}"))?
+}
+
+// ---------------------------------------------------------------- 应用历史（D3）
+
+/// 应用近 N 小时的历史聚合（小时桶）。
+///
+/// 只返回**有记录的小时**：缺失由前端画灰柱，不在这里补 0
+/// （补 0 等于把「Prune 没运行」说成「那一小时 CPU 为 0」）。
+#[tauri::command]
+pub fn app_history(
+    state: State<'_, Arc<MemState>>,
+    family: String,
+    hours: u32,
+) -> Result<Vec<HourlyRow>, String> {
+    let from = prune_core::localtime::hour_string(
+        now_secs() - (hours.clamp(1, 24 * 10) as i64) * 3600,
+    );
+    state
+        .app_history(&family, &from)
+        .map_err(|e| format!("读取应用历史失败：{e}"))
 }

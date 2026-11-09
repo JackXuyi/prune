@@ -24,6 +24,41 @@ pub struct Point {
     pub swapped: Option<u64>,
 }
 
+/// 应用小时聚合的**增量**（写入用）。
+///
+/// 语义与 `net_daily` 一致：`sum` 类字段是「加上去」，`peak` 类字段取最大值。
+/// 所以重复提交同一批增量会双计 —— 只允许单一写入者（sampler 的聚合器）。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourlyDelta {
+    pub family: String,
+    /// 本地时间 `YYYY-MM-DDTHH`
+    pub bucket: String,
+    pub rss_sum: u64,
+    pub rss_n: u32,
+    pub rss_peak: u64,
+    pub cpu_sum: f32,
+    pub cpu_n: u32,
+    pub cpu_peak: f32,
+    pub net_down: u64,
+    pub net_up: u64,
+}
+
+/// 读回的一行小时聚合（均值已算好；无样本的 metric 为 `None`，不是 0）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HourlyRow {
+    pub bucket: String,
+    pub rss_avg: Option<u64>,
+    pub rss_peak: Option<u64>,
+    pub cpu_avg: Option<f32>,
+    pub cpu_peak: Option<f32>,
+    pub net_down: u64,
+    pub net_up: u64,
+    /// RSS 样本数：前端用它判「这一小时 Prune 在不在」
+    pub samples: u32,
+}
+
 /// SQLite 存储句柄（内部 Mutex 以支持跨线程共享）
 pub struct Store {
     conn: Mutex<Connection>,
@@ -49,6 +84,21 @@ CREATE TABLE IF NOT EXISTS net_daily (
     up_bytes   INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS app_hourly (
+    family     TEXT    NOT NULL,
+    bucket     TEXT    NOT NULL,              -- 本地时间 'YYYY-MM-DDTHH'
+    rss_sum    INTEGER NOT NULL DEFAULT 0,    -- RSS 累加（字节，读时除以 rss_n 得均值）
+    rss_n      INTEGER NOT NULL DEFAULT 0,
+    rss_peak   INTEGER NOT NULL DEFAULT 0,
+    cpu_sum    REAL    NOT NULL DEFAULT 0,    -- 单核口径 % 累加
+    cpu_n      INTEGER NOT NULL DEFAULT 0,
+    cpu_peak   REAL    NOT NULL DEFAULT 0,
+    net_down   INTEGER NOT NULL DEFAULT 0,
+    net_up     INTEGER NOT NULL DEFAULT 0,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (family, bucket)
+);
+CREATE INDEX IF NOT EXISTS idx_app_hourly_bucket ON app_hourly (bucket);
 ";
 
 impl Store {
@@ -229,6 +279,95 @@ impl Store {
     pub fn net_prune_before(&self, day: &str) -> rusqlite::Result<usize> {
         let conn = self.lock();
         conn.execute("DELETE FROM net_daily WHERE day < ?1", params![day])
+    }
+
+    // ------------------------------------------------------------ 应用小时历史（D3）
+
+    /// 批量写入增量：单事务 + 一条预编译语句，避免 348 个家族逐条提交。
+    ///
+    /// `sum` 字段相加、`peak` 字段取 MAX、`updated_at` 覆盖写 ——
+    /// 与 `net_add` 同语义，重启后接着累加不会抹掉当天已有数据。
+    pub fn app_hourly_add(&self, rows: &[HourlyDelta], now: i64) -> rusqlite::Result<usize> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO app_hourly
+                     (family, bucket, rss_sum, rss_n, rss_peak, cpu_sum, cpu_n, cpu_peak,
+                      net_down, net_up, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+                 ON CONFLICT(family, bucket) DO UPDATE SET
+                     rss_sum    = rss_sum    + excluded.rss_sum,
+                     rss_n      = rss_n      + excluded.rss_n,
+                     rss_peak   = MAX(rss_peak, excluded.rss_peak),
+                     cpu_sum    = cpu_sum    + excluded.cpu_sum,
+                     cpu_n      = cpu_n      + excluded.cpu_n,
+                     cpu_peak   = MAX(cpu_peak, excluded.cpu_peak),
+                     net_down   = net_down   + excluded.net_down,
+                     net_up     = net_up     + excluded.net_up,
+                     updated_at = excluded.updated_at",
+            )?;
+            for r in rows {
+                stmt.execute(params![
+                    r.family,
+                    r.bucket,
+                    sat(r.rss_sum),
+                    r.rss_n as i64,
+                    sat(r.rss_peak),
+                    r.cpu_sum as f64,
+                    r.cpu_n as i64,
+                    r.cpu_peak as f64,
+                    sat(r.net_down),
+                    sat(r.net_up),
+                    now,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(rows.len())
+    }
+
+    /// 读某家族自 `from_bucket`（含）起的小时聚合，按 bucket 升序。
+    ///
+    /// **只返回有行的小时**：缺失由前端画灰柱，不在这里补 0
+    /// —— 补 0 等于把「Prune 没运行」说成「那一小时 CPU 为 0」。
+    pub fn app_hourly_get(&self, family: &str, from_bucket: &str) -> rusqlite::Result<Vec<HourlyRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT bucket, rss_sum, rss_n, rss_peak, cpu_sum, cpu_n, cpu_peak, net_down, net_up
+             FROM app_hourly
+             WHERE family = ?1 AND bucket >= ?2
+             ORDER BY bucket ASC",
+        )?;
+        let rows = stmt.query_map(params![family, from_bucket], |row| {
+            let bucket: String = row.get(0)?;
+            let rss_sum = row.get::<_, i64>(1)?.max(0) as u64;
+            let rss_n = row.get::<_, i64>(2)?.max(0) as u32;
+            let rss_peak = row.get::<_, i64>(3)?.max(0) as u64;
+            let cpu_sum = row.get::<_, f64>(4)?.max(0.0) as f32;
+            let cpu_n = row.get::<_, i64>(5)?.max(0) as u32;
+            let cpu_peak = row.get::<_, f64>(6)?.max(0.0) as f32;
+            Ok(HourlyRow {
+                bucket,
+                rss_avg: (rss_n > 0).then(|| rss_sum / rss_n as u64),
+                rss_peak: (rss_n > 0).then_some(rss_peak),
+                cpu_avg: (cpu_n > 0).then(|| cpu_sum / cpu_n as f32),
+                cpu_peak: (cpu_n > 0).then_some(cpu_peak),
+                net_down: row.get::<_, i64>(7)?.max(0) as u64,
+                net_up: row.get::<_, i64>(8)?.max(0) as u64,
+                samples: rss_n,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 删除早于 `bucket` 的小时行（保留期由调用方算好本地小时传进来）
+    pub fn app_hourly_prune_before(&self, bucket: &str) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM app_hourly WHERE bucket < ?1", params![bucket])
     }
 }
 
@@ -457,5 +596,111 @@ mod tests {
             .map(|d| d.day)
             .collect();
         assert_eq!(days, vec!["2026-08-08", "2026-11-05"]);
+    }
+
+    // ---------------------------------------------------------- 应用小时历史
+
+    fn hourly(
+        family: &str,
+        bucket: &str,
+        rss_sum: u64,
+        rss_n: u32,
+        rss_peak: u64,
+        cpu_sum: f32,
+        cpu_n: u32,
+        cpu_peak: f32,
+    ) -> HourlyDelta {
+        HourlyDelta {
+            family: family.into(),
+            bucket: bucket.into(),
+            rss_sum,
+            rss_n,
+            rss_peak,
+            cpu_sum,
+            cpu_n,
+            cpu_peak,
+            net_down: 0,
+            net_up: 0,
+        }
+    }
+
+    /// 增量相加 / 峰值取 MAX：两次写入后均值与峰值都要对
+    #[test]
+    fn app_hourly_accumulates_incrementally() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .app_hourly_add(&[hourly("Cursor", "2026-11-09T10", 100, 1, 100, 4.0, 1, 4.0)], 1)
+            .unwrap();
+        store
+            .app_hourly_add(&[hourly("Cursor", "2026-11-09T10", 300, 2, 200, 8.0, 2, 5.0)], 2)
+            .unwrap();
+
+        let rows = store.app_hourly_get("Cursor", "2026-11-09T00").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].rss_avg, Some(133)); // (100 + 300) / 3
+        assert_eq!(rows[0].rss_peak, Some(200));
+        assert_eq!(rows[0].cpu_avg, Some(4.0)); // (4 + 8) / 3
+        assert_eq!(rows[0].cpu_peak, Some(5.0));
+        assert_eq!(rows[0].samples, 3);
+    }
+
+    /// 缺失小时不返回（前端画灰柱），只有写入过的小时出现
+    #[test]
+    fn app_hourly_skips_missing_hours() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .app_hourly_add(
+                &[
+                    hourly("Cursor", "2026-11-09T10", 1, 1, 1, 0.0, 1, 0.0),
+                    hourly("Cursor", "2026-11-09T12", 1, 1, 1, 0.0, 1, 0.0),
+                ],
+                1,
+            )
+            .unwrap();
+
+        let buckets: Vec<String> = store
+            .app_hourly_get("Cursor", "2026-11-09T00")
+            .unwrap()
+            .into_iter()
+            .map(|r| r.bucket)
+            .collect();
+        assert_eq!(buckets, vec!["2026-11-09T10", "2026-11-09T12"]);
+    }
+
+    /// 无样本的 metric 读回 None（不是 0），且家族之间互不串
+    #[test]
+    fn app_hourly_zero_samples_read_as_none() {
+        let store = Store::open_in_memory().unwrap();
+        let mut d = hourly("Node", "2026-11-09T10", 0, 0, 0, 0.0, 0, 0.0);
+        d.net_down = 4096;
+        store.app_hourly_add(&[d], 1).unwrap();
+        store
+            .app_hourly_add(&[hourly("Cursor", "2026-11-09T10", 1, 1, 1, 1.0, 1, 1.0)], 1)
+            .unwrap();
+
+        let rows = store.app_hourly_get("Node", "2026-11-09T00").unwrap();
+        assert_eq!(rows[0].rss_avg, None);
+        assert_eq!(rows[0].cpu_avg, None);
+        assert_eq!(rows[0].net_down, 4096);
+
+        assert_eq!(store.app_hourly_get("Cursor", "2026-11-09T00").unwrap().len(), 1);
+    }
+
+    /// 保留期清理：只删更早的小时
+    #[test]
+    fn app_hourly_prune_before_removes_old_buckets() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .app_hourly_add(
+                &[
+                    hourly("Cursor", "2026-11-01T00", 1, 1, 1, 0.0, 1, 0.0),
+                    hourly("Cursor", "2026-11-09T00", 1, 1, 1, 0.0, 1, 0.0),
+                ],
+                1,
+            )
+            .unwrap();
+
+        assert_eq!(store.app_hourly_prune_before("2026-11-02T00").unwrap(), 1);
+        assert_eq!(store.app_hourly_get("Cursor", "0000").unwrap().len(), 1);
     }
 }

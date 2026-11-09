@@ -101,6 +101,20 @@ body {
   animation: prune-float-up 2.4s ease-out infinite;
 }
 
+/* D1：图标到达时交叉淡入（徽标在底下，不跳变） */
+@keyframes prune-icon-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.prune-icon-in {
+  animation: prune-icon-in 180ms ease-out both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .prune-anim {
     animation: none !important;

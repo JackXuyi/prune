@@ -58,6 +58,16 @@ pub const EVENT_NET_SPEED: &str = "net://speed";
 pub const INTERVAL_MS: u64 = 1000;
 /// 连续失败后的重试间隔（仍然只在 tab 可见时）
 const FAIL_RETRY_MS: u64 = 5000;
+
+/// D3：后台低频按应用网速采样间隔。
+///
+/// 1 s 采样只在 tab 可见时跑；历史要的是「这段时间各应用用了多少流量」，
+/// 60 s 一轮就够（nettop 一次 ≈ 15 ms，折合约 0.03% 单核），且**不推 UI 事件**。
+pub const APP_NET_HISTORY_INTERVAL_SECS: u64 = 60;
+/// 单轮预算：低电量模式下 nettop 变慢时直接跳过，不堆积
+const APP_NET_ROUND_TIMEOUT_SECS: u64 = 2;
+/// 历史累计的开关（settings.json；默认开）
+pub const SETTING_APP_HISTORY_NET: &str = "appHistoryNet";
 /// 连续多少个空样本判定为「不可读」（nettop 在但拿不到东西）
 const FAIL_THRESHOLD: u32 = 3;
 
@@ -218,9 +228,106 @@ fn fail(app: &AppHandle, state: &Arc<NetSpeedState>, note: &str) -> Result<(), S
     Ok(())
 }
 
+// ---------------------------------------------------------------- D3：后台流量历史
+
+/// 后台低频轮（60 s）：按家族把流量增量累加进小时历史。
+///
+/// 与 1 s 轮**完全解耦**：不读不写 `NetSpeedState`，也不广播事件。
+/// 关掉 `appHistoryNet` 时基线作废——重开后第一次差分不该把停掉的这段时间
+/// 算成一波暴涨。
+pub async fn run_app_net_history(app: AppHandle) {
+    let mut tick = tokio::time::interval(Duration::from_secs(APP_NET_HISTORY_INTERVAL_SECS));
+    tick.tick().await;
+    let mut prev: Option<(HashMap<i32, RawBytes>, Instant)> = None;
+
+    loop {
+        tick.tick().await;
+        if !crate::settings::get_bool(&app, SETTING_APP_HISTORY_NET).unwrap_or(true) {
+            prev = None;
+            continue;
+        }
+        if let Err(e) = app_net_round(&app, &mut prev).await {
+            eprintln!("[d3-history] 应用流量采样失败: {e}");
+        }
+    }
+}
+
+async fn app_net_round(
+    app: &AppHandle,
+    prev: &mut Option<(HashMap<i32, RawBytes>, Instant)>,
+) -> Result<(), String> {
+    let read = tokio::time::timeout(
+        Duration::from_secs(APP_NET_ROUND_TIMEOUT_SECS),
+        tauri::async_runtime::spawn_blocking(read_nettop),
+    )
+    .await;
+
+    let text = match read {
+        Ok(Ok(Ok(text))) => text,
+        Ok(Ok(Err(e))) => return Err(e),
+        Ok(Err(e)) => return Err(format!("采样线程失败：{e}")),
+        Err(_) => {
+            return Err(format!(
+                "nettop 超过 {APP_NET_ROUND_TIMEOUT_SECS} s，跳过本轮"
+            ))
+        }
+    };
+
+    let cur = netspeed::parse_sample(&text);
+    if cur.is_empty() {
+        return Err("nettop 输出解析为空".into());
+    }
+
+    let now = Instant::now();
+    let Some((before, at)) = prev.take() else {
+        *prev = Some((cur, now));
+        return Ok(()); // 首轮只建基线
+    };
+    let secs = now.duration_since(at).as_secs_f64();
+    if secs <= 0.0 {
+        *prev = Some((cur, now));
+        return Ok(());
+    }
+
+    let per_pid = netspeed::diff(&before, &cur, secs);
+    *prev = Some((cur, now));
+
+    // pid → family：复用上一轮快照的进程表，不额外枚举进程
+    let mem = app
+        .state::<Arc<crate::sampler::MemState>>()
+        .inner()
+        .clone();
+    let families: HashMap<i32, String> = mem
+        .processes
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .iter()
+        .map(|p| (p.pid, p.family.clone()))
+        .collect();
+
+    let ts = now_secs();
+    let mut touched = 0usize;
+    for (pid, speed) in per_pid {
+        let Some(family) = families.get(&pid) else {
+            continue;
+        };
+        let down = (speed.down_bps.max(0.0) * secs) as u64;
+        let up = (speed.up_bps.max(0.0) * secs) as u64;
+        if down == 0 && up == 0 {
+            continue;
+        }
+        mem.add_app_net(family, down, up, ts);
+        touched += 1;
+    }
+
+    if touched > 0 {
+        eprintln!("[d3-history] 应用流量累加 {touched} 个进程（{secs:.1} s）");
+    }
+    Ok(())
+}
+
 #[cfg(target_os = "macos")]
-fn read_nettop() -> Result<String, String> {
-    use std::process::Command;
+fn read_nettop() -> Result<String, String> {    use std::process::Command;
     let out = Command::new("nettop")
         .args([
             "-P", // 按进程聚合（不按 socket）

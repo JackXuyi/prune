@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { AppResourceBoard } from "../components/AppResourceGrid";
+import { AppDetail } from "../components/appdetail/AppDetail";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
@@ -112,6 +113,8 @@ export function MainWindow() {
   const netTotalRefreshing = useNetTotalStore((s) => s.refreshing);
 
   const [expanded, setExpanded] = useState<string | null>(null);
+  /** D2：当前打开的应用详情（null = 列表） */
+  const [appDetail, setAppDetail] = useState<string | null>(null);
   const [killTarget, setKillTarget] = useState<KillTarget | null>(null);
   /** 统计 tab 的卷容量重取信号（内存/端口由各自 store 刷新，不重复驱动） */
   const [statsNonce, setStatsNonce] = useState(0);
@@ -127,6 +130,8 @@ export function MainWindow() {
   const go = (next: MainTab, from?: MainTab) => {
     setTab(next);
     setBackTo(from ?? null);
+    // 离开「应用」页就退出详情：回来时回到列表（与「返回」按钮语义一致）
+    if (next !== "resources") setAppDetail(null);
   };
 
   // 面板点「可回收」/「端口」→ 主窗口直接切到对应 tab（open_main 会让 Rust 侧广播 ui://tab）
@@ -366,21 +371,30 @@ export function MainWindow() {
         {tab === "stats" ? (
           <StatsBoard onDrill={(t) => go(t, "stats")} refreshNonce={statsNonce} />
         ) : tab === "resources" ? (
-          <AppResourceBoard
-            families={families}
-            processes={processes}
-            ports={ports}
-            net={netSample}
-            refreshNonce={resourcesNonce}
-            onOpenPorts={(port) => {
-              setPortFocus(String(port));
-              go("ports", "resources");
-            }}
-            onOpenProcess={(pid) => {
-              select(pid);
-              go("memory", "resources");
-            }}
-          />
+          appDetail ? (
+            <AppDetail
+              familyName={appDetail}
+              onBack={() => setAppDetail(null)}
+              onOpenPorts={(port) => {
+                setPortFocus(String(port));
+                go("ports", "resources");
+              }}
+              onOpenProcess={(pid) => {
+                select(pid);
+                go("memory", "resources");
+              }}
+              onKillMenu={openKillMenu}
+            />
+          ) : (
+            <AppResourceBoard
+              families={families}
+              processes={processes}
+              ports={ports}
+              net={netSample}
+              refreshNonce={resourcesNonce}
+              onOpenApp={(name) => setAppDetail(name)}
+            />
+          )
         ) : tab === "ports" ? (
           <PortBoard
             onOpenProcess={(pid) => {
