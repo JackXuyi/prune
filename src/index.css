@@ -17,6 +17,15 @@
   --color-danger: #f0705f;
   --color-info: #6aa9ff;
 
+  /* UI v4「Quiet Cockpit」域色（ui-redesign-v4-plan.md §3.2）：
+     颜色即语义 —— 每个资源域一个专属色，贯穿图标 / 图表 / 导航选中态。
+     mem/info、port/warn 与旧 token 同值，只补 CPU 与网络两个缺口。 */
+  --color-domain-cpu: #a78bfa;
+  --color-domain-net: #22d3ee;
+
+  /* 大数字字号：Hero 40px / 域卡 24px（§6） */
+  --radius-hero: 18px;
+
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC",
     sans-serif;
@@ -58,6 +67,26 @@ body {
 
 ::selection {
   background: color-mix(in srgb, var(--color-accent) 30%, transparent);
+}
+
+/* UI v4 微动效：玻璃卡面 hover 抬升 + 域色发光（§3.3）。
+   全部尊重 prefers-reduced-motion（与灵动岛同一先例）。 */
+@keyframes prune-count-in {
+  from {
+    opacity: 0;
+    transform: translateY(2px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .prune-anim {
+    animation: none !important;
+    transition: none !important;
+  }
 }
 
 /* 灵动岛（M15）：从刘海里「长出来」而不是淡入。

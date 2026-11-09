@@ -6,6 +6,7 @@ import { AppResourceBoard } from "../components/AppResourceGrid";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
+import { RailNav } from "../components/RailNav";
 import { ReclaimBoard } from "../components/ReclaimBoard";
 import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
@@ -15,10 +16,8 @@ import { StatsBoard } from "../components/StatsBoard";
 import {
   ChevronRightIcon,
   RefreshIcon,
-  ScissorsIcon,
 } from "../components/icons";
 import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
-import { Tabs } from "../components/Tabs";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
@@ -311,201 +310,171 @@ export function MainWindow() {
   }, [settingsOpen, tab, selectedPid, select]);
 
   return (
-    <div className="flex h-screen flex-col bg-surface text-ink">
-      <header className="flex h-12 shrink-0 items-center gap-4 border-b border-hairline px-5">
-        <div className="flex items-center gap-2">
-          <ScissorsIcon size={15} className="text-accent" />
-          <span className="text-[13px] font-semibold tracking-tight">Prune</span>
-        </div>
-        <Tabs
-          value={tab}
-          onChange={(t) => go(t)}
-          items={[
-            { id: "stats", label: "总览", hint: "可回收 + 内存 / CPU / 硬盘 / 端口 / 网速：本机资源总览" },
-            {
-              id: "resources",
-              label: "应用",
-              hint: "每个应用一张卡：进程 / CPU / 内存 / 磁盘 / 端口 / 网速",
-            },
-            { id: "memory", label: "内存", hint: "内存概况、swap 与换出受害者 · 进程家族与明细" },
-            { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
-            {
-              id: "net",
-              label: "网络",
-              hint: "本机下载 / 上传速率、走势、网卡分布与今日流量",
-            },
-            { id: "ports", label: "端口", hint: "谁占着 3000：按端口反查持有进程" },
-          ]}
-        />
-        <div className="flex-1" />
-        {/* 下钻返回（UX v3 §4.2）：所有跨页跳转必须可一键回来源 */}
-        {backTo && backTo !== tab ? (
+    <div className="flex h-screen bg-surface text-ink">
+      {/* UI v4：左侧 56px 图标 rail（§4.1），设置齿轮固定 rail 底部 */}
+      <RailNav value={tab} onChange={(t) => go(t)} onOpenSettings={() => setSettingsOpen(true)} />
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline px-5">
+          <span className="text-[13px] font-semibold tracking-tight">{TAB_LABEL[tab]}</span>
+          <div className="flex-1" />
+          {/* 下钻返回（UX v3 §4.2）：所有跨页跳转必须可一键回来源 */}
+          {backTo && backTo !== tab ? (
+            <button
+              type="button"
+              onClick={() => go(backTo)}
+              className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
+            >
+              ← 返回{TAB_LABEL[backTo]}
+            </button>
+          ) : null}
+          {tab === "memory" ? (
+            <>
+              {snapshot ? (
+                snapshot.deepAvailable ? (
+                  <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
+                    footprint 口径
+                  </Badge>
+                ) : (
+                  <Badge tone="warn" title="footprint 不可用，全部读数退回 RSS，不含换出量">
+                    RSS 口径 · 不含换出量
+                  </Badge>
+                )
+              ) : null}
+              <span className="text-[10px] text-ink-faint">
+                上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}
+              </span>
+            </>
+          ) : null}
           <button
             type="button"
-            onClick={() => go(backTo)}
-            className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
+            onClick={onRefresh}
+            disabled={busy}
+            className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
           >
-            ← 返回{TAB_LABEL[backTo]}
+            <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
+            {refreshLabel}
           </button>
-        ) : null}
-        {tab === "memory" ? (
-          <>
-            {snapshot ? (
-              snapshot.deepAvailable ? (
-                <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
-                  footprint 口径
-                </Badge>
-              ) : (
-                <Badge tone="warn" title="footprint 不可用，全部读数退回 RSS，不含换出量">
-                  RSS 口径 · 不含换出量
-                </Badge>
-              )
-            ) : null}
-            <span className="text-[10px] text-ink-faint">
-              上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}
-            </span>
-          </>
-        ) : null}
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={busy}
-          className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
-        >
-          <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
-          {refreshLabel}
-        </button>
-        <button
-          type="button"
-          onClick={() => setSettingsOpen(true)}
-          title="设置（灵动岛开关与阈值）"
-          aria-label="设置"
-          className="grid size-7 place-items-center rounded-md text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
-            <circle cx="12" cy="12" r="3" />
-            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
-          </svg>
-        </button>
-      </header>
+        </header>
 
-      {error ? (
-        <div className="mx-5 mt-3 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
-          {error}
-        </div>
-      ) : null}
-
-      {tab === "stats" ? (
-        <StatsBoard onDrill={(t) => go(t, "stats")} refreshNonce={statsNonce} />
-      ) : tab === "resources" ? (
-        <AppResourceBoard
-          families={families}
-          processes={processes}
-          ports={ports}
-          net={netSample}
-          refreshNonce={resourcesNonce}
-          onOpenPorts={(port) => {
-            setPortFocus(String(port));
-            go("ports", "resources");
-          }}
-          onOpenProcess={(pid) => {
-            select(pid);
-            go("memory", "resources");
-          }}
-        />
-      ) : tab === "ports" ? (
-        <PortBoard
-          onOpenProcess={(pid) => {
-            select(pid);
-            go("memory", "ports");
-          }}
-          onKill={(binding, port, x, y) => {
-            setKillTarget({
-              pid: binding.pid ?? 0,
-              name: binding.comm,
-              mem: `端口 ${port}`,
-              x,
-              y,
-            });
-          }}
-        />
-      ) : tab === "net" ? (
-        <NetBoard onOpenResources={() => go("resources", "net")} />
-      ) : tab === "disk" ? (
-        <ReclaimBoard />
-      ) : (
-        // 内存页（UX v3 §6.3）：左栏家族列表 + 右栏（默认概况，选中进程后为详情）
-        <div className="flex min-h-0 flex-1">
-          <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
-            <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
-              <span className="text-[11px] font-medium tracking-wide text-ink-dim">进程家族</span>
-              <span className="text-[10px] text-ink-faint">
-                {families.length} 个 · 按总量降序
-              </span>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
-              {loading && !snapshot ? (
-                <p className="px-2 py-3 text-[11px] text-ink-faint">正在采样…</p>
-              ) : families.length === 0 ? (
-                <p className="px-2 py-3 text-[11px] text-ink-faint">暂无进程数据</p>
-              ) : (
-                <ul>
-                  {families.map((f) => (
-                    <FamilyRow
-                      key={f.name}
-                      family={f}
-                      open={expanded === f.name}
-                      selectedPid={selectedPid}
-                      processes={processes}
-                      onToggle={() => setExpanded(expanded === f.name ? null : f.name)}
-                      onSelect={select}
-                      onKillMenu={openKillMenu}
-                    />
-                  ))}
-                </ul>
-              )}
-            </div>
-          </aside>
-
-          <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
-            {selected ? (
-              <ProcessInspector proc={selected} onBack={() => select(null)} />
-            ) : (
-              <div className="space-y-4">
-                {/* 泄漏卡置顶（命中或「无法判定」时才出现；没有命中就是沉默即正常） */}
-                {snapshot?.leaks &&
-                (snapshot.leaks.items.length > 0 || snapshot.leaks.note) ? (
-                  <LeakCard
-                    report={snapshot.leaks}
-                    onOpen={(pid) => select(pid)}
-                  />
-                ) : null}
-                <Overview onKillMenu={openKillMenu} />
-              </div>
-            )}
-          </main>
-        </div>
-      )}
-
-      {settingsOpen ? (
-        <div
-          className="fixed inset-0 z-40 bg-black/40"
-          onClick={() => setSettingsOpen(false)}
-          onContextMenu={(e) => {
-            e.preventDefault();
-            setSettingsOpen(false);
-          }}
-        >
-          <div
-            className="absolute right-4 top-14 max-h-[calc(100vh-72px)] w-[480px] overflow-y-auto rounded-xl border border-hairline bg-surface-raised shadow-2xl shadow-black/50"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <SettingsBoard />
+        {error ? (
+          <div className="mx-5 mt-3 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
+            {error}
           </div>
-        </div>
-      ) : null}
+        ) : null}
 
-      {killTarget ? <ProcKillMenu target={killTarget} onClose={() => setKillTarget(null)} /> : null}
+        {tab === "stats" ? (
+          <StatsBoard onDrill={(t) => go(t, "stats")} refreshNonce={statsNonce} />
+        ) : tab === "resources" ? (
+          <AppResourceBoard
+            families={families}
+            processes={processes}
+            ports={ports}
+            net={netSample}
+            refreshNonce={resourcesNonce}
+            onOpenPorts={(port) => {
+              setPortFocus(String(port));
+              go("ports", "resources");
+            }}
+            onOpenProcess={(pid) => {
+              select(pid);
+              go("memory", "resources");
+            }}
+          />
+        ) : tab === "ports" ? (
+          <PortBoard
+            onOpenProcess={(pid) => {
+              select(pid);
+              go("memory", "ports");
+            }}
+            onKill={(binding, port, x, y) => {
+              setKillTarget({
+                pid: binding.pid ?? 0,
+                name: binding.comm,
+                mem: `端口 ${port}`,
+                x,
+                y,
+              });
+            }}
+          />
+        ) : tab === "net" ? (
+          <NetBoard onOpenResources={() => go("resources", "net")} />
+        ) : tab === "disk" ? (
+          <ReclaimBoard />
+        ) : (
+          // 内存页（UX v3 §6.3）：左栏家族列表 + 右栏（默认概况，选中进程后为详情）
+          <div className="flex min-h-0 flex-1">
+            <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
+              <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
+                <span className="text-[11px] font-medium tracking-wide text-ink-dim">进程家族</span>
+                <span className="text-[10px] text-ink-faint">
+                  {families.length} 个 · 按总量降序
+                </span>
+              </div>
+              <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
+                {loading && !snapshot ? (
+                  <p className="px-2 py-3 text-[11px] text-ink-faint">正在采样…</p>
+                ) : families.length === 0 ? (
+                  <p className="px-2 py-3 text-[11px] text-ink-faint">暂无进程数据</p>
+                ) : (
+                  <ul>
+                    {families.map((f) => (
+                      <FamilyRow
+                        key={f.name}
+                        family={f}
+                        open={expanded === f.name}
+                        selectedPid={selectedPid}
+                        processes={processes}
+                        onToggle={() => setExpanded(expanded === f.name ? null : f.name)}
+                        onSelect={select}
+                        onKillMenu={openKillMenu}
+                      />
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </aside>
+
+            <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
+              {selected ? (
+                <ProcessInspector proc={selected} onBack={() => select(null)} />
+              ) : (
+                <div className="space-y-4">
+                  {/* 泄漏卡置顶（命中或「无法判定」时才出现；没有命中就是沉默即正常） */}
+                  {snapshot?.leaks &&
+                  (snapshot.leaks.items.length > 0 || snapshot.leaks.note) ? (
+                    <LeakCard
+                      report={snapshot.leaks}
+                      onOpen={(pid) => select(pid)}
+                    />
+                  ) : null}
+                  <Overview onKillMenu={openKillMenu} />
+                </div>
+              )}
+            </main>
+          </div>
+        )}
+
+        {settingsOpen ? (
+          <div
+            className="fixed inset-0 z-40 bg-black/40"
+            onClick={() => setSettingsOpen(false)}
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setSettingsOpen(false);
+            }}
+          >
+            <div
+              className="absolute right-4 top-14 max-h-[calc(100vh-72px)] w-[480px] overflow-y-auto rounded-xl border border-hairline bg-surface-raised shadow-2xl shadow-black/50"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <SettingsBoard />
+            </div>
+          </div>
+        ) : null}
+
+        {killTarget ? <ProcKillMenu target={killTarget} onClose={() => setKillTarget(null)} /> : null}
+      </div>
     </div>
   );
 }

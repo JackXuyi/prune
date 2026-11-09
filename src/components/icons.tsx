@@ -119,3 +119,81 @@ export function FileIcon(props: IconProps) {
     </Svg>
   );
 }
+
+/* ---- UI v4 图标 rail 导航（ui-redesign-v4-plan.md §4.1） ---- */
+
+/** 总览：仪表盘四格（大小不一，暗示「汇总」而非「列表」） */
+export function OverviewIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="7" height="9" rx="2" />
+      <rect x="14" y="3" width="7" height="5" rx="2" />
+      <rect x="14" y="12" width="7" height="9" rx="2" />
+      <rect x="3" y="16" width="7" height="5" rx="2" />
+    </Svg>
+  );
+}
+
+/** 应用：四宫格 */
+export function AppsIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="3" width="8" height="8" rx="2.5" />
+      <rect x="13" y="3" width="8" height="8" rx="2.5" />
+      <rect x="3" y="13" width="8" height="8" rx="2.5" />
+      <rect x="13" y="13" width="8" height="8" rx="2.5" />
+    </Svg>
+  );
+}
+
+/** 内存：云（冷静监控的隐喻，域色 info 蓝） */
+export function MemoryCloudIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M6 19a3 3 0 1 1 0-6 4 4 0 0 1 7.7-1.6A3.5 3.5 0 1 1 18 19Z" />
+    </Svg>
+  );
+}
+
+/** 网络：地球 */
+export function GlobeIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="9" />
+      <path d="M3 12h18" />
+      <path d="M12 3c3 3.5 3 14.5 0 18-3-3.5-3-14.5 0-18Z" />
+    </Svg>
+  );
+}
+
+/** 端口：插孔两端（谁占着 3000） */
+export function PortJackIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 17v-6a8 8 0 0 1 16 0v6" />
+      <path d="M4 17h4v3H4z" />
+      <path d="M16 17h4v3h-4z" />
+    </Svg>
+  );
+}
+
+/** 设置齿轮（原 MainWindow 内联 svg 提为组件，rail 复用） */
+export function GearIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="12" cy="12" r="3" />
+      <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </Svg>
+  );
+}
+
+/** 存储：数据库圆柱（比「硬盘盒」更贴近「卷」的语义） */
+export function DatabaseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <ellipse cx="12" cy="5.5" rx="8" ry="2.8" />
+      <path d="M4 5.5v13c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8v-13" />
+      <path d="M4 12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8" />
+    </Svg>
+  );
+}
