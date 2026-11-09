@@ -386,3 +386,20 @@ pub const DNS_SLOW_MS: f64 = 300.0;
 4. UI：LayerChart 有读数时也显示 note（warn 色）；出口层副文案注明回退机制
 
 **真机验证**（scratch crate 跑 run_diag）：1.1.1.1:443 5 次超时 → 回退 223.5.5.5:443，中位数 11.1 ms，verdict「各层正常」，note 完整。cargo test 270 passed / tsc 0 错。
+
+### 10.6 「复制诊断报告」失效根因与修复（2026-11-09）
+
+**现象**：点击无任何反应，报告未进剪贴板，按钮也无失败反馈。
+
+**根因（两条叠加）**：
+1. Tauri 自定义协议（`tauri://localhost` / `http://tauri.localhost`）下 `navigator.clipboard` 不被授权，`writeText` 抛错
+2. 兜底 `document.execCommand("copy")` 要求**同步用户手势**，而报告文本要先经一次 `net_diag_report` IPC 往返——`await` 之后手势已失效，兜底同样失败
+3. `copied` 只在成功时置 true，失败路径无任何 UI 反馈 → 表现为「点了没反应」
+
+**修复**：
+- 剪贴板改由 Rust 原生写入：`net_diag_copy_report` 命令 → macOS `pbcopy` / Windows PowerShell `Set-Clipboard`（显式设 `[Console]::InputEncoding=UTF8`，否则中文乱码；`clip.exe` 按 OEM 页处理不可用）。沿用「系统命令优先、零新依赖」纪律
+- 移除 `net_diag_report` 命令（文本只在内核消费一次，不再跨 IPC 传回前端）
+- 新增 `copyFailed` 状态：失败按钮变红显示「✗ 复制失败」（1.5 s 后复位），成功「✓ 已复制」用 accent 色
+- 浏览器开发态（无 Tauri）保留 Web 剪贴板兜底
+
+**验证**：`pbcopy` 中文往返正常；cargo test 270 passed、tsc 0 错。

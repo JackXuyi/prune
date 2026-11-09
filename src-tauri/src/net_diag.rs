@@ -7,7 +7,7 @@
 //! 仅 macOS 提供系统级等价物，Windows 上 capability 为 false、前端整卡隐藏
 //! （不显示「不可用」占位，沿 W2 的拍板）。
 
-use std::io::Read;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -92,10 +92,21 @@ pub fn net_diag_capability() -> serde_json::Value {
     serde_json::json!({ "speedTest": cfg!(target_os = "macos") })
 }
 
-/// 生成 Markdown 诊断报告（基于最近一轮诊断 + 测速；都没跑过返回 Err）。
-/// 前端负责写剪贴板，Rust 不落盘。
+/// 生成 Markdown 诊断报告并**直接写入系统剪贴板**（基于最近一轮诊断 + 测速；都没跑过返回 Err）。
+///
+/// 为什么不在前端写剪贴板：Tauri 自定义协议下 `navigator.clipboard` 常被拒，
+/// 兜底的 `document.execCommand("copy")` 又要求同步用户手势——而报告文本要先
+/// 经一次 IPC 往返，手势已失效。改由原生命令写剪贴板，绕开 WebView 限制；
+/// 沿用项目「系统命令优先、零新依赖」纪律（同 networkQuality / route / netsh）。
 #[tauri::command]
-pub fn net_diag_report(state: State<'_, Arc<NetDiagState>>) -> Result<String, String> {
+pub fn net_diag_copy_report(state: State<'_, Arc<NetDiagState>>) -> Result<usize, String> {
+    let text = report_text(&state)?;
+    write_clipboard(&text)?;
+    Ok(text.chars().count())
+}
+
+/// 拼报告文本（copy 与旧 report 命令共用同一口径）
+fn report_text(state: &State<'_, Arc<NetDiagState>>) -> Result<String, String> {
     let last = state
         .last
         .lock()
@@ -109,6 +120,64 @@ pub fn net_diag_report(state: State<'_, Arc<NetDiagState>>) -> Result<String, St
     match last {
         Some(d) => Ok(diag::report_markdown(&d, speed.as_ref())),
         None => Err("还没有诊断结果，请先运行诊断".into()),
+    }
+}
+
+// ---------------------------------------------------------------- 系统剪贴板
+
+/// 把文本写入系统剪贴板。
+///
+/// - macOS：`pbcopy`（stdin 写入，UTF-8 原样）
+/// - Windows：PowerShell `Set-Clipboard`，先显式设 UTF-8 输入编码，
+///   否则中文报告会按 OEM 代码页乱码（`clip.exe` 同理，不可用）
+#[cfg(target_os = "macos")]
+fn write_clipboard(text: &str) -> Result<(), String> {
+    let mut cmd = Command::new("pbcopy");
+    run_pipe(&mut cmd, text)
+}
+
+#[cfg(windows)]
+fn write_clipboard(text: &str) -> Result<(), String> {
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "[Console]::InputEncoding=[Text.Encoding]::UTF8; $input | Set-Clipboard",
+    ]);
+    run_pipe(&mut cmd, text)
+}
+
+#[cfg(not(any(target_os = "macos", windows)))]
+fn write_clipboard(_text: &str) -> Result<(), String> {
+    Err("当前平台未实现剪贴板写入（仅 macOS / Windows）".into())
+}
+
+/// 启动子进程 → 全量写 stdin → 等退出。stdin 必须显式 drop，否则子进程等不到 EOF
+fn run_pipe(cmd: &mut Command, text: &str) -> Result<(), String> {
+    let mut child = cmd
+        .stdin(Stdio::piped())
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("剪贴板进程启动失败: {e}"))?;
+    {
+        let mut stdin = child.stdin.take().ok_or("剪贴板进程无 stdin")?;
+        stdin
+            .write_all(text.as_bytes())
+            .map_err(|e| format!("写入剪贴板失败: {e}"))?;
+    }
+    let out = child
+        .wait_with_output()
+        .map_err(|e| format!("剪贴板进程等待失败: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "剪贴板写入被拒绝（{:?}）：{}",
+            out.status.code(),
+            String::from_utf8_lossy(&out.stderr).trim()
+        ))
     }
 }
 

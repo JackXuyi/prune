@@ -89,7 +89,7 @@ pub fn run() {
             net_diag::net_diag_run,
             net_diag::net_diag_speed_run,
             net_diag::net_diag_capability,
-            net_diag::net_diag_report,
+            net_diag::net_diag_copy_report,
             island::island_set_expanded,
             island::island_hide,
             island::island_ready,

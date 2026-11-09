@@ -208,7 +208,7 @@ export function netDiagCapability(): Promise<NetDiagCapability> {
   return invoke<NetDiagCapability>("net_diag_capability");
 }
 
-/** Markdown 诊断报告（基于最近一轮；复制到剪贴板由前端做） */
-export function netDiagReport(): Promise<string> {
-  return invoke<string>("net_diag_report");
+/** 生成 Markdown 诊断报告并写入系统剪贴板，返回字符数（Rust 侧原生写，绕开 WebView 剪贴板限制） */
+export function netDiagCopyReport(): Promise<number> {
+  return invoke<number>("net_diag_copy_report");
 }

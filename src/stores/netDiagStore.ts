@@ -1,7 +1,7 @@
 import { create } from "zustand";
 
 import { devNetDiag, devSpeedResult } from "../lib/devFixture";
-import { isTauri, netDiagCapability, netDiagReport, netDiagRun, netDiagSpeedRun } from "../lib/ipc";
+import { isTauri, netDiagCapability, netDiagCopyReport, netDiagRun, netDiagSpeedRun } from "../lib/ipc";
 import type { NetDiag, NetDiagCapability, SpeedResult } from "../types/net";
 
 /**
@@ -24,6 +24,8 @@ interface NetDiagStore {
   capability: NetDiagCapability | null;
   /** 报告复制反馈（true 只闪一次，由组件在 timeout 后复位） */
   copied: boolean;
+  /** 复制失败反馈（同 copied 的闪现机制；不再是「点了没反应」） */
+  copyFailed: boolean;
   /** 取 capability（进入网络 tab 时调一次） */
   init: () => Promise<void>;
   run: () => Promise<void>;
@@ -64,6 +66,7 @@ export const useNetDiagStore = create<NetDiagStore>((set, get) => ({
   speedRunning: false,
   capability: null,
   copied: false,
+  copyFailed: false,
 
   init: async () => {
     if (!isTauri()) {
@@ -123,16 +126,25 @@ export const useNetDiagStore = create<NetDiagStore>((set, get) => ({
   },
 
   copyReport: async () => {
-    try {
-      const text = isTauri() ? await netDiagReport() : buildDevReport();
-      const ok = await copyText(text);
-      set({ copied: ok });
-    } catch {
-      set({ copied: false });
+    // Tauri：报告由 Rust 生成并**原生写入剪贴板**。前端 Web 剪贴板在自定义协议下
+    // 常被拒，且 execCommand 兜底要求同步手势（一次 IPC 往返后手势已失效）——
+    // 这就是「点了没反应」的根因，所以不在 WebView 里写。
+    if (isTauri()) {
+      try {
+        await netDiagCopyReport();
+        set({ copied: true, copyFailed: false });
+      } catch (e) {
+        console.warn("[net-diag] 复制报告失败", e);
+        set({ copied: false, copyFailed: true });
+      }
+      return;
     }
+    // 浏览器开发态（无 Tauri）：仍走 Web 剪贴板
+    const ok = await copyText(buildDevReport());
+    set({ copied: ok, copyFailed: !ok });
   },
 
-  resetCopied: () => set({ copied: false }),
+  resetCopied: () => set({ copied: false, copyFailed: false }),
 }));
 
 function buildDevReport(): string {

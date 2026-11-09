@@ -566,15 +566,16 @@ function DiagPage() {
   const diag = useNetDiagStore((s) => s.diag);
   const running = useNetDiagStore((s) => s.running);
   const copied = useNetDiagStore((s) => s.copied);
+  const copyFailed = useNetDiagStore((s) => s.copyFailed);
   const run = useNetDiagStore((s) => s.run);
   const copyReport = useNetDiagStore((s) => s.copyReport);
   const resetCopied = useNetDiagStore((s) => s.resetCopied);
 
   useEffect(() => {
-    if (!copied) return;
+    if (!copied && !copyFailed) return;
     const t = setTimeout(resetCopied, 1500);
     return () => clearTimeout(t);
-  }, [copied, resetCopied]);
+  }, [copied, copyFailed, resetCopied]);
 
   const done = diag?.status === "done" && diag;
 
@@ -657,10 +658,16 @@ function DiagPage() {
           <button
             type="button"
             onClick={() => void copyReport()}
-            className="mt-2 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
-            title="生成 Markdown 报告并复制，可粘贴给 AI 分析"
+            className={`mt-2 text-[10px] transition-colors ${
+              copyFailed
+                ? "text-danger"
+                : copied
+                  ? "text-accent"
+                  : "text-ink-faint hover:text-ink-dim"
+            }`}
+            title="生成 Markdown 报告并复制到系统剪贴板，可粘贴给 AI 分析"
           >
-            {copied ? "✓ 已复制" : "复制诊断报告"}
+            {copyFailed ? "✗ 复制失败" : copied ? "✓ 已复制" : "复制诊断报告"}
           </button>
         </>
       ) : null}
