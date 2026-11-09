@@ -138,12 +138,12 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
       {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
       {snapshot?.leaks ? (
         <div className="mb-1">
-          <LeakBanner report={snapshot.leaks} onOpen={() => void openMain(undefined, "apps")} />
+          <LeakBanner report={snapshot.leaks} onOpen={() => void openMain(undefined, "memory")} />
         </div>
       ) : null}
 
       <div className="divide-y divide-hairline-soft">
-        <StatsRow title="内存" readout={mem} onOpen={() => void openMain(undefined, "overview")} />
+        <StatsRow title="内存" readout={mem} onOpen={() => void openMain(undefined, "memory")} />
         <StatsRow
           icon={<span className="text-accent">⚡</span>}
           title="存储"

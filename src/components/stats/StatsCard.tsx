@@ -65,6 +65,7 @@ export function StatsCard({
   readout,
   onOpen,
   body,
+  footnote,
 }: {
   title: string;
   caption: string;
@@ -73,6 +74,8 @@ export function StatsCard({
   onOpen?: () => void;
   /** 自定义主体（网络卡用）：存在时替换「主读数 + 占比 + 副读数」默认排版 */
   body?: ReactNode;
+  /** 卡底图表位（总览 v3.1）：swap 阈值条 / 端口分组堆叠条等，不影响主读数排版 */
+  footnote?: ReactNode;
 }) {
   const shell =
     "flex min-h-[140px] flex-col rounded-xl border border-hairline-soft bg-white/[0.02] px-4 py-3.5";
@@ -119,6 +122,7 @@ export function StatsCard({
           content
         )}
       </div>
+      {footnote ? <div className="mt-2 shrink-0">{footnote}</div> : null}
     </>
   );
 

@@ -36,10 +36,11 @@ export function memRefresh(): Promise<void> {
   return invoke<void>("mem_refresh");
 }
 
-/** 打开主窗口；传 pid 时主窗口会自动选中该进程，传 tab 时直接切到对应 tab */
+/** 打开主窗口；传 pid 时主窗口会自动选中该进程，传 tab 时直接切到对应 tab。
+ *  v3.1 IA 收敛后 tab 集 = 6 页；旧 id（apps/overview/port）由主窗口 mapExternalTab 兼容映射。 */
 export function openMain(
   pid?: number,
-  tab?: "stats" | "resources" | "apps" | "overview" | "disk" | "ports" | "net",
+  tab?: "stats" | "resources" | "memory" | "disk" | "ports" | "net",
 ): Promise<void> {
   return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null });
 }

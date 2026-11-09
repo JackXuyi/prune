@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronRightIcon } from "./icons";
 import { Badge } from "./primitives";
@@ -34,6 +34,13 @@ export function PortBoard({
   const focusQuery = usePortStore((s) => s.focusQuery);
   const clearFocus = usePortStore((s) => s.clearFocus);
   const [query, setQuery] = useState("");
+  // ⌘F 聚焦搜索框（UX v3 §5.5）：主窗口全局派发 prune:focus-search
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onFocus = () => searchRef.current?.focus();
+    window.addEventListener("prune:focus-search", onFocus);
+    return () => window.removeEventListener("prune:focus-search", onFocus);
+  }, []);
 
   // 从应用行点端口徽标跳进来：预填搜索词并展开（否则命中的行可能还在折叠区里）
   useEffect(() => {
@@ -76,6 +83,7 @@ export function PortBoard({
           </p>
         </div>
         <input
+          ref={searchRef}
           value={query}
           onChange={(e) => setQuery(e.target.value)}
           placeholder="端口 / 进程 / 项目"

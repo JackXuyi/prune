@@ -1,8 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { listen } from "@tauri-apps/api/event";
 
-import { AppMemoryList, AppMemorySummary } from "../components/AppMemoryList";
 import { AppResourceBoard } from "../components/AppResourceGrid";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { NetBoard } from "../components/NetBoard";
@@ -10,6 +9,7 @@ import { PortBoard } from "../components/PortList";
 import { ReclaimBoard } from "../components/ReclaimBoard";
 import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
+import { StackBar } from "../components/charts/StackBar";
 import { StatsBoard } from "../components/StatsBoard";
 import {
   ChevronRightIcon,
@@ -37,15 +37,34 @@ import {
 } from "../types/mem";
 import { exposureMeta, portsOfPid } from "../types/net";
 
-type MainTab =
-  | "stats"
-  | "resources"
-  | "apps"
-  | "overview"
-  | "disk"
-  | "ports"
-  | "net"
-  | "settings";
+/**
+ * 一级导航（UX v3 方案 A）：8 tab 收敛为 6。
+ * - 「统计」更名「总览」并新增可回收主卡（产品主张回归）
+ * - 「内存·应用」+「内存·概况」合并为「内存」（列表 + 详情）
+ * - 「设置」撤出一级导航，移到标题栏齿轮弹层
+ */
+type MainTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports";
+
+/** ⌘1–⌘6 的切换顺序（UX v3 §5.5） */
+const TAB_ORDER: MainTab[] = ["stats", "resources", "memory", "disk", "net", "ports"];
+const TAB_LABEL: Record<MainTab, string> = {
+  stats: "总览",
+  resources: "应用",
+  memory: "内存",
+  disk: "存储",
+  net: "网络",
+  ports: "端口",
+};
+
+/**
+ * 外部 tab 事件（菜单栏面板 openMain → Rust 广播）的旧 id 映射：
+ * 合并前有 "apps" / "overview" 两个内存 tab，合并后统一落「内存」。
+ * Rust 侧只转发字符串（commands.rs:open_main），所以协议兼容不需要动 Rust。
+ */
+function mapExternalTab(payload: string): MainTab | null {
+  const t = payload === "port" ? "ports" : payload === "apps" || payload === "overview" ? "memory" : payload;
+  return (TAB_ORDER as string[]).includes(t) ? (t as MainTab) : null;
+}
 
 /** 右键「结束进程」的目标：哪个进程、菜单弹在哪 */
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
@@ -59,10 +78,14 @@ function sourceLabel(s: WorkspaceSource): string {
       : "继承所属窗口";
 }
 
-/** 主窗口（960×640）：统计总览 / 内存 / 存储 / 网络 / 端口 */
+/** 主窗口（960×640）：总览 / 应用 / 内存 / 存储 / 网络 / 端口 + 设置齿轮 */
 export function MainWindow() {
-  // M9：统计是默认页——打开先看本机整体，再下钻到具体域
+  // M9：总览是默认页——打开先看本机整体，再下钻到具体域（v3.1 起首屏含可回收主卡）
   const [tab, setTab] = useState<MainTab>("stats");
+  /** 下钻来源 tab：存在时标题栏显示「← 返回{来源}」（UX v3 §4.2） */
+  const [backTo, setBackTo] = useState<MainTab | null>(null);
+  /** 设置弹层（齿轮）开关 */
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const snapshot = useMemStore((s) => s.snapshot);
   const processes = useMemStore((s) => s.processes);
   const loading = useMemStore((s) => s.loading);
@@ -100,21 +123,20 @@ export function MainWindow() {
     setKillTarget({ pid: proc.pid, name: proc.name, mem: formatBytes(totalOf(proc)), x, y });
   };
 
+  /** 统一导航入口：记录下钻来源，供「返回」使用 */
+  const go = (next: MainTab, from?: MainTab) => {
+    setTab(next);
+    setBackTo(from ?? null);
+  };
+
   // 面板点「可回收」/「端口」→ 主窗口直接切到对应 tab（open_main 会让 Rust 侧广播 ui://tab）
   useEffect(() => {
     if (!isTauri()) return;
     const un = listen<string>("ui://tab", (e) => {
-      const t = e.payload === "port" ? "ports" : e.payload;
-      if (
-        t === "stats" ||
-        t === "resources" ||
-        t === "apps" ||
-        t === "overview" ||
-        t === "disk" ||
-        t === "ports" ||
-        t === "net"
-      ) {
+      const t = mapExternalTab(e.payload);
+      if (t) {
         setTab(t);
+        setBackTo(null);
       }
     });
     return () => {
@@ -138,9 +160,9 @@ export function MainWindow() {
     };
   }, [tab, initPorts, setPortActive]);
 
-  // 应用列表要挂端口徽标，但只读已有快照：不为了一枚徽标在启动时跑 lsof
+  // 内存页的应用列表要挂端口徽标，但只读已有快照：不为了一枚徽标在启动时跑 lsof
   useEffect(() => {
-    if (tab === "apps") void hydratePorts();
+    if (tab === "memory") void hydratePorts();
   }, [tab, hydratePorts]);
 
   /**
@@ -258,6 +280,35 @@ export function MainWindow() {
             ? "采样中"
             : "刷新";
 
+  // 快捷键（UX v3 §5.5）：⌘1–6 切 tab · ⌘R 刷新 · ⌘F 聚焦搜索 · Escape 关弹层/取消选中。
+  // onRefresh 每次渲染都是新函数，用 ref 持有避免反复解绑。
+  const refreshRef = useRef(onRefresh);
+  refreshRef.current = onRefresh;
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const meta = e.metaKey || e.ctrlKey;
+      if (meta && e.key >= "1" && e.key <= "6") {
+        e.preventDefault();
+        const next = TAB_ORDER[Number(e.key) - 1];
+        if (next) {
+          setTab(next);
+          setBackTo(null);
+        }
+      } else if (meta && (e.key === "r" || e.key === "R")) {
+        e.preventDefault();
+        refreshRef.current();
+      } else if (meta && (e.key === "f" || e.key === "F")) {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("prune:focus-search"));
+      } else if (e.key === "Escape") {
+        if (settingsOpen) setSettingsOpen(false);
+        else if (tab === "memory" && selectedPid != null) select(null);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [settingsOpen, tab, selectedPid, select]);
+
   return (
     <div className="flex h-screen flex-col bg-surface text-ink">
       <header className="flex h-12 shrink-0 items-center gap-4 border-b border-hairline px-5">
@@ -267,16 +318,15 @@ export function MainWindow() {
         </div>
         <Tabs
           value={tab}
-          onChange={setTab}
+          onChange={(t) => go(t)}
           items={[
-            { id: "stats", label: "统计", hint: "内存 / CPU / 硬盘 / 端口 / 网速：本机资源总览" },
+            { id: "stats", label: "总览", hint: "可回收 + 内存 / CPU / 硬盘 / 端口 / 网速：本机资源总览" },
             {
               id: "resources",
-              label: "应用资源",
+              label: "应用",
               hint: "每个应用一张卡：进程 / CPU / 内存 / 磁盘 / 端口 / 网速",
             },
-            { id: "apps", label: "内存 · 应用", hint: "每个应用的绝对内存占用" },
-            { id: "overview", label: "内存 · 概况", hint: "内存压力、swap 与换出受害者" },
+            { id: "memory", label: "内存", hint: "内存概况、swap 与换出受害者 · 进程家族与明细" },
             { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理" },
             {
               id: "net",
@@ -284,11 +334,20 @@ export function MainWindow() {
               hint: "本机下载 / 上传速率、走势、网卡分布与今日流量",
             },
             { id: "ports", label: "端口", hint: "谁占着 3000：按端口反查持有进程" },
-            { id: "settings", label: "设置", hint: "灵动岛开关与 CPU 暴走阈值" },
           ]}
         />
         <div className="flex-1" />
-        {tab === "apps" || tab === "overview" ? (
+        {/* 下钻返回（UX v3 §4.2）：所有跨页跳转必须可一键回来源 */}
+        {backTo && backTo !== tab ? (
+          <button
+            type="button"
+            onClick={() => go(backTo)}
+            className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
+          >
+            ← 返回{TAB_LABEL[backTo]}
+          </button>
+        ) : null}
+        {tab === "memory" ? (
           <>
             {snapshot ? (
               snapshot.deepAvailable ? (
@@ -306,17 +365,27 @@ export function MainWindow() {
             </span>
           </>
         ) : null}
-        {tab === "settings" ? null : (
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={busy}
-            className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
-          >
-            <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
-            {refreshLabel}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={onRefresh}
+          disabled={busy}
+          className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
+        >
+          <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
+          {refreshLabel}
+        </button>
+        <button
+          type="button"
+          onClick={() => setSettingsOpen(true)}
+          title="设置（灵动岛开关与阈值）"
+          aria-label="设置"
+          className="grid size-7 place-items-center rounded-md text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" aria-hidden>
+            <circle cx="12" cy="12" r="3" />
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+          </svg>
+        </button>
       </header>
 
       {error ? (
@@ -325,10 +394,8 @@ export function MainWindow() {
         </div>
       ) : null}
 
-      {tab === "settings" ? (
-        <SettingsBoard />
-      ) : tab === "stats" ? (
-        <StatsBoard onDrill={setTab} refreshNonce={statsNonce} />
+      {tab === "stats" ? (
+        <StatsBoard onDrill={(t) => go(t, "stats")} refreshNonce={statsNonce} />
       ) : tab === "resources" ? (
         <AppResourceBoard
           families={families}
@@ -338,18 +405,18 @@ export function MainWindow() {
           refreshNonce={resourcesNonce}
           onOpenPorts={(port) => {
             setPortFocus(String(port));
-            setTab("ports");
+            go("ports", "resources");
           }}
           onOpenProcess={(pid) => {
             select(pid);
-            setTab("overview");
+            go("memory", "resources");
           }}
         />
       ) : tab === "ports" ? (
         <PortBoard
           onOpenProcess={(pid) => {
             select(pid);
-            setTab("overview");
+            go("memory", "ports");
           }}
           onKill={(binding, port, x, y) => {
             setKillTarget({
@@ -362,57 +429,11 @@ export function MainWindow() {
           }}
         />
       ) : tab === "net" ? (
-        <NetBoard onOpenResources={() => setTab("resources")} />
+        <NetBoard onOpenResources={() => go("resources", "net")} />
       ) : tab === "disk" ? (
         <ReclaimBoard />
-      ) : tab === "apps" ? (
-        <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-          <div className="flex items-baseline justify-between">
-            <div>
-              <h1 className="text-[15px] font-semibold tracking-tight">每个应用占用的绝对内存</h1>
-              <p className="mt-0.5 text-[11px] text-ink-faint">
-                footprint 口径（含被换出到磁盘的部分）· 按总量降序 · 点击查看进程明细
-              </p>
-            </div>
-            <AppMemorySummary families={families} />
-          </div>
-          {/* 命中或「无法判定」时才出现；没有命中就是沉默即正常 */}
-          {snapshot?.leaks && (snapshot.leaks.items.length > 0 || snapshot.leaks.note) ? (
-            <div className="mt-3">
-              <LeakCard
-                report={snapshot.leaks}
-                onOpen={(pid) => {
-                  select(pid);
-                  setTab("overview");
-                }}
-              />
-            </div>
-          ) : null}
-          <div className="mt-3">
-            <div className="grid grid-cols-[26px_minmax(0,1fr)_112px_86px] items-center gap-2.5 border-b border-hairline-soft px-2 pb-2 text-[10px] text-ink-faint">
-              <span>#</span>
-              <span>应用</span>
-              <span>相对占用</span>
-              <span className="text-right">总量</span>
-            </div>
-            <AppMemoryList
-              families={families}
-              processes={processes}
-              leaks={snapshot?.leaks}
-              ports={ports}
-              expandable
-              onOpen={(pid) => {
-                select(pid);
-                setTab("overview");
-              }}
-              onOpenPorts={(port) => {
-                setPortFocus(String(port));
-                setTab("ports");
-              }}
-            />
-          </div>
-        </div>
       ) : (
+        // 内存页（UX v3 §6.3）：左栏家族列表 + 右栏（默认概况，选中进程后为详情）
         <div className="flex min-h-0 flex-1">
           <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
             <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
@@ -447,13 +468,41 @@ export function MainWindow() {
 
           <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
             {selected ? (
-              <ProcessInspector proc={selected} />
+              <ProcessInspector proc={selected} onBack={() => select(null)} />
             ) : (
-              <Overview onKillMenu={openKillMenu} />
+              <div className="space-y-4">
+                {/* 泄漏卡置顶（命中或「无法判定」时才出现；没有命中就是沉默即正常） */}
+                {snapshot?.leaks &&
+                (snapshot.leaks.items.length > 0 || snapshot.leaks.note) ? (
+                  <LeakCard
+                    report={snapshot.leaks}
+                    onOpen={(pid) => select(pid)}
+                  />
+                ) : null}
+                <Overview onKillMenu={openKillMenu} />
+              </div>
             )}
           </main>
         </div>
       )}
+
+      {settingsOpen ? (
+        <div
+          className="fixed inset-0 z-40 bg-black/40"
+          onClick={() => setSettingsOpen(false)}
+          onContextMenu={(e) => {
+            e.preventDefault();
+            setSettingsOpen(false);
+          }}
+        >
+          <div
+            className="absolute right-4 top-14 max-h-[calc(100vh-72px)] w-[480px] overflow-y-auto rounded-xl border border-hairline bg-surface-raised shadow-2xl shadow-black/50"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <SettingsBoard />
+          </div>
+        </div>
+      ) : null}
 
       {killTarget ? <ProcKillMenu target={killTarget} onClose={() => setKillTarget(null)} /> : null}
     </div>
@@ -715,7 +764,7 @@ function VictimRow({
   );
 }
 
-function ProcessInspector({ proc }: { proc: ProcMem }) {
+function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void }) {
   const points = useMemHistory(proc.pid, 240);
   const snapshot = useMemStore((s) => s.snapshot);
   const ports = usePortStore((s) => s.snapshot);
@@ -741,6 +790,15 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
 
   return (
     <div className="space-y-4">
+      <div>
+        <button
+          type="button"
+          onClick={onBack}
+          className="text-[11px] text-accent transition-colors hover:text-ink"
+        >
+          ← 返回概况
+        </button>
+      </div>
       <div className="flex items-start gap-3">
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold tracking-tight">{proc.name}</h1>
@@ -754,6 +812,28 @@ function ProcessInspector({ proc }: { proc: ProcMem }) {
           <Badge tone="accent" title="footprint 含被换出到磁盘的部分">footprint 口径</Badge>
         )}
       </div>
+
+      {/* 构成堆叠条（UX v3 §7.6）：footprint = RSS + 换出，一眼看出「多少在磁盘上」。
+          未深探时没有可靠的换出拆分，整条不渲染——不画假数据。 */}
+      {footprint != null && footprint > 0 ? (
+        <section>
+          <div className="mb-2 flex items-baseline justify-between">
+            <span className="text-[11px] font-medium text-ink-dim">内存构成一览</span>
+            <span className="text-[10px] text-ink-faint">
+              {ratio != null ? `${formatPercent(ratio)} 在磁盘上` : ""}
+            </span>
+          </div>
+          <StackBar
+            height={6}
+            ariaLabel={`内存构成：RSS ${formatBytes(rss)}，已换出到磁盘 ${formatBytes(swapped)}，footprint 合计 ${formatBytes(footprint)}`}
+            segments={[
+              { key: "rss", label: "RSS（物理常驻）", value: rss, tone: "neutral" },
+              { key: "swapped", label: "已换出到磁盘", value: swapped, tone: "warn" },
+            ]}
+            total={footprint}
+          />
+        </section>
+      ) : null}
 
       <section className="border-b border-hairline-soft pb-4">
         <div className="mb-2 flex items-baseline justify-between">

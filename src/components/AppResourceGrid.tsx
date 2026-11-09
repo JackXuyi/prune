@@ -137,6 +137,13 @@ export function AppResourceBoard({
   const [sortKey, setSortKey] = useState<SortKey>("mem");
   const [desc, setDesc] = useState(true);
   const [query, setQuery] = useState("");
+  // ⌘F 聚焦搜索框（UX v3 §5.5）：主窗口全局派发 prune:focus-search
+  const searchRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const onFocus = () => searchRef.current?.focus();
+    window.addEventListener("prune:focus-search", onFocus);
+    return () => window.removeEventListener("prune:focus-search", onFocus);
+  }, []);
   const [showAll, setShowAll] = useState(false);
   const [expanded, setExpanded] = useState<string | null>(null);
   const [bundles, setBundles] = useState<BundleMap | null>(null);
@@ -302,6 +309,7 @@ export function AppResourceBoard({
       <div className="shrink-0 border-b border-hairline-soft px-5 py-2.5">
         <div className="flex flex-wrap items-center gap-2">
           <input
+            ref={searchRef}
             value={query}
             onChange={(e) => {
               setQuery(e.target.value);
