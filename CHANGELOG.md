@@ -4,6 +4,15 @@
 
 ## 未发布
 
+### 网络诊断（M17）
+
+- **分层探测**：DNS（getaddrinfo）/ 局域网网关（TCP）/ 出口层（1.1.1.1:443 直连，超时回退 223.5.5.5:443）三层测延迟，阈值透明（50/100/30/300ms）分层判定「慢在哪」；出口层探测失败记 note，不冒充成功
+- **Captive portal 检测** + **手动测速**（系统自带 networkQuality，吞吐 + bufferbloat RPM）；Windows 无系统测速等价物，capability 门控整卡隐藏
+- **诊断报告复制**：Rust 原生写剪贴板（macOS pbcopy / Windows Set-Clipboard），IPC 失败时前端红字反馈
+- 诊断手动触发不常驻、不落库；不做切 DNS / Radar / 信道扫描（只读边界）
+
+## 0.5.0
+
 ### 应用真实图标 + 应用详情页（7 天历史 / 诊断摘要复制）
 
 - **真实图标**：从 `.app` 包内的 `.icns` 反推可复用尺寸（≥128px），用系统 `sips` 转 64px PNG 后转 base64 data URL；8 路并发、总预算 300ms、进程内 30min 缓存，前端按 family 缓存且失败记空串不重试。转码不可得时退回字母徽标（同一 family 稳定配色），应用卡片与详情页共用
