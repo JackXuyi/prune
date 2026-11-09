@@ -97,7 +97,7 @@ impl IconTheme {
 
     /// CPU 动画的帧（索引 0 与 `static_icon` 同尺寸，作为「静止」姿态）。
     ///
-    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，小猫 8 帧「前跃循环」。
+    /// 各主题帧数不同：剪刀 4 帧「开合呼吸」，小猫 12 帧「前跃循环」。
     /// 播放顺序由 [`IconTheme::beats`] 给出，不要假设长度。
     pub fn frames(self) -> &'static [Image<'static>] {
         match self {
@@ -108,7 +108,8 @@ impl IconTheme {
 
     /// 播放顺序（索引指向 `frames()`）。一轮播完才可能换速 —— 见 tray::run_anim。
     /// - 剪刀：[0,1,2,3,2,1] 往返 6 拍，避免开合动画首尾同帧造成的顿感
-    /// - 小猫：0..5 顺序播放 = 一次完整前跃（抬前脚 → 腾空前扑 → 落地回位）
+    /// - 小猫：0..11 顺序播放 = 一次完整前跃弹道
+    ///   （蓄力 → 蹬地 → 上升 → 顶点 → 下落 → 前爪触地 → 后爪落地 → 回位）
     pub fn beats(self) -> &'static [usize] {
         match self {
             Self::Scissors => &SCISSORS_BEATS,
@@ -118,7 +119,7 @@ impl IconTheme {
 }
 
 const SCISSORS_BEATS: [usize; 6] = [0, 1, 2, 3, 2, 1];
-const CAT_BEATS: [usize; 8] = [0, 1, 2, 3, 4, 5, 6, 7];
+const CAT_BEATS: [usize; 12] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11];
 
 fn scissors_frames() -> &'static [Image<'static>] {
     static FRAMES: OnceLock<[Image<'static>; 4]> = OnceLock::new();
@@ -146,7 +147,7 @@ fn cat_frames() -> &'static [Image<'static>] {
     static FRAMES: OnceLock<Vec<Image<'static>>> = OnceLock::new();
     FRAMES.get_or_init(|| {
         #[cfg(target_os = "macos")]
-        let bytes: [&'static [u8]; 8] = [
+        let bytes: [&'static [u8]; 12] = [
             include_bytes!("../icons/tray-anim/cat/macos/f0.png"),
             include_bytes!("../icons/tray-anim/cat/macos/f1.png"),
             include_bytes!("../icons/tray-anim/cat/macos/f2.png"),
@@ -155,9 +156,13 @@ fn cat_frames() -> &'static [Image<'static>] {
             include_bytes!("../icons/tray-anim/cat/macos/f5.png"),
             include_bytes!("../icons/tray-anim/cat/macos/f6.png"),
             include_bytes!("../icons/tray-anim/cat/macos/f7.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f8.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f9.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f10.png"),
+            include_bytes!("../icons/tray-anim/cat/macos/f11.png"),
         ];
         #[cfg(not(target_os = "macos"))]
-        let bytes: [&'static [u8]; 8] = [
+        let bytes: [&'static [u8]; 12] = [
             include_bytes!("../icons/tray-anim/cat/win/f0.png"),
             include_bytes!("../icons/tray-anim/cat/win/f1.png"),
             include_bytes!("../icons/tray-anim/cat/win/f2.png"),
@@ -166,6 +171,10 @@ fn cat_frames() -> &'static [Image<'static>] {
             include_bytes!("../icons/tray-anim/cat/win/f5.png"),
             include_bytes!("../icons/tray-anim/cat/win/f6.png"),
             include_bytes!("../icons/tray-anim/cat/win/f7.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f8.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f9.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f10.png"),
+            include_bytes!("../icons/tray-anim/cat/win/f11.png"),
         ];
         bytes
             .iter()
