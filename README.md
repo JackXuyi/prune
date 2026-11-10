@@ -160,4 +160,4 @@ pnpm tauri build    # 打包 .app / .dmg
 
 ## License
 
-MIT（暂定）
+[MIT](./LICENSE)
