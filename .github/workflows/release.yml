@@ -150,10 +150,13 @@ jobs:
       # 上可独立编译（纯逻辑 crate，零 Tauri 依赖，rusqlite bundled 免系统库）。
       # src-tauri 的 macOS 专属测试不在此跑：Linux 起 webkit2gtk 不划算，
       # 其编译正确性由 bundle job 三平台覆盖。
-      # fmt / clippy 门禁待一次性 `cargo fmt --all` 统一后再加（当前有 232 处差异，
-      # clippy 有 35 条 warning，直接 -D warnings 会把 CI 全红）。
+      # fmt 门禁已启用（2026-11 一次性 cargo fmt --all 统一，rustfmt.toml 固定
+      # edition）；clippy 仍有 35 条 warning，清理后同样在此加 -D warnings。
       # ---------------------------------------------------------------------------
       - uses: dtolnay/rust-toolchain@stable
+
+      - name: Rust fmt check
+        run: cargo fmt --all -- --check
 
       - uses: swatinem/rust-cache@v2
         with:
