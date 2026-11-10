@@ -88,21 +88,3 @@ export function kindLabel(kind: DeviceKind): string {
   };
   return map[kind];
 }
-
-/** 设备行的单字图标（列表行小图，不需要完整图标集） */
-export function kindGlyph(kind: DeviceKind): string {
-  const map: Record<DeviceKind, string> = {
-    router: "⌂",
-    computer: "▣",
-    phone: "▯",
-    tablet: "▭",
-    tv: "▶",
-    speaker: "◉",
-    printer: "⎙",
-    nas: "⛁",
-    camera: "◎",
-    iot: "✦",
-    unknown: "·",
-  };
-  return map[kind];
-}

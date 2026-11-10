@@ -1,6 +1,8 @@
 /** 内联图标（Lucide 路径，避免为几个 icon 引入整个图标库） */
 import type { ReactNode } from "react";
 
+import type { DeviceKind } from "../types/lan";
+
 interface IconProps {
   size?: number;
   className?: string;
@@ -196,4 +198,110 @@ export function DatabaseIcon(props: IconProps) {
       <path d="M4 12c0 1.5 3.6 2.8 8 2.8s8-1.3 8-2.8" />
     </Svg>
   );
+}
+
+/* ---- M18-LAN 设备类型图标（LanDeviceCard tile 用，plan §4） ---- */
+
+export function CopyIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="9" y="9" width="13" height="13" rx="2" />
+      <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
+    </Svg>
+  );
+}
+
+export function DeviceKindIcon({
+  kind,
+  ...props
+}: IconProps & { kind: DeviceKind }) {
+  switch (kind) {
+    case "router":
+      return (
+        <Svg {...props}>
+          <rect x="2" y="14" width="20" height="8" rx="2" />
+          <path d="M6.01 18H6" />
+          <path d="M10.01 18H10" />
+          <path d="M15 14V9" />
+          <path d="M18.5 14V9" />
+        </Svg>
+      );
+    case "computer":
+      return (
+        <Svg {...props}>
+          <rect x="3" y="4" width="18" height="12" rx="2" />
+          <path d="M2 20h20" />
+        </Svg>
+      );
+    case "phone":
+      return (
+        <Svg {...props}>
+          <rect x="7" y="2" width="10" height="20" rx="2.5" />
+          <path d="M11 18h2" />
+        </Svg>
+      );
+    case "tablet":
+      return (
+        <Svg {...props}>
+          <rect x="4" y="2" width="16" height="20" rx="2.5" />
+          <path d="M11 18h2" />
+        </Svg>
+      );
+    case "tv":
+      return (
+        <Svg {...props}>
+          <rect x="2" y="4" width="20" height="13" rx="2" />
+          <path d="M7 21h10" />
+          <path d="m17 2-5 2-5-2" />
+        </Svg>
+      );
+    case "speaker":
+      return (
+        <Svg {...props}>
+          <rect x="4" y="2" width="16" height="20" rx="2" />
+          <circle cx="12" cy="14" r="3" />
+          <path d="M12 6.5h.01" />
+        </Svg>
+      );
+    case "printer":
+      return (
+        <Svg {...props}>
+          <path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" />
+          <rect x="6" y="14" width="12" height="8" rx="1" />
+          <path d="M6 9V3a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v6" />
+        </Svg>
+      );
+    case "nas":
+      return (
+        <Svg {...props}>
+          <rect x="3" y="4" width="18" height="7" rx="1.5" />
+          <rect x="3" y="13" width="18" height="7" rx="1.5" />
+          <path d="M7 7.5h.01" />
+          <path d="M7 16.5h.01" />
+        </Svg>
+      );
+    case "camera":
+      return (
+        <Svg {...props}>
+          <path d="m22 8-6 4 6 4V8Z" />
+          <rect x="2" y="6" width="14" height="12" rx="2" />
+        </Svg>
+      );
+    case "iot":
+      return (
+        <Svg {...props}>
+          <rect width="16" height="16" x="4" y="4" rx="2" />
+          <rect width="6" height="6" x="9" y="9" rx="1" />
+          <path d="M9 2v2M15 2v2M9 20v2M15 20v2M2 9h2M2 15h2M20 9h2M20 15h2" />
+        </Svg>
+      );
+    default:
+      return (
+        <Svg {...props}>
+          <circle cx="12" cy="12" r="10" />
+          <path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3" />
+          <path d="M12 17h.01" />
+        </Svg>
+      );
+  }
 }
