@@ -10,7 +10,7 @@
 
 ![隐私](https://img.shields.io/badge/零埋点-零遥测-green)
 
-![状态](https://img.shields.io/badge/status-M0%20验证中-orange)
+![状态](https://img.shields.io/badge/status-v0.5.0-blue)
 
 ---
 
@@ -102,7 +102,7 @@ macOS 另有系统级测速 + RPM（bufferbloat 官方口径）；Windows 无系
 - **Tauri 2 + React 19 + TypeScript + TailwindCSS 4 + Zustand**
 - **Rust 核心（`prune-core` crate）**：GUI 与 CLI 共享
 - 内存数据源：系统自带 `/usr/bin/footprint -p <pid> -j`（非特权、JSON、含 swapped 明细）—— **不碰 Mach API、不要任何权限**
-- 磁盘扫描：`ignore` + `rayon` 并行（6336 个 node_modules，shell 要 4 分钟，Rust < 15 s）
+- 磁盘扫描：自建线程池 + `std::thread::scope` 并行（6336 个 node_modules，shell 要 4 分钟，Rust < 15 s；不用 ignore/rayon——定点目录不需要 gitignore 语义）
 - 删除：`trash` crate 走废纸篓
 - 采样：10 s 廉价 RSS 全量 + 5 min 对 Top N 深探 footprint（并发 8 路 ≈ 0.6 s）
 
@@ -145,7 +145,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M11** 菜单栏图标主题：剪刀 → 可切换皮肤（DeepSeek 鲸鱼娘「吃白米饭的速度 = CPU 忙闲」）
 - [x] **M13** 菜单栏数字（可回收 GB / CPU / 网速）的可见性与口径修复
 - [x] **M14** 网络 tab：系统口径下载 / 上传速率 + 5 min 走势 + 网卡分布 + 按应用 Top 8 + 今日 / 近 7 天流量（`net_daily` 表，60 s 增量落库、90 天保留）
-- [ ] **M15** 灵动岛：NSPanel 覆盖全屏 + 刘海几何（本机实测 185×33 pt）+ CPU 暴走判定（达标率 + 滞回 + 频控）+ 内存异常（MemMonitor 三通道：压力 Critical 立即 / Warning 与 swap 持续）+ 悬停展开 + 折叠态三段式（图标 + 标签 + 读数）+ 阈值可配置（`island.*` 8 个键）
+- [x] **M15** 灵动岛：NSPanel 覆盖全屏 + 刘海几何（本机实测 185×33 pt）+ CPU 暴走判定（达标率 + 滞回 + 频控）+ 内存异常（MemMonitor 三通道：压力 Critical 立即 / Warning 与 swap 持续）+ 悬停展开 + 折叠态三段式（图标 + 标签 + 读数）+ 阈值可配置（`island.*` 7 个键）
 - [x] **M16** 面板统计化 + 双端网速：菜单栏面板改为**单页统计**（无 tab 切换，五行 48 px，与主窗口同一读数层 `lib/statsReadout.ts`），主窗口统计页第 3 行新增横跨两列的网络卡；统计页只 `init` 不提速，网速采样节拍仍只由网络 tab 决定
 - [x] **M17** 网络诊断（双平台）：DNS / 网关 / 出口三层探测 + 分层主因结论（阈值透明：50/100/30/300 ms）+ captive portal 检测 + Markdown 报告复制；macOS 另有系统测速 + RPM（bufferbloat 官方口径），Windows 无等价物 → 测速卡隐藏（capability 门控）
 

@@ -262,19 +262,22 @@ Portlivo 的菜单栏首屏是服务列表；iStat/Stats/MPM 是内存百分比�
 
 ## 8. 技术方案
 
+> 2026-11 修订：本表已按 Tauri 迁移后的实际实现重写（原 SwiftUI / Sparkle /
+> ArgumentParser 选型是迁移前残留，见 git 历史）。
+
 | 层 | 选型 | 备注 |
 |---|---|---|
-| UI | SwiftUI + `MenuBarExtra`（macOS 13+） | 与 Portlivo 同栈，零学习成本 |
-| 磁盘扫描 | `FileManager` + 后台队列 + 深度上限 | 复用已有 `reclaim-scan.sh` 逻辑 |
-| 内存 | `proc_pidinfo` / `task_for_pid` + `task_info(TASK_VM_INFO)` | **需 M0 验证**（§10） |
-| 系统压力 | `host_statistics64(HOST_VM_INFO64)` | 公开 API，无权限 |
-| 历史 | SQLite（footprint 时间序列） | 供 B5 回归计算 |
-| CLI | `prune`（ArgumentParser） | 与 MPM 对齐 |
-| 更新 | Sparkle | |
-| 自启 | `SMAppService` | |
-| 隐私 | 零埋点、零遥测、无网络请求（除更新检查） | 营销资产 |
+| UI | Tauri 2 + React 19 + TypeScript + TailwindCSS 4 + Zustand | 三窗口：主窗口 / 菜单栏面板（tray + panel）/ 灵动岛（NSPanel） |
+| 磁盘扫描 | 自建线程池 + `std::thread::scope` 并行 | 不用 ignore/rayon：定点目录不需要 gitignore 语义 |
+| 内存 | `/usr/bin/footprint -p <pid> -j`（非特权、JSON、含 swapped）+ sysinfo | 不碰 Mach API、不要任何权限（M0 已验证） |
+| 系统压力 | `host_statistics64(HOST_VM_INFO64)`（Windows 走 GlobalMemoryStatusEx） | 公开 API，无权限 |
+| 历史 | SQLite（rusqlite bundled：footprint / net_daily / app_hourly） | 供 B5 回归计算、流量统计、应用小时级历史 |
+| CLI | `prune`（手写 arg 解析，单二进制双形态） | GUI 与 CLI 共享 `prune-core`；另含 MCP stdio server |
+| 更新 | tauri-plugin-updater（GitHub 源，minisign 签名） | |
+| 自启 | 无（Accessory 应用，用户手动启动） | 原 SMAppService 方案随迁移撤除 |
+| 隐私 | 零埋点、零遥测；网络活动仅两类：更新检查 + 网络诊断手动探测（DNS / 网关 / 出口 TCP、networkQuality） | 营销资产；诊断不常驻、不落库、不上报 |
 
-**沿用 Portlivo 的可复用资产**：IA 三段式（菜单栏/主窗口/检视器）、进程画像（`KERN_PROCARGS2` + PPID 上溯）、键盘优先 + ⌘K、SwiftUI+SMAppService+Sparkle 技术栈。
+**沿用 Portlivo 的可复用资产**：IA 三段式（菜单栏/主窗口/检视器）、进程画像（PPID 上溯）、键盘优先 + ⌘K。
 **明确不适用**：HTTP 健康探针、实时日志、QR 码、公网隧道。
 
 ---

@@ -2,7 +2,7 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 三处一致）。
 
-## 未发布
+## 0.5.0
 
 ### 网络诊断（M17）
 
@@ -10,8 +10,6 @@
 - **Captive portal 检测** + **手动测速**（系统自带 networkQuality，吞吐 + bufferbloat RPM）；Windows 无系统测速等价物，capability 门控整卡隐藏
 - **诊断报告复制**：Rust 原生写剪贴板（macOS pbcopy / Windows Set-Clipboard），IPC 失败时前端红字反馈
 - 诊断手动触发不常驻、不落库；不做切 DNS / Radar / 信道扫描（只读边界）
-
-## 0.5.0
 
 ### 应用真实图标 + 应用详情页（7 天历史 / 诊断摘要复制）
 
