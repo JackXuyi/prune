@@ -21,6 +21,16 @@ export function isTauri(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+/**
+ * 「发后不管」的显式出口：捕获 rejection 并留一条 console.warn，而不是让
+ * unhandled rejection 在 WKWebView 里静默消失（用户表现为「点了没反应」）。
+ * 只用于无返回值、失败也不影响主流程的调用（岛显隐、开主窗口等）；
+ * 有结果反馈的调用仍应 await + catch 落到 store error。
+ */
+export function fireAndForget(task: Promise<unknown>, label: string): void {
+  task.catch((e) => console.warn(`[prune] ${label} 失败:`, e));
+}
+
 export function memSnapshot(): Promise<MemSnapshot | null> {
   return invoke<MemSnapshot | null>("mem_snapshot");
 }

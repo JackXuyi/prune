@@ -2,7 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { LeakBanner } from "../components/LeakCard";
 import { NetDirectionRow, StatsRow } from "../components/stats/StatsRow";
 import { formatRelative } from "../lib/format";
-import { openMain } from "../lib/ipc";
+import { fireAndForget, openMain } from "../lib/ipc";
 import {
   cpuReadout,
   diskReadout,
@@ -70,7 +70,7 @@ export function MenuBarPanel() {
           <IconButton label="立即刷新" onClick={onRefresh}>
             <RefreshIcon size={13} className={refreshing ? "animate-spin" : ""} />
           </IconButton>
-          <IconButton label="打开主窗口" onClick={() => void openMain()}>
+          <IconButton label="打开主窗口" onClick={() => fireAndForget(openMain(), "open_main")}>
             <ExpandIcon size={13} />
           </IconButton>
         </header>
@@ -138,28 +138,28 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
       {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
       {snapshot?.leaks ? (
         <div className="mb-1">
-          <LeakBanner report={snapshot.leaks} onOpen={() => void openMain(undefined, "memory")} />
+          <LeakBanner report={snapshot.leaks} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
         </div>
       ) : null}
 
       <div className="divide-y divide-hairline-soft">
-        <StatsRow title="内存" readout={mem} onOpen={() => void openMain(undefined, "memory")} />
+        <StatsRow title="内存" readout={mem} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
         <StatsRow
           icon={<span className="text-accent">⚡</span>}
           title="存储"
           readout={disk}
-          onOpen={() => void openMain(undefined, "disk")}
+          onOpen={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
         />
         <StatsRow title="CPU" readout={cpu} />
-        <NetDirectionRow readout={netDown} onOpen={() => void openMain(undefined, "net")} />
-        <NetDirectionRow readout={netUp} onOpen={() => void openMain(undefined, "net")} />
-        <StatsRow title="端口" readout={port} onOpen={() => void openMain(undefined, "ports")} />
+        <NetDirectionRow readout={netDown} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
+        <NetDirectionRow readout={netUp} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
+        <StatsRow title="端口" readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
       </div>
 
       {/* 应用列表退化为一行入口：面板是「瞄一眼」，对比工作台在主窗口 */}
       <button
         type="button"
-        onClick={() => void openMain(undefined, "resources")}
+        onClick={() => fireAndForget(openMain(undefined, "resources"), "open_main")}
         className="group mt-1 flex w-full items-center gap-1 rounded-md px-1 py-1.5 text-left text-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
       >
         <span className="min-w-0 flex-1 truncate">

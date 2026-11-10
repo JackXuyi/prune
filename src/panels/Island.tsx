@@ -13,7 +13,7 @@ import type { ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
-import { openMain } from "../lib/ipc";
+import { fireAndForget, openMain } from "../lib/ipc";
 
 type Phase = "idle" | "collapsed" | "expanded";
 
@@ -112,19 +112,19 @@ export function Island() {
     clearTimer("expand");
     clearTimer("collapse");
     setPhaseBoth("idle");
-    void invoke("island_hide");
+    fireAndForget(invoke("island_hide"), "island_hide");
   }, []);
 
   const expand = useCallback(() => {
     clearTimer("hide");
     // 先告诉 Rust 目标形状，再动画：否则命中测试还在用折叠矩形，
     // 鼠标一进展开区就被判成「离开」，刚展开就收起
-    void invoke("island_set_expanded", { expanded: true });
+    fireAndForget(invoke("island_set_expanded", { expanded: true }), "island_set_expanded");
     setPhaseBoth("expanded");
   }, []);
 
   const collapse = useCallback(() => {
-    void invoke("island_set_expanded", { expanded: false });
+    fireAndForget(invoke("island_set_expanded", { expanded: false }), "island_set_expanded");
     setPhaseBoth("collapsed");
     setTimer("hide", hide, AFTER_LEAVE_HIDE_MS);
   }, [hide]);
@@ -138,7 +138,7 @@ export function Island() {
         const p = e.payload;
         setData(p);
         if (typeof p.notchH === "number" && p.notchH > 0) setNotchH(p.notchH);
-        void invoke("island_set_expanded", { expanded: false });
+        fireAndForget(invoke("island_set_expanded", { expanded: false }), "island_set_expanded");
         setPhaseBoth("collapsed");
         setTimer("hide", hide, AUTO_HIDE_MS);
       }),
@@ -167,7 +167,7 @@ export function Island() {
         return;
       }
       disposers.push(...uns);
-      void invoke("island_ready");
+      fireAndForget(invoke("island_ready"), "island_ready");
     });
 
     return () => {
@@ -183,7 +183,7 @@ export function Island() {
   const h = expanded ? EXPANDED_H : COLLAPSED_H;
 
   const onOpen = () => {
-    void openMain(undefined, "stats");
+    fireAndForget(openMain(undefined, "stats"), "open_main");
     hide();
   };
 
