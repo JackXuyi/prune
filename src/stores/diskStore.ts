@@ -107,7 +107,9 @@ export const useDiskStore = create<DiskStore>((set, get) => ({
   execute: async (confirmed) => {
     const preview = get().preview;
     if (!preview || get().busy) return;
-    if (!isTauri()) {
+    // 仅 DEV fixture 允许在浏览器里模拟清理结果；生产构建在非 Tauri 环境绝不伪造
+    // 「清理成功」摘要——放行到 reclaimExecute 抛错，走下方 catch 诚实报错
+    if (!isTauri() && import.meta.env.DEV) {
       set({ lastReclaimed: { moved: preview.items.length, bytes: preview.totalBytes, failed: [], skipped: 0 }, preview: null });
       return;
     }
