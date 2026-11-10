@@ -155,6 +155,11 @@ fn tool_defs() -> Value {
                 },
                 "required": ["family"]
             }
+        },
+        {
+            "name": "lan_devices",
+            "description": "局域网设备与暴露面（只读缓存，不发包）：同网段设备列表（IP/MAC/厂商/类型/在线状态）+ 本机对它们开放的端口。数据来自最近一轮扫描（GUI 点扫描或 prune lan --scan），本工具只读缓存——若返回 status=unavailable，请先让用户扫一轮。设备厂商为 null 可能是随机化 MAC（正常现象），不代表识别失败；mDNS/SSDP 均空时 notes 会说明可能是防火墙拦截。",
+            "inputSchema": { "type": "object", "properties": {} }
         }
     ])
 }
@@ -174,7 +179,23 @@ pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
         "disk_report" => Ok(tool_disk_report()),
         "port_listeners" => Ok(tool_port_listeners(args)),
         "app_resources" => Ok(tool_app_resources(args)),
+        "lan_devices" => Ok(tool_lan_devices()),
         other => Err(format!("unknown tool: {other}")),
+    }
+}
+
+/// M18 `lan_devices`（spec §12）：固定读缓存，不触发扫描。
+/// MCP server 无 UI 承接 macOS 本地网络授权弹窗，也不能替用户发几百个 SYN。
+fn tool_lan_devices() -> Value {
+    let loaded = prune_core::paths::lan_cache_path()
+        .and_then(|p| std::fs::read_to_string(p).ok())
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok());
+    match loaded {
+        Some(snap) => snap,
+        None => json!({
+            "status": "unavailable",
+            "note": "尚无局域网扫描缓存。请在 Prune GUI 的「局域网」分段点扫描，或运行 prune lan --scan。"
+        }),
     }
 }
 
@@ -480,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    fn tool_defs_have_four_readonly_tools() {
+    fn tool_defs_have_readonly_tools() {
         let defs = tool_defs();
         let names: Vec<&str> = defs
             .as_array()
@@ -495,7 +516,8 @@ mod tests {
                 "mem_leaks",
                 "disk_report",
                 "port_listeners",
-                "app_resources"
+                "app_resources",
+                "lan_devices"
             ]
         );
         for t in defs.as_array().unwrap() {

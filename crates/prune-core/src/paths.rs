@@ -77,6 +77,17 @@ pub fn config_dir() -> Option<PathBuf> {
     }
 }
 
+/// M18 局域网快照缓存路径（docs/m18-lan-devices-spec.md §12）：GUI 扫描成功后
+/// 写入最近一轮 `LanSnapshot`，MCP `lan_devices` 只读这份文件（MCP 固定读缓存、
+/// 不触发扫描——Agent 高频调用不能每次发几百个 SYN，且 MCP 无 UI 承接权限弹窗）。
+pub fn lan_cache_path() -> Option<PathBuf> {
+    Some(
+        config_dir()?
+            .join("com.xuyi.prune")
+            .join("lan-snapshot.json"),
+    )
+}
+
 /// 系统配置目录（不随用户变化），用于「系统路径不出现在用户数据里」这类判断。
 pub fn system_roots() -> Vec<PathBuf> {
     #[cfg(windows)]

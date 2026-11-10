@@ -595,12 +595,13 @@ Lan { json: bool, scan: bool },
 ```json
 {
   "name": "lan_devices",
-  "description": "局域网设备与暴露面（只读）。返回同网段设备列表 + 本机对它们开放的端口。注意：会向局域网发送 TCP SYN（--scan 语义），mDNS 监听 30s。设备厂商无法识别时 vendor 为 null，不代表没有厂商。",
-  "inputSchema": { "type": "object", "properties": {}, "additionalProperties": false }
+  "description": "局域网设备与暴露面（只读缓存，不发包）。返回同网段设备列表 + 本机对它们开放的端口。数据来自最近一轮扫描，本工具只读缓存；若返回 status=unavailable，请先让用户扫一轮。厂商为 null 可能是随机化 MAC（正常现象）。"
 }
 ```
 
-MCP 侧**固定读缓存**，不触发扫描：Agent 高频调用不能每次都发 1024 个 SYN，且 MCP server 无 UI 承接权限弹窗。无缓存时返回 `{ "status": "unavailable", "note": "尚未在 GUI 中扫描过" }` —— 对齐 `mem_leaks` 读 GUI 序列库的既有做法。
+MCP 侧**固定读缓存**，不触发扫描：Agent 高频调用不能每次都发 1024 个 SYN，且 MCP server 无 UI 承接权限弹窗。无缓存时返回 `{ "status": "unavailable", "note": "尚无局域网扫描缓存…" }` —— 对齐 `mem_leaks` 读 GUI 序列库的既有做法。
+
+> **C6 实现注**：缓存从「内存」升级为「落盘」（`~/Library/Application Support/com.xuyi.prune/lan-snapshot.json`，写临时文件再 rename 防半截 JSON）。原因：MCP 是独立进程，读不到 GUI 的内存态。GUI `lan_scan` 与 CLI `--scan` 成功后都写这份文件；`lan_snapshot` 在进程重启后回落读盘（重启不丢上次结果）。工具描述的措辞与上面 JSON 同步修订——初版描述里「会向局域网发送 TCP SYN（--scan 语义）」是 copy-paste 残留，与本节「固定读缓存」直接矛盾。
 
 ---
 
@@ -719,6 +720,14 @@ cargo test -p prune-core lan::
 cargo check --workspace
 MINGW_BIN=... ./scripts/check-windows.sh   # 沿用 docs/windows-support-plan.md §3 的现有脚本
 
+> **C6 实现注**：整 crate 的 `cargo check --target x86_64-pc-windows-msvc` 会被
+> `rusqlite bundled`（libsqlite3-sys 需要目标平台 C 编译器）阻断，与本任务无关。
+> Windows 代码的编译验证用**探针 crate**：临时 crate 引同 feature 集的
+> windows-sys 0.61 + `#[path]` 挂载真实 `win.rs` + 手工拷贝 `lan.rs` 的三个类型
+> 定义，对 msvc target check。探针首轮即抓到 3 个真错误（AF_INET 重复导入、
+> union 字段访问缺 unsafe、MIB_TCP_STATE i32/u32 失配），修正后通过；
+> mdns-sd =0.21.4 同 target 亦编译通过。
+
 # 3. CLI 冒烟（不扫）
 cargo run -p prune-cli -- lan --json | jq '{iface, cidr, count: (.devices|length)}'
 
@@ -730,6 +739,11 @@ pnpm tauri build
 plutil -p "src-tauri/target/release/bundle/macos/Prune.app/Contents/Info.plist" \
   | grep -A17 NSBonjourServices
 ```
+
+> **C6 时点状态**：`src-tauri/Info.plist` 已建并通过 `plutil -lint`；
+> bundle 内合并确认需跑一次完整 `tauri build`（沙箱环境 pnpm 不在 PATH，
+> 本次未跑完，**打包前必须补验**——Tauri 2 的 plist 合并若不生效，
+> dns-sd 会静默返回空，无任何报错）。
 
 ---
 

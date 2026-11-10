@@ -766,10 +766,13 @@ pub fn local_scope() -> Option<LanScope> {
             prefix,
         })
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     {
-        // C6：GetAdaptersAddresses（GAA_FLAG_SKIP_ANYCAST | SKIP_DNS_SERVER |
-        // INCLUDE_GATEWAYS；IfType 裸值 6/71；Ipv4Metric 选路）——spec §5.2
+        // C6：GetAdaptersAddresses（spec §5.2，win.rs）
+        crate::win::lan_scope()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
         None
     }
 }
@@ -785,9 +788,15 @@ pub fn neighbors() -> Vec<RawNeighbor> {
         };
         parse_arp_output(&String::from_utf8_lossy(&out.stdout))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     {
-        Vec::new() // C6：GetIpNetTable2（结构化，含 NL_NEIGHBOR_STATE）
+        // C6：GetIpNetTable2（结构化，含 NL_NEIGHBOR_STATE；spec §5.4，win.rs）。
+        // Windows 侧在源头过滤 Incomplete/Unreachable——扫描后表里全是残留条目
+        crate::win::arp_neighbors()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        Vec::new()
     }
 }
 
@@ -806,9 +815,14 @@ pub fn established_peers() -> Vec<(u16, Ipv4Addr)> {
         };
         parse_lsof_peers(&String::from_utf8_lossy(&out.stdout))
     }
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(windows)]
     {
-        Vec::new() // C6：GetExtendedTcpTable；dwLocalPort 记得 u16::from_be（spec §5.5）
+        // C6：GetExtendedTcpTable(CONNECTIONS)；dwLocalPort 已在 win.rs 里 from_be（spec §5.5）
+        crate::win::established_peers()
+    }
+    #[cfg(not(any(target_os = "macos", windows)))]
+    {
+        Vec::new()
     }
 }
 
@@ -1081,14 +1095,15 @@ fn finalize_snapshot(
 /// C2 一轮快照：邻居表 + 网段 + inbound（**无主动探测、无服务发现**）。
 ///
 /// `exposed` 由调用方传入（CLI 现扫 ports、GUI 传缓存快照），本函数不重算端口域。
-/// 全段探测用 [`snapshot_scan`]；Windows 上在 C6 之前两者都返回 [`LanSnapshot::unavailable`]。
+/// 全段探测用 [`snapshot_scan`]；C6 起 Windows 三数据源已接入（编译保证，
+/// 功能正确性留 W5 真机走查）。其它平台返回 [`LanSnapshot::unavailable`]。
 pub fn snapshot(at: i64, exposed: &[u16]) -> LanSnapshot {
     let start = std::time::Instant::now();
     let Some(scope) = local_scope() else {
-        let note = if cfg!(target_os = "macos") {
+        let note = if cfg!(any(target_os = "macos", windows)) {
             "读不到默认网卡的网段：未联网，或只有 IPv6。"
         } else {
-            "当前平台尚未接入（M18-C6）：Windows 数据源待实现。"
+            "当前平台不支持局域网设备视图（M18 覆盖 macOS / Windows）。"
         };
         return LanSnapshot::unavailable(note);
     };
@@ -1141,10 +1156,10 @@ pub fn snapshot_scan_cb(
 ) -> LanSnapshot {
     let start = std::time::Instant::now();
     let Some(scope) = local_scope() else {
-        let note = if cfg!(target_os = "macos") {
+        let note = if cfg!(any(target_os = "macos", windows)) {
             "读不到默认网卡的网段：未联网，或只有 IPv6。"
         } else {
-            "当前平台尚未接入（M18-C6）：Windows 数据源待实现。"
+            "当前平台不支持局域网设备视图（M18 覆盖 macOS / Windows）。"
         };
         return LanSnapshot::unavailable(note);
     };

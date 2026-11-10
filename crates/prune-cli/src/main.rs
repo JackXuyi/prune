@@ -798,6 +798,21 @@ fn cmd_lan(scan: bool, json: bool) -> i32 {
     } else {
         net::lan::snapshot(at, &exposed)
     };
+    if scan {
+        // 与 GUI 同一份缓存（spec §12）：MCP `lan_devices` 读的是它，
+        // 所以没有 GUI 的机器上 `prune lan --scan` 之后 MCP 也有数据可读
+        if let Some(path) = prune_core::paths::lan_cache_path() {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+            }
+            if let Ok(text) = serde_json::to_string_pretty(&snap) {
+                let tmp = path.with_extension("json.tmp");
+                if std::fs::write(&tmp, text).is_ok() {
+                    let _ = std::fs::rename(&tmp, &path);
+                }
+            }
+        }
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&snap).unwrap());

@@ -58,7 +58,36 @@ fn exposed_ports() -> Vec<u16> {
 /// `null` = 还没扫过。
 #[tauri::command]
 pub async fn lan_snapshot(state: State<'_, Arc<LanState>>) -> Result<Option<LanSnapshot>, String> {
-    Ok(state.last.lock().ok().and_then(|g| g.clone()))
+    if let Some(snap) = state.last.lock().ok().and_then(|g| g.clone()) {
+        return Ok(Some(snap));
+    }
+    // 进程重启后内存缓存为空：回落读盘（GUI 上次会话扫过的结果仍然可见）
+    Ok(load_cache())
+}
+
+/// 把快照写入磁盘缓存（spec §12：MCP `lan_devices` 固定读这份文件）。
+/// 写失败只影响 MCP 读数，不影响扫描返回。
+fn persist_cache(snap: &LanSnapshot) {
+    let Some(path) = prune_core::paths::lan_cache_path() else {
+        return;
+    };
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Ok(json) = serde_json::to_string_pretty(snap) {
+        // 先写临时文件再改名：写一半的 JSON 会被 MCP 读到并当次失败
+        let tmp = path.with_extension("json.tmp");
+        if std::fs::write(&tmp, json).is_ok() {
+            let _ = std::fs::rename(&tmp, &path);
+        }
+    }
+}
+
+/// 读磁盘缓存。解析失败（写一半 / 手改坏）当作没缓存。
+fn load_cache() -> Option<LanSnapshot> {
+    let path = prune_core::paths::lan_cache_path()?;
+    let text = std::fs::read_to_string(path).ok()?;
+    serde_json::from_str(&text).ok()
 }
 
 /// 全段扫描一轮（探测 + 服务发现 + 合成），进度走 `lan://progress` 事件。
@@ -103,6 +132,7 @@ pub async fn lan_scan(
     if let Ok(mut last) = state.last.lock() {
         *last = Some(snap.clone());
     }
+    persist_cache(&snap);
     Ok(snap)
 }
 
