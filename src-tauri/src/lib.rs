@@ -37,15 +37,6 @@ mod island_geo;
 #[path = "island_stub.rs"]
 mod island;
 
-/// 占位命令：暴露核心版本，验证前端 ↔ Rust 链路。
-#[tauri::command]
-fn app_info() -> serde_json::Value {
-    serde_json::json!({
-        "name": "Prune",
-        "coreVersion": prune_core::version(),
-    })
-}
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // updater：GitHub 源自动升级（docs/updater-plan.md），endpoint 在 tauri.conf.json
@@ -58,7 +49,6 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
-            app_info,
             updater::update_check,
             updater::update_pending,
             updater::update_install,
@@ -96,7 +86,6 @@ pub fn run() {
             island::island_set_expanded,
             island::island_hide,
             island::island_ready,
-            island::island_reposition,
             island::island_settings_get,
             island::island_settings_set,
             island::island_status

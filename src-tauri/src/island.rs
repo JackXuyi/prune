@@ -753,14 +753,6 @@ pub fn island_ready(app: AppHandle) -> bool {
     }
 }
 
-/// 屏幕参数变化后重算落点。`NSScreen` 要求主线程，所以整段丢过去执行。
-#[tauri::command]
-pub fn island_reposition(app: AppHandle) {
-    let _ = app.run_on_main_thread(|| {
-        refresh_placement();
-    });
-}
-
 /// 岛当前在这台机器上是否可用。设置面板据此显示「本机屏幕无刘海，灵动岛不启用」，
 /// 而不是让用户对着一个永远不响的开关调阈值。
 #[derive(Debug, Clone, Copy, serde::Serialize)]

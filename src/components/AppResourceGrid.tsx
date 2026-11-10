@@ -2,27 +2,19 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { CellBar } from "./CellBar";
 import { AppIcon } from "./AppIcon";
-import { Sparkline } from "./Sparkline";
-import { StackBar } from "./charts/StackBar";
 import { ChevronRightIcon } from "./icons";
-import { devAppDisk, devBundles } from "../lib/devFixture";
+import { devBundles } from "../lib/devFixture";
 import { formatBytes } from "../lib/format";
-import { appBundles, appDisk, isTauri } from "../lib/ipc";
+import { appBundles, isTauri } from "../lib/ipc";
 import { useAppIcons } from "../lib/useAppIcons";
 import {
   BUNDLE_READONLY_HINT,
-  CACHE_CLEAN_HINT,
-  DATA_READONLY_HINT,
-  diskEmpty,
-  diskTotal,
-  type AppDisk,
   type BundleMap,
   type BundleSize,
 } from "../types/appdisk";
 import { isExact, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
 import {
   connsOfPids,
-  exposureMeta,
   formatSpeed,
   netSpeedOfPids,
   type ConnStats,
@@ -167,11 +159,6 @@ export function AppResourceBoard({
   const [bundles, setBundles] = useState<BundleMap | null>(null);
   const [bundleBusy, setBundleBusy] = useState(false);
 
-  /** 每个家族的 60 s 网速走势（只存在内存里，切走 tab 由父级卸载组件自然清空） */
-  const historyRef = useRef<Map<string, number[]>>(new Map());
-  /** 上一次已入图的样本对象：rows 变化不该让同一个样本被重复 push */
-  const lastSampleRef = useRef<NetSpeedSample | null>(null);
-
   const loadBundles = useCallback(
     async (force: boolean) => {
       if (bundleBusy) return;
@@ -216,32 +203,6 @@ export function AppResourceBoard({
     () => buildRows(families, processes, ports, bundles, net),
     [families, processes, ports, bundles, net],
   );
-
-  // 网速走势：只保留最近 60 个样本（60 s）。切走 tab 组件卸载即清空，不落盘。
-  useEffect(() => {
-    if (!net || net.status !== "ok") return;
-    // rows 会随 bundles/ports 变化重算，这里按样本对象去重，避免同一秒 push 两次
-    if (lastSampleRef.current === net) return;
-    lastSampleRef.current = net;
-    for (const r of rows) {
-      const arr = historyRef.current.get(r.family.name) ?? [];
-      arr.push(r.net?.downBps ?? 0);
-      if (arr.length > 60) arr.shift();
-      historyRef.current.set(r.family.name, arr);
-    }
-  }, [net, rows]);
-
-  // 浏览器走查：没有真实采样，用一条假走势让 sparkline 的结构可见（仅 DEV + 非 Tauri）
-  useEffect(() => {
-    if (isTauri() || families.length === 0) return;
-    for (const f of families) {
-      if (historyRef.current.has(f.name)) continue;
-      historyRef.current.set(
-        f.name,
-        Array.from({ length: 30 }, (_, i) => Math.abs(Math.sin(i / 3.2)) * 240_000),
-      );
-    }
-  }, [families]);
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -711,177 +672,3 @@ function MetricRow({
     </div>
   );
 }
-
-/** 展开区：只放卡片里没有的——磁盘三层按钮、端口清单、进程 Top 3、60 s 网速走势 */
-/**
- * 卡内细节（磁盘三层 / 端口 chips / Top3 / 走势）——**D4/D6 起迁到应用详情页**。
- *
- * 这里保留导出是为了详情页直接复用：不重写一套口径，避免两处数字对不上。
- */
-export function ResourceDetail({
-  family,
-  members,
-  ports,
-  history,
-  onOpenPorts,
-  onOpenProcess,
-}: {
-  family: FamilyMem;
-  members: ProcMem[];
-  ports: PortEntry[];
-  history: number[];
-  onOpenPorts?: (port: number) => void;
-  onOpenProcess?: (pid: number) => void;
-}) {
-  const [disk, setDisk] = useState<AppDisk | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const exe = members.find((m) => m.exe)?.exe ?? null;
-  const top3 = useMemo(
-    () => [...members].sort((a, b) => totalOf(b) - totalOf(a)).slice(0, 3),
-    [members],
-  );
-
-  async function measure(force: boolean) {
-    setBusy(true);
-    setError(null);
-    try {
-      if (!isTauri()) {
-        setDisk(devAppDisk(family.name));
-        return;
-      }
-      setDisk(await appDisk(family.name, exe, force));
-    } catch (e) {
-      setError(String(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="border-t border-hairline-soft px-3 py-2.5">
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          type="button"
-          onClick={() => void measure(!!disk)}
-          disabled={busy}
-          className="rounded-md bg-white/[0.05] px-2 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
-          title="只读测量；应用越大越久，最多 4 秒/层"
-        >
-          {busy ? "测量中…" : disk ? "重新测量磁盘三层" : "测量磁盘三层"}
-        </button>
-        <span className="text-[10px] text-ink-faint">
-          本体 / 缓存 / 数据 · 不产生删除动作
-        </span>
-      </div>
-
-      {disk ? (
-        <div className="mt-2 space-y-1">
-          {/* 三层构成条（§7.6）：缓存占多大比重一眼看出；数字文本仍逐行保留（V-01） */}
-          {!diskEmpty(disk) ? (
-            <StackBar
-              height={5}
-              ariaLabel={`磁盘三层构成：本体 ${formatBytes(disk.bundle?.bytes ?? 0)}，缓存 ${formatBytes(disk.cache?.bytes ?? 0)}，数据 ${formatBytes(disk.data?.bytes ?? 0)}`}
-              segments={[
-                { key: "bundle", label: "本体", value: disk.bundle?.bytes ?? 0, tone: "accent" },
-                { key: "cache", label: "缓存", value: disk.cache?.bytes ?? 0, tone: "info" },
-                { key: "data", label: "数据", value: disk.data?.bytes ?? 0, tone: "neutral" },
-              ]}
-            />
-          ) : null}
-          {[
-            { label: "本体", leaf: disk.bundle, hint: BUNDLE_READONLY_HINT },
-            { label: "缓存", leaf: disk.cache, hint: CACHE_CLEAN_HINT },
-            { label: "数据", leaf: disk.data, hint: DATA_READONLY_HINT },
-          ].map(({ label, leaf, hint }) => (
-            <div key={label} className="flex items-baseline gap-2" title={hint}>
-              <span className="w-7 shrink-0 text-[10px] text-ink-faint">{label}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[9.5px] text-ink-faint/70">
-                {leaf ? leaf.path : "—"}
-              </span>
-              <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-ink-dim">
-                {leaf ? `${leaf.partial ? "≥ " : ""}${formatBytes(leaf.bytes)}` : "—"}
-              </span>
-            </div>
-          ))}
-          {diskEmpty(disk) ? (
-            <p className="text-[10px] text-ink-faint">{disk.note ?? "没有可归属的磁盘目录"}</p>
-          ) : (
-            <p className="text-[9.5px] leading-snug text-ink-faint">
-              合计 {formatBytes(diskTotal(disk))} · 按文件实占块统计，含 APFS 克隆共享部分，
-              不等于可释放空间
-            </p>
-          )}
-        </div>
-      ) : null}
-
-      {error ? <p className="mt-1.5 text-[10px] text-warn">{error}</p> : null}
-
-      <div className="mt-2.5 flex flex-wrap items-center gap-1.5">
-        <span className="text-[10px] text-ink-faint">监听端口</span>
-        {ports.length === 0 ? (
-          <span className="text-[10px] text-ink-faint">—</span>
-        ) : (
-          ports.map((e) => {
-            const meta = exposureMeta(e.exposure);
-            return (
-              <button
-                key={`${e.port}-${e.proto}`}
-                type="button"
-                onClick={() => onOpenPorts?.(e.port)}
-                title={`${meta.label} · ${meta.hint}；点击去「端口」tab 看持有进程`}
-                className="rounded bg-white/[0.05] px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
-              >
-                {e.port}
-                {e.exposure === "any" ? <span className="ml-0.5 text-warn">●</span> : null}
-              </button>
-            );
-          })
-        )}
-      </div>
-
-      <div className="mt-1.5 flex items-baseline gap-2">
-        <span className="shrink-0 text-[10px] text-ink-faint">进程 Top</span>
-        <span className="min-w-0 flex-1 truncate text-[10px] text-ink-dim">
-          {top3.length === 0
-            ? "—"
-            : top3.map((p) => `${p.name} ${formatBytes(totalOf(p))}`).join(" · ")}
-          {members.length > 3 ? ` · 共 ${members.length} 个` : ""}
-        </span>
-        {top3[0] ? (
-          <button
-            type="button"
-            onClick={() => onOpenProcess?.(top3[0].pid)}
-            className="shrink-0 text-[9.5px] text-accent hover:underline"
-          >
-            看明细
-          </button>
-        ) : null}
-      </div>
-
-      <div className="mt-1.5 flex items-center gap-2">
-        <span className="shrink-0 text-[10px] text-ink-faint">网速 60s</span>
-        <span className="min-w-0 flex-1">
-          {history.length >= 2 ? (
-            <Sparkline values={history} height={26} tone="accent" />
-          ) : (
-            <span className="text-[10px] text-ink-faint">采样积累中…</span>
-          )}
-        </span>
-      </div>
-
-      <p className="mt-1 text-[9.5px] leading-snug text-ink-faint">
-        单核 CPU 口径可超过 100%；连接多不等于流量大（本机没有 per-process 字节 API，
-        网速来自 nettop 差分）。
-      </p>
-    </div>
-  );
-}
-
-/**
- * 面板用的轻量版已随 M16 撤除：菜单栏面板不再展示应用卡，改为统计行 +
- * 一行「查看全部 N 个应用」入口。`ResourceCard` 的 `dense` 档位仍保留，
- * 供将来需要单列紧凑卡时复用。
- */
-

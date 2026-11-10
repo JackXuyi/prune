@@ -57,9 +57,6 @@ pub fn island_ready(_app: AppHandle) -> bool {
 }
 
 #[tauri::command]
-pub fn island_reposition(_app: AppHandle) {}
-
-#[tauri::command]
 pub fn island_settings_get(_app: AppHandle) -> IslandSettings {
     IslandSettings {
         enabled: false,
