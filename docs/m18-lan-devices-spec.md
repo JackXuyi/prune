@@ -514,9 +514,13 @@ export interface LanSnapshot {
 Tauri command：
 
 ```rust
-#[tauri::command] pub async fn lan_snapshot() -> Result<LanSnapshot, String>;   // 读缓存，不扫
+#[tauri::command] pub async fn lan_snapshot(state) -> Result<Option<LanSnapshot>, String>;
+// 实现修订：返回 Option 而非空快照——「没扫过」与「扫了没结果」是两种状态，
+// 前端空态文案据此区分；null = 还没扫过
 #[tauri::command] pub async fn lan_scan(app: AppHandle, state: State<'_, Arc<LanState>>)
     -> Result<LanSnapshot, String>;                                            // 全量一轮
+#[tauri::command] pub fn lan_capability() -> serde_json::Value;               // { scan: true }
+// capability 与 net_diag_capability 同型：前端据后端显隐，不硬编码平台
 ```
 
 - `lan_scan` 用 `tauri::async_runtime::spawn_blocking` 包住（扫描 ≤ 7 s，不能堵 async 运行时，对齐 `net_diag_run`）。

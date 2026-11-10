@@ -987,22 +987,31 @@ pub const SCAN_CAP: usize = 1024;
 ///
 /// 返回实际探测的地址数。零 unsafe、零提权（spec 决策 1：两端统一放弃 ICMP）。
 pub fn probe_sweep(targets: &[Ipv4Addr], concurrency: usize, timeout_ms: u64) -> usize {
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    probe_sweep_progressing(targets, concurrency, timeout_ms, &done)
+}
+
+/// [`probe_sweep`] 的进度版：每完成一个地址 `done` 原子 +1（GUI 进度条轮询它）。
+pub fn probe_sweep_progressing(
+    targets: &[Ipv4Addr],
+    concurrency: usize,
+    timeout_ms: u64,
+    done: &std::sync::atomic::AtomicUsize,
+) -> usize {
     use std::net::SocketAddr;
-    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::atomic::Ordering;
     use std::sync::mpsc;
 
     if targets.is_empty() || concurrency == 0 {
         return 0;
     }
     let timeout = std::time::Duration::from_millis(timeout_ms);
-    let done = AtomicUsize::new(0);
     let (tx, rx) = mpsc::channel::<Ipv4Addr>();
     // std 的 Receiver 不是 Sync，共享引用要过 Mutex（crossbeam 才有并发 Receiver）
     let rx = std::sync::Mutex::new(rx);
     std::thread::scope(|s| {
         for _ in 0..concurrency.min(targets.len()) {
             let rx = &rx;
-            let done = &done;
             s.spawn(move || {
                 // 端口 1（tcpmux）：不在任何常见监听清单里，已开机设备几乎必然回 RST
                 // 立即返回，未开机设备在 ARP 超时后失败——两种结果都达成了目的。
@@ -1117,6 +1126,19 @@ pub fn snapshot(at: i64, exposed: &[u16]) -> LanSnapshot {
 /// `merge` 的在线判定自动吃掉探测成果：全段地址被内核探测过后，邻居表里
 /// Incomplete（无响应）与 Reachable/Stale（有响应）就是「在不在」的判定面。
 pub fn snapshot_scan(at: i64, exposed: &[u16]) -> LanSnapshot {
+    snapshot_scan_cb(at, exposed, &|_, _, _| {})
+}
+
+/// [`snapshot_scan`] 的进度版（spec §10 的 `lan://progress` 事件源）。
+///
+/// `progress(phase, done, total)` 在阶段切换与探测期间被调用：`probe` 阶段由
+/// 250ms 汇报线程轮询原子计数器（不阻塞探测线程），其余阶段各推一次终值。
+/// phase ∈ `neighbors` / `probe` / `discover` / `merge`——与 spec §10 契约一致。
+pub fn snapshot_scan_cb(
+    at: i64,
+    exposed: &[u16],
+    progress: &(dyn Fn(&str, usize, usize) + Sync),
+) -> LanSnapshot {
     let start = std::time::Instant::now();
     let Some(scope) = local_scope() else {
         let note = if cfg!(target_os = "macos") {
@@ -1140,12 +1162,34 @@ pub fn snapshot_scan(at: i64, exposed: &[u16]) -> LanSnapshot {
     // 收响应），SSDP 独立线程 3s 自收——探测与邻居回读都在 30s 窗口内跑完，
     // 总耗时 ≈ 窗口本身而不是各步之和
     let mdns = mdns_start();
+    progress("discover", 0, 1);
     let ssdp = std::thread::spawn(ssdp_discover);
 
     // expand_cidr 已排除网络/广播地址（C1 单测锁定），探测目标直接可用
     let (targets, total) = expand_cidr(Ipv4Addr::from(network), scope.prefix, SCAN_CAP);
-    let scanned = probe_sweep(&targets, PROBE_CONCURRENCY, PROBE_TIMEOUT_MS);
+    let done = std::sync::atomic::AtomicUsize::new(0);
+    // probe 汇报线程：每 250ms 推一次（进度条足够平滑，事件量可忽略）；
+    // stop 标志收口——std 的 JoinHandle 没有 abort，靠标志退出（≤250ms 延迟）
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let scanned = {
+        let done = &done;
+        let stop = &stop;
+        let n = targets.len();
+        std::thread::scope(|s| {
+            s.spawn(move || {
+                while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                    progress("probe", done.load(std::sync::atomic::Ordering::Relaxed), n);
+                    std::thread::sleep(std::time::Duration::from_millis(250));
+                }
+            });
+            let n = probe_sweep_progressing(&targets, PROBE_CONCURRENCY, PROBE_TIMEOUT_MS, done);
+            stop.store(true, std::sync::atomic::Ordering::Relaxed);
+            n
+        })
+    };
+    progress("probe", scanned, targets.len());
 
+    progress("neighbors", 1, 1);
     let nbrs = neighbors(); // 此时 ARP 缓存已被 probe_sweep 填满
     let peers = established_peers();
     let mdns_records = mdns.map(MdnsSession::drain).unwrap_or_default();
@@ -1159,6 +1203,7 @@ pub fn snapshot_scan(at: i64, exposed: &[u16]) -> LanSnapshot {
         Some(scope.addr),
         Some((Ipv4Addr::from(network), scope.prefix)),
     );
+    progress("merge", devices.len(), devices.len());
 
     // 探测数不进 notes：scanned/total 字段已承载（CLI 头部、GUI 卡片都能取到），
     // notes 只放异常与口径解释

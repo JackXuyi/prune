@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 mod commands;
+mod lan;
 mod net_diag;
 mod net_sampler;
 mod port_sampler;
@@ -83,6 +84,9 @@ pub fn run() {
             net_diag::net_diag_capability,
             net_diag::net_diag_copy_report,
             net_diag::clipboard_write,
+            lan::lan_snapshot,
+            lan::lan_scan,
+            lan::lan_capability,
             island::island_set_expanded,
             island::island_hide,
             island::island_ready,
@@ -127,6 +131,8 @@ pub fn run() {
             app.manage(Arc::new(net_sampler::TotalNetState::new(store)));
             // 网络诊断（docs/net-diag-plan.md）：按需短任务，只存最近一轮结果供报告导出
             app.manage(net_diag::NetDiagState::new());
+            // 局域网设备（docs/m18-lan-devices-spec.md §10）：同上，外加 scanning 门
+            app.manage(lan::LanState::new());
             app.manage(Arc::new(updater::UpdateState::new()));
 
             // 启动静默检查更新（延迟 5 s，发现新版才广播事件，否则沉默）

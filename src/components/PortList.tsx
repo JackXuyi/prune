@@ -5,6 +5,7 @@ import { Badge } from "./primitives";
 import { StackBar } from "./charts/StackBar";
 import { DotMatrix } from "./charts/DotMatrix";
 import { EmptyState } from "./EmptyArt";
+import { LanBoard } from "./LanBoard";
 import { formatClock } from "../lib/format";
 import { usePortStore } from "../stores/portStore";
 import {
@@ -37,6 +38,8 @@ export function PortBoard({
   const focusQuery = usePortStore((s) => s.focusQuery);
   const clearFocus = usePortStore((s) => s.clearFocus);
   const [query, setQuery] = useState("");
+  // M18-C5：端口 / 局域网 分段（spec §11——进分段不扫描）
+  const [page, setPage] = useState<PortSubPage>("ports");
   // ⌘F 聚焦搜索框（UX v3 §5.5）：主窗口全局派发 prune:focus-search
   const searchRef = useRef<HTMLInputElement>(null);
   useEffect(() => {
@@ -85,23 +88,34 @@ export function PortBoard({
 
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      <div className="flex items-baseline justify-between gap-4">
+      <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold tracking-tight">端口占用</h1>
+          <h1 className="text-[15px] font-semibold tracking-tight">端口</h1>
           <p className="mt-0.5 text-[11px] text-ink-faint">
-            按端口反查持有进程 · 关注层是开发服务与数据库端口 · 内部 IPC 默认折叠
+            {page === "ports"
+              ? "按端口反查持有进程 · 关注层是开发服务与数据库端口 · 内部 IPC 默认折叠"
+              : "同网段设备与暴露面 · 手动触发，进入分段不扫描（首次扫描 macOS 会请求本地网络授权）"}
           </p>
         </div>
-        <input
-          ref={searchRef}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="端口 / 进程 / 项目"
-          spellCheck={false}
-          className="w-52 shrink-0 rounded-md border border-hairline bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
-        />
+        <div className="flex shrink-0 items-center gap-2">
+          {page === "ports" ? (
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="端口 / 进程 / 项目"
+              spellCheck={false}
+              className="w-44 rounded-md border border-hairline bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
+            />
+          ) : null}
+          <PortSubTabs page={page} onChange={setPage} />
+        </div>
       </div>
 
+      {page === "lan" ? (
+        <LanBoard />
+      ) : (
+      <>
       {error ? (
         <p className="mt-3 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">{error}</p>
       ) : null}
@@ -245,6 +259,47 @@ export function PortBoard({
           </p>
         </>
       )}
+      </>
+      )}
+    </div>
+  );
+}
+
+/** 端口 / 局域网 两分段（spec §11：局域网挂 ports tab 内，不新增一级导航） */
+type PortSubPage = "ports" | "lan";
+
+function PortSubTabs({
+  page,
+  onChange,
+}: {
+  page: PortSubPage;
+  onChange: (p: PortSubPage) => void;
+}) {
+  const items: { key: PortSubPage; label: string }[] = [
+    { key: "ports", label: "端口" },
+    { key: "lan", label: "局域网" },
+  ];
+  return (
+    <div className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5" role="tablist" aria-label="端口子页">
+      {items.map((it) => {
+        const active = page === it.key;
+        return (
+          <button
+            key={it.key}
+            type="button"
+            role="tab"
+            aria-selected={active}
+            onClick={() => onChange(it.key)}
+            className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
+              active
+                ? "bg-white/[0.08] font-medium text-ink"
+                : "text-ink-faint hover:text-ink-dim"
+            }`}
+          >
+            {it.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

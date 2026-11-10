@@ -2,6 +2,7 @@
 import { invoke } from "@tauri-apps/api/core";
 
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
+import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
@@ -247,4 +248,16 @@ export function netDiagCapability(): Promise<NetDiagCapability> {
 /** 生成 Markdown 诊断报告并写入系统剪贴板，返回字符数（Rust 侧原生写，绕开 WebView 剪贴板限制） */
 export function netDiagCopyReport(): Promise<number> {
   return invoke<number>("net_diag_copy_report");
+}
+
+// ---- M18：局域网设备（docs/m18-lan-devices-spec.md §10）----
+
+/** 读最近一轮局域网快照缓存，不扫描（进分段时调，不会触发权限弹窗）。null = 还没扫过 */
+export function lanSnapshot(): Promise<LanSnapshot | null> {
+  return invoke<LanSnapshot | null>("lan_snapshot");
+}
+
+/** 全段扫描一轮（探测 ~5s + mDNS 30s 窗口），进度走 lan://progress 事件 */
+export function lanScan(): Promise<LanSnapshot> {
+  return invoke<LanSnapshot>("lan_scan");
 }
