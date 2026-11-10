@@ -68,11 +68,14 @@ pub fn sanitize(path: &str) -> Option<String> {
     Some(p.to_string())
 }
 
-/// 家目录：macOS/Linux 是 `HOME`，Windows 是 `USERPROFILE`。
+/// 家目录：统一走 [`crate::paths::home_dir`]（Windows 上 USERPROFILE 优先，
+/// 避免被 Git for Windows / MSYS 改写的 HOME 指错）。
+///
+/// 此前这里自己读 env 且 HOME 优先，与清理白名单用的 paths 口径相反：
+/// Windows 上「项目归属」和「白名单根」可能不是同一个目录，sanitize 的
+/// ~/Library 拒绝判断也会用错前缀。项目归属必须与白名单同源。
 pub fn home_dir() -> Option<String> {
-    std::env::var("HOME")
-        .or_else(|_| std::env::var("USERPROFILE"))
-        .ok()
+    crate::paths::home_dir().map(|p| p.to_string_lossy().into_owned())
 }
 
 /// 展示名：优先「父/子」两段，父目录是容器目录时只取最后一段。
