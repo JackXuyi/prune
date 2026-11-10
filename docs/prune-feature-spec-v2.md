@@ -275,7 +275,7 @@ Portlivo 的菜单栏首屏是服务列表；iStat/Stats/MPM 是内存百分比�
 | CLI | `prune`（手写 arg 解析，单二进制双形态） | GUI 与 CLI 共享 `prune-core`；另含 MCP stdio server |
 | 更新 | tauri-plugin-updater（GitHub 源，minisign 签名） | |
 | 自启 | 无（Accessory 应用，用户手动启动） | 原 SMAppService 方案随迁移撤除 |
-| 隐私 | 零埋点、零遥测；网络活动仅两类：更新检查 + 网络诊断手动探测（DNS / 网关 / 出口 TCP、networkQuality） | 营销资产；诊断不常驻、不落库、不上报 |
+| 隐私 | 零埋点、零遥测；网络活动仅三类：更新检查 + 网络诊断手动探测（DNS / 网关 / 出口 TCP、networkQuality）+ 局域网设备扫描（手动触发，TCP connect + mDNS/SSDP 组播；扫描目标仅限本机所在网段，不向公网发包） | 营销资产；诊断与扫描均不常驻、不落库、不上报（局域网快照仅落本机缓存 lan-snapshot.json） |
 
 **沿用 Portlivo 的可复用资产**：IA 三段式（菜单栏/主窗口/检视器）、进程画像（PPID 上溯）、键盘优先 + ⌘K。
 **明确不适用**：HTTP 健康探针、实时日志、QR 码、公网隧道。
