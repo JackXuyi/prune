@@ -735,10 +735,109 @@ pub fn established_peers() -> Vec<(u16, Ipv4Addr)> {
 
 // ---------------------------------------------------------------- 编排
 
-/// C2 一轮快照：邻居表 + 网段 + inbound（**无主动探测、无服务发现**——C3/C4 接入）。
+/// 探测参数（spec §6，写死不放配置——数值来自 ARP 往返的量级推导）。
+/// 并发 32 而非 256：两端内核对同网卡的 ARP 请求都有队列限流，打太猛反而更慢。
+pub const PROBE_CONCURRENCY: usize = 32;
+/// 200 ms 足够：探测的真实作用是让内核为每个目标完成一次 ARP 解析（往返 < 5 ms），
+/// connect 本身成功与否不影响判定——判定依据是探测后的邻居表状态。
+pub const PROBE_TIMEOUT_MS: u64 = 200;
+/// 全段扫描的地址数上限（spec §6 表：/21 以上截断并在 notes 说明，绝不静默截断）。
+pub const SCAN_CAP: usize = 1024;
+
+/// 对每个目标发一次 TCP connect（端口不重要，选一个大概率立即收到 RST 的）。
+///
+/// **结果被刻意丢弃**：这个函数的产物不是「谁开着 80 端口」，而是内核 ARP 缓存——
+/// connect 会触发 ARP 解析，探测完立刻回读邻居表（[`neighbors`]）就能拿到 MAC。
+/// 成功 connect 的目标反而说明端口开放，那属于端口域的事，不在这里归因。
+///
+/// 返回实际探测的地址数。零 unsafe、零提权（spec 决策 1：两端统一放弃 ICMP）。
+pub fn probe_sweep(targets: &[Ipv4Addr], concurrency: usize, timeout_ms: u64) -> usize {
+    use std::net::SocketAddr;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::mpsc;
+
+    if targets.is_empty() || concurrency == 0 {
+        return 0;
+    }
+    let timeout = std::time::Duration::from_millis(timeout_ms);
+    let done = AtomicUsize::new(0);
+    let (tx, rx) = mpsc::channel::<Ipv4Addr>();
+    // std 的 Receiver 不是 Sync，共享引用要过 Mutex（crossbeam 才有并发 Receiver）
+    let rx = std::sync::Mutex::new(rx);
+    std::thread::scope(|s| {
+        for _ in 0..concurrency.min(targets.len()) {
+            let rx = &rx;
+            let done = &done;
+            s.spawn(move || {
+                // 端口 1（tcpmux）：不在任何常见监听清单里，已开机设备几乎必然回 RST
+                // 立即返回，未开机设备在 ARP 超时后失败——两种结果都达成了目的。
+                // 注意：guard 必须在 connect 前释放——`while let Ok(..) = rx.lock()..recv()`
+                // 的临时 guard 在 edition 2021 会活到循环体结束，把整个扫描串行化
+                loop {
+                    let Ok(ip) = rx.lock().unwrap().recv() else {
+                        break;
+                    };
+                    let addr = SocketAddr::from((ip, 1));
+                    let _ = std::net::TcpStream::connect_timeout(&addr, timeout);
+                    done.fetch_add(1, Ordering::Relaxed);
+                }
+            });
+        }
+        for t in targets {
+            if tx.send(*t).is_err() {
+                break;
+            }
+        }
+        drop(tx);
+    });
+    done.load(Ordering::Relaxed)
+}
+
+/// 截断说明：目标数被 cap 截断时给一句诚实的话，没截断返回 None。
+pub fn scan_truncation_note(targets: usize, total: u32) -> Option<String> {
+    (total as usize > targets)
+        .then(|| format!("网段过大，本轮只扫前 {targets} 个地址（共 {total}），列表可能不全。"))
+}
+
+/// `at` / `exposed` / `scope` / 合并结果 → 快照。`snapshot` 与 `snapshot_scan` 共用。
+/// （`gateway` 不进参：is_gateway 已由 merge 算进每个设备。）
+#[allow(clippy::too_many_arguments)]
+fn finalize_snapshot(
+    at: i64,
+    exposed: &[u16],
+    scope: LanScope,
+    scanned: usize,
+    total: u32,
+    devices: Vec<LanDevice>,
+    mut notes: Vec<String>,
+    start: std::time::Instant,
+) -> LanSnapshot {
+    let network = u32::from(scope.addr)
+        & if scope.prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - scope.prefix as u32)
+        };
+    if devices.is_empty() {
+        notes.push("邻居表为空：本机最近没有与网段内设备通信过。".to_string());
+    }
+    LanSnapshot {
+        at,
+        iface: Some(scope.iface),
+        cidr: Some(format!("{}/{}", Ipv4Addr::from(network), scope.prefix)),
+        scanned: scanned as u32,
+        total,
+        devices,
+        exposed_ports: exposed.to_vec(),
+        notes,
+        scan_ms: start.elapsed().as_millis() as u64,
+    }
+}
+
+/// C2 一轮快照：邻居表 + 网段 + inbound（**无主动探测、无服务发现**）。
 ///
 /// `exposed` 由调用方传入（CLI 现扫 ports、GUI 传缓存快照），本函数不重算端口域。
-/// Windows 上在 C6 之前返回 [`LanSnapshot::unavailable`]。
+/// 全段探测用 [`snapshot_scan`]；Windows 上在 C6 之前两者都返回 [`LanSnapshot::unavailable`]。
 pub fn snapshot(at: i64, exposed: &[u16]) -> LanSnapshot {
     let start = std::time::Instant::now();
     let Some(scope) = local_scope() else {
@@ -770,25 +869,61 @@ pub fn snapshot(at: i64, exposed: &[u16]) -> LanSnapshot {
         Some((Ipv4Addr::from(network), scope.prefix)),
     );
 
-    let mut notes = vec![
-        // 口径诚实：C2 的列表只来自邻居表，「最近通信过」≠「当前在线的全部设备」
-        "本轮未主动探测：列表来自系统邻居表（最近通信过的设备），完整探测随 C3 接入。".to_string(),
+    let notes = vec![
+        // 口径诚实：这个模式只看邻居表，「最近通信过」≠「当前在线的全部设备」
+        "本轮未主动探测：列表来自系统邻居表（最近通信过的设备），全段探测用 --scan。".to_string(),
     ];
-    if devices.is_empty() {
-        notes.push("邻居表为空：本机最近没有与网段内设备通信过。".to_string());
-    }
+    finalize_snapshot(at, exposed, scope, 0, 0, devices, notes, start)
+}
 
-    LanSnapshot {
-        at,
-        iface: Some(scope.iface),
-        cidr: Some(format!("{}/{}", Ipv4Addr::from(network), scope.prefix)),
-        scanned: 0,
-        total: 0,
-        devices,
-        exposed_ports: exposed.to_vec(),
-        notes,
-        scan_ms: start.elapsed().as_millis() as u64,
+/// C3 全段探测：expand_cidr → probe_sweep（催熟 ARP）→ 回读邻居表 → merge。
+///
+/// 顺序是 spec §6 的算法本体；步骤 5（mDNS/SSDP）随 C4 插进邻居回读之前。
+/// `merge` 的在线判定自动吃掉探测成果：全段地址被内核探测过后，邻居表里
+/// Incomplete（无响应）与 Reachable/Stale（有响应）就是「在不在」的判定面。
+pub fn snapshot_scan(at: i64, exposed: &[u16]) -> LanSnapshot {
+    let start = std::time::Instant::now();
+    let Some(scope) = local_scope() else {
+        let note = if cfg!(target_os = "macos") {
+            "读不到默认网卡的网段：未联网，或只有 IPv6。"
+        } else {
+            "当前平台尚未接入（M18-C6）：Windows 数据源待实现。"
+        };
+        return LanSnapshot::unavailable(note);
+    };
+
+    let gateway =
+        crate::net::diag::default_gateway().and_then(|g| g.gateway.parse::<Ipv4Addr>().ok());
+    let network = u32::from(scope.addr)
+        & if scope.prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - scope.prefix as u32)
+        };
+
+    // expand_cidr 已排除网络/广播地址（C1 单测锁定），探测目标直接可用
+    let (targets, total) = expand_cidr(Ipv4Addr::from(network), scope.prefix, SCAN_CAP);
+    let scanned = probe_sweep(&targets, PROBE_CONCURRENCY, PROBE_TIMEOUT_MS);
+
+    let nbrs = neighbors(); // 此时 ARP 缓存已被 probe_sweep 填满
+    let peers = established_peers();
+    let devices = merge(
+        &nbrs,
+        &[],
+        &[],
+        &peers,
+        gateway,
+        Some(scope.addr),
+        Some((Ipv4Addr::from(network), scope.prefix)),
+    );
+
+    // 探测数不进 notes：scanned/total 字段已承载（CLI 头部、GUI 卡片都能取到），
+    // notes 只放异常与口径解释
+    let mut notes = Vec::new();
+    if let Some(note) = scan_truncation_note(targets.len(), total) {
+        notes.push(note);
     }
+    finalize_snapshot(at, exposed, scope, scanned, total, devices, notes, start)
 }
 
 // ---------------------------------------------------------------- 测试
@@ -1087,6 +1222,62 @@ mod tests {
     }
 
     // ---- C2：merge 与 lsof 对端解析（fixture 均来自本机实测）----
+
+    #[test]
+    fn probe_sweep_counts_every_target() {
+        // loopback 上 connect_timeout 立即失败/成功，不依赖外网；目的只是计数
+        let targets = vec![
+            ip("127.0.0.1"),
+            ip("127.0.0.2"),
+            ip("127.0.0.3"),
+            ip("127.0.0.4"),
+        ];
+        assert_eq!(probe_sweep(&targets, 4, 200), 4);
+        // 并发大于目标数也不多算
+        assert_eq!(probe_sweep(&targets, 32, 200), 4);
+    }
+
+    #[test]
+    fn probe_sweep_empty_and_zero_concurrency() {
+        assert_eq!(probe_sweep(&[], 32, 200), 0);
+        assert_eq!(probe_sweep(&[ip("127.0.0.1")], 0, 200), 0);
+    }
+
+    #[test]
+    fn probe_constants_match_spec() {
+        // spec §6 的三个数值是量级推导的产物，改任何一个都要同步 spec
+        assert_eq!(PROBE_CONCURRENCY, 32);
+        assert_eq!(PROBE_TIMEOUT_MS, 200);
+        assert_eq!(SCAN_CAP, 1024);
+    }
+
+    #[test]
+    fn scan_truncation_note_only_when_capped() {
+        // /23 全部主机 510 < 1024：不截断
+        let (targets, total) = expand_cidr(ip("192.168.0.0"), 23, SCAN_CAP);
+        assert_eq!(targets.len(), 510);
+        assert_eq!(total, 510);
+        assert!(scan_truncation_note(targets.len(), total).is_none());
+        // /21 主机 2046 > cap：截断并说明
+        let (targets, total) = expand_cidr(ip("10.0.0.0"), 21, SCAN_CAP);
+        assert_eq!(targets.len(), 1024);
+        assert_eq!(total, 2046);
+        let note = scan_truncation_note(targets.len(), total).unwrap();
+        assert!(note.contains("1024") && note.contains("2046"), "{note}");
+        // 口径纪律：total 不因截断缩水（UI 要显示 N/M）
+        assert_eq!(total, 2046);
+    }
+
+    #[test]
+    fn probe_targets_exlude_edges_and_gateway_scope() {
+        // expand_cidr 产物必须全部通过 is_probe_candidate（探测目标与 merge 过滤同口径）
+        let (targets, _) = expand_cidr(ip("192.168.0.0"), 23, SCAN_CAP);
+        assert!(targets
+            .iter()
+            .all(|&t| is_probe_candidate(t, ip("192.168.0.0"), 23)));
+        assert!(!targets.contains(&ip("192.168.0.0")));
+        assert!(!targets.contains(&ip("192.168.1.255")));
+    }
 
     /// 用实测 ARP_SAMPLE + 实测本机网段 /23 做 merge 的公共输入
     fn merge_sample(

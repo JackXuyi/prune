@@ -48,8 +48,10 @@ pub enum Command {
         name: String,
         json: bool,
     },
-    /// `prune lan [--json]`：局域网设备与暴露面（M18-C2，只读邻居表，不发包）
+    /// `prune lan [--scan] [--json]`：局域网设备与暴露面（M18，默认只读邻居表）
     Lan {
+        /// 全段 TCP connect 探测（催熟 ARP 后回读邻居表，/23 约 6s）
+        scan: bool,
         json: bool,
     },
     Mcp,
@@ -170,13 +172,15 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         }
         "lan" => {
             let mut json = false;
+            let mut scan = false;
             for a in it {
                 match a.as_str() {
                     "--json" => json = true,
+                    "--scan" => scan = true,
                     other => return Err(format!("lan 不认识参数 {other:?}\n{}", usage())),
                 }
             }
-            Ok(Command::Lan { json })
+            Ok(Command::Lan { scan, json })
         }
         other => Err(format!("不认识子命令 {other:?}\n{}", usage())),
     }
@@ -198,7 +202,7 @@ fn usage() -> String {
   prune mem --watch [--interval N]    持续采样并输出泄漏嫌疑判定（默认 10s）
   prune port [PORT] [--json] [--all]  谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
   prune app <家族名> [--json]         一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
-  prune lan [--json]                  局域网设备与暴露面（只读邻居表，不发探测包）
+  prune lan [--scan] [--json]         局域网设备与暴露面（默认只读邻居表；--scan 全段探测）
   prune mcp                           启动 MCP stdio server（AI Agent 查询入口）
   prune --version | --help"
         .into()
@@ -231,7 +235,7 @@ fn main() {
         },
         Command::Port { port, json, all } => cmd_port(port, json, all),
         Command::App { name, json } => cmd_app(&name, json),
-        Command::Lan { json } => cmd_lan(json),
+        Command::Lan { scan, json } => cmd_lan(scan, json),
         Command::Mcp => cmd_mcp(),
     };
     std::process::exit(code);
@@ -765,9 +769,10 @@ fn total_bytes(p: &mem::ProcMem) -> u64 {
     p.footprint.unwrap_or(p.rss)
 }
 
-/// `prune lan`（M18-C2）：只读邻居表 + 暴露面，**不发任何探测包**——
-/// 默认行为必须无副作用（与 reclaim 默认 dry-run 同一原则）。`--scan` 随 C3 接入。
-fn cmd_lan(json: bool) -> i32 {
+/// `prune lan`（M18）：默认只读邻居表 + 暴露面，**不发任何探测包**——
+/// 默认行为必须无副作用（与 reclaim 默认 dry-run 同一原则）；
+/// `--scan` 全段 TCP connect 探测（催熟 ARP 后回读邻居表）。
+fn cmd_lan(scan: bool, json: bool) -> i32 {
     // 暴露面：复用 ports::scan 的 BindScope::Any 口径，不重算（spec §10）
     let port_snap = net::ports::scan(None);
     let exposed: Vec<u16> = port_snap
@@ -781,7 +786,11 @@ fn cmd_lan(json: bool) -> i32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let snap = net::lan::snapshot(at, &exposed);
+    let snap = if scan {
+        net::lan::snapshot_scan(at, &exposed)
+    } else {
+        net::lan::snapshot(at, &exposed)
+    };
 
     if json {
         println!("{}", serde_json::to_string_pretty(&snap).unwrap());
@@ -795,6 +804,9 @@ fn cmd_lan(json: bool) -> i32 {
         snap.devices.len(),
         snap.scan_ms as f64 / 1000.0
     );
+    if snap.scanned > 0 || snap.total > 0 {
+        println!("  本轮探测 {} / {} 个地址", snap.scanned, snap.total);
+    }
     if snap.exposed_ports.is_empty() {
         println!("  我对同网段开放 0 个端口");
     } else {
