@@ -248,10 +248,14 @@ mod tests {
         assert_eq!(sanitize("/System/Library/CoreServices"), None);
         assert_eq!(sanitize("/private/var/db"), None);
         assert_eq!(sanitize("relative/path"), None);
-        assert_eq!(
-            sanitize("/Users/xuyi/Library/Containers/com.tencent.xinWeChat"),
-            None
-        );
+        // ~/Library/... （App Sandbox 容器、缓存、日志）：用真实 home 动态拼，
+        // 不写死作者机器的 /Users/xuyi——CI runner 的 HOME 不是这个
+        if let Some(home) = home_dir() {
+            assert_eq!(
+                sanitize(&format!("{home}/Library/Containers/com.tencent.xinWeChat")),
+                None
+            );
+        }
     }
 
     #[test]

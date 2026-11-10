@@ -255,7 +255,10 @@ mod tests {
         assert_eq!(a.totals, b.totals, "totals 必须一致");
     }
 
+    /// 增量 vs 全量一致性。用例构造的是 Yarn（MacOnly）白名单布局，
+    /// Linux 上 yarn 组为空，断言不成立——只在 macOS 上跑。
     #[test]
+    #[cfg(target_os = "macos")]
     fn incremental_matches_full_after_changes() {
         let home = tmp("match");
         seed_home(&home);
@@ -328,7 +331,9 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// 根组移除后增量落盘。同样依赖 Yarn（MacOnly）白名单——只在 macOS 上跑。
     #[test]
+    #[cfg(target_os = "macos")]
     fn removed_root_group_dropped_incrementally() {
         let home = tmp("dropped");
         seed_home(&home);

@@ -494,8 +494,11 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
-    /// 报告过期的条目（已消失）应跳过，不得整批拒绝；其余条目正常清理
+    /// 报告过期的条目（已消失）应跳过，不得整批拒绝；其余条目正常清理。
+    /// Yarn 白名单条目是 MacOnly——Linux 上该路径本来就不在白名单，
+    /// NotWhitelisted 是正确行为，所以本用例只在 macOS 上跑。
     #[test]
+    #[cfg(target_os = "macos")]
     fn execute_skips_vanished_items() {
         let home = temp_home("vanished");
         let cache = home.join("Library/Caches/Yarn/v6");
@@ -583,7 +586,10 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// L4 / 未确认 L3 拒绝 + 熔断。依赖 Yarn（MacOnly）白名单条目，
+    /// Linux 上 NotWhitelisted 先于 level 判定，语义不同——只在 macOS 上跑。
     #[test]
+    #[cfg(target_os = "macos")]
     fn execute_rejects_l4_and_unconfirmed_l3_and_breaker() {
         let home = temp_home("guards");
         let cache = home.join("Library/Caches/Yarn/v6/npm-x-linux-x64");
