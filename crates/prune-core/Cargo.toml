@@ -13,6 +13,10 @@ serde_json = "1.0.154"
 sysinfo = "0.39.6"
 trash = "5"
 
+# M18-C4：局域网服务发现。纯 Rust 实现（自带 daemon 线程 + flume 通道），
+# 不依赖 Bonjour/Avahi，也不需要任何系统授权；固定版本（0.21.4 编译验证过）
+mdns-sd = "=0.21.4"
+
 # W2：Windows 系统调用（GlobalMemoryStatusEx / GetProcessMemoryInfo）。
 # 用官方绑定而不是手写 extern：PROCESS_MEMORY_COUNTERS 一旦结构布局写错，
 # 读出来是垃圾数值，而这种错误在 macOS 上永远测不出来。

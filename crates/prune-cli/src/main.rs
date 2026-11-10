@@ -787,6 +787,13 @@ fn cmd_lan(scan: bool, json: bool) -> i32 {
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
     let snap = if scan {
+        // 30s mDNS 窗口期间终端要有心跳，否则像卡死（stderr：stdout 保持纯输出）
+        eprintln!(
+            "全段扫描中：TCP connect {} 地址 + mDNS（{}s 窗口）+ SSDP（{}s）…",
+            net::lan::SCAN_CAP,
+            net::lan::MDNS_WINDOW_SECS,
+            net::lan::SSDP_WINDOW_SECS
+        );
         net::lan::snapshot_scan(at, &exposed)
     } else {
         net::lan::snapshot(at, &exposed)

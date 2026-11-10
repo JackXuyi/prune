@@ -373,6 +373,73 @@ pub fn is_randomized_mac(bytes: &[u8; 6]) -> bool {
     bytes[0] & 0x02 != 0
 }
 
+/// OUI 厂商表（M18-C4，`include_str!` 编进二进制，零运行时开销）。
+///
+/// 数据源：Wireshark `manuf`（www.wireshark.org/download/automated/data/manuf），
+/// 按「常见消费电子 / 网络设备厂商」关键词过滤（Apple/Huawei/TP-Link/Hikvision/
+/// Espressif/Proxmox 等 ~120 个品牌），按 OUI 升序预排。**比 spec 估算的 600 行大
+/// （实际 1.2 万行 / 240KB）**：仅华为一家就有 2099 个 OUI，截断会让同厂商的
+/// 冷门网卡漏识别；二分查找代价 O(log n) 不受影响。
+const OUI_CSV: &str = include_str!("oui.csv");
+
+fn oui_table() -> &'static [(&'static str, &'static str)] {
+    static TABLE: std::sync::OnceLock<Vec<(&'static str, &'static str)>> =
+        std::sync::OnceLock::new();
+    TABLE.get_or_init(|| OUI_CSV.lines().filter_map(|l| l.split_once(',')).collect())
+}
+
+/// MAC 前 3 字节 → 厂商名。随机化 MAC 在这里直接返回 `None`（spec §9 第 1 条：
+/// 查出来也是错的），查表失败同样 `None`——口径纪律：查不到就不填，不冒充「未知」。
+pub fn lookup_vendor(mac: &[u8; 6]) -> Option<&'static str> {
+    if is_randomized_mac(mac) {
+        return None;
+    }
+    let key = format!("{:02X}{:02X}{:02X}", mac[0], mac[1], mac[2]);
+    oui_table()
+        .binary_search_by(|(oui, _)| (*oui).cmp(key.as_str()))
+        .ok()
+        .and_then(|i| oui_table().get(i))
+        .map(|(_, name)| *name)
+}
+
+// ---------------------------------------------------------------- 纯函数：服务发现解析
+
+/// mDNS 服务类型归一化：`"_airplay._tcp.local."` → `"_airplay._tcp"`。
+///
+/// mDNS 的类型字段带 `.local.` 后缀（RFC 6762），kind_from_evidence 的规则表
+/// 写的是裸类型名，这里剥掉；没有 `.local` 的输入原样返回。
+pub fn normalize_service_type(ty: &str) -> String {
+    let s = ty.strip_suffix('.').unwrap_or(ty);
+    s.strip_suffix(".local").unwrap_or(s).to_string()
+}
+
+/// mDNS 主机名归一化：`"Apple-TV-3.local."` → `"Apple-TV-3.local"`（只剥尾点）。
+/// 保留 `.local`：显示层常要它，kind_from_evidence 用 contains 也不受影响。
+pub fn normalize_hostname(host: &str) -> String {
+    host.strip_suffix('.').unwrap_or(host).to_string()
+}
+
+/// 解析一条 SSDP 响应里的 `ST` 头 → 记录。大小写不敏感（一些设备回 `st:`）。
+///
+/// **刻意不解析 `LOCATION`**（spec §7.2 的越界红线）：不请求设备描述 XML——
+/// 对方的 Web 服务日志会记录这次访问，「看谁在网里」不能变成「主动探测别人」。
+pub fn parse_ssdp_response(text: &str, ip: Ipv4Addr) -> Option<SsdpRecord> {
+    for line in text.lines() {
+        if let Some((k, v)) = line.split_once(':') {
+            if k.trim().eq_ignore_ascii_case("st") {
+                let st = v.trim();
+                if !st.is_empty() {
+                    return Some(SsdpRecord {
+                        ip,
+                        st: st.to_string(),
+                    });
+                }
+            }
+        }
+    }
+    None
+}
+
 // ---------------------------------------------------------------- 纯函数：类型推断
 
 /// 由证据推断设备类型。`services` 里的 SSDP 记录已归一化为 `ssdp:<ST>` 形式，
@@ -391,19 +458,29 @@ pub fn kind_from_evidence(
     if is_gateway || has("InternetGatewayDevice") {
         return DeviceKind::Router;
     }
-    // 规则 2：AirPlay + 主机名含 appletv 才是电视；裸 AirPlay 多为音箱（规则 3）
+    // 规则 2（C4 实测修订）：Mac 开「隔空播放接收器」后广播 _airplay + _raop，
+    // 会掉进规则 3 被判成音箱（本机实测 MacBook Air → 音箱，误判）。
+    // 修订：主机名能定型的定型（appletv→电视 / macbook 等→电脑）；定型不了的
+    // Mac/iPad 组合（_companion-link 在场）宁可 Unknown——错判比不判更糟。
     if has("_airplay") {
-        let is_tv = hostname.is_some_and(|h| {
-            let l = h.to_ascii_lowercase();
-            l.contains("appletv") || l.contains("apple-tv")
-        });
-        return if is_tv {
-            DeviceKind::Tv
-        } else {
-            DeviceKind::Speaker
-        };
+        let l = hostname.unwrap_or("").to_ascii_lowercase();
+        if l.contains("appletv") || l.contains("apple-tv") {
+            return DeviceKind::Tv;
+        }
+        if l.contains("macbook")
+            || l.contains("imac")
+            || l.contains("mac-mini")
+            || l.contains("macmini")
+        {
+            return DeviceKind::Computer;
+        }
+        if has("_companion-link") {
+            return DeviceKind::Unknown;
+        }
+        return DeviceKind::Speaker;
     }
-    if has("_raop") {
+    if has("_raop") && !has("_companion-link") {
+        // 裸 _raop（无 companion）= HomePod 一类音箱；Mac 的 _raop 走上面已拦截
         return DeviceKind::Speaker;
     }
     if has("_googlecast") || has("MediaRenderer") {
@@ -438,7 +515,7 @@ pub fn kind_from_evidence(
 
 // ---------------------------------------------------------------- 服务发现记录（C4 填充）
 
-/// mDNS 一条响应（C4 由 `mdns-sd` 采集；C2 阶段 merge 收到空切片）。
+/// mDNS 一条响应（C4 由 `mdns-sd` 采集；默认快照模式传空切片）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct MdnsRecord {
     pub ip: Ipv4Addr,
@@ -466,7 +543,7 @@ pub struct SsdpRecord {
 /// - `online` = 内核状态可达 或 服务发现有响应（组播响应本身就是存活证据）
 /// - 本机保留为 `is_self = true`（展示层自行过滤，机器消费看字段）
 ///
-/// `vendor` 恒为 `None`：OUI 查表（`lookup_vendor`）随 C4 的 `oui.csv` 一起接入。
+/// `vendor` 由 OUI 表查得（C4 接入 `lookup_vendor`；随机化 MAC 恒 `None`）。
 pub fn merge(
     neighbors: &[RawNeighbor],
     mdns: &[MdnsRecord],
@@ -592,12 +669,14 @@ pub fn merge(
             let online = d.state != NeighborState::Incomplete || has_service;
             let services: Vec<String> = d.services.into_iter().collect();
             let hostname = d.hostname;
-            let kind = kind_from_evidence(&services, hostname.as_deref(), None, is_gateway);
+            let mac = d.mac;
+            // vendor 查 OUI 表；随机化 MAC 由 lookup_vendor 内部挡掉（spec §9.1）
+            let vendor = mac.as_ref().and_then(|m| lookup_vendor(m));
+            let kind = kind_from_evidence(&services, hostname.as_deref(), vendor, is_gateway);
             Some(LanDevice {
                 ip: ip.to_string(),
-                mac: d.mac.map(format_mac),
-                // 口径纪律 2：查不到就不填。OUI 接入点在 C4
-                vendor: None,
+                mac: mac.map(format_mac),
+                vendor: vendor.map(str::to_string),
                 hostname,
                 kind,
                 state: d.state,
@@ -606,7 +685,7 @@ pub fn merge(
                 inbound: d.inbound.into_iter().collect(),
                 is_gateway,
                 is_self,
-                randomized_mac: d.mac.is_some_and(|m| is_randomized_mac(&m)),
+                randomized_mac: mac.is_some_and(|m| is_randomized_mac(&m)),
             })
         })
         .collect()
@@ -731,6 +810,162 @@ pub fn established_peers() -> Vec<(u16, Ipv4Addr)> {
     {
         Vec::new() // C6：GetExtendedTcpTable；dwLocalPort 记得 u16::from_be（spec §5.5）
     }
+}
+
+// ---------------------------------------------------------------- 服务发现（C4，双平台）
+
+/// mDNS 浏览的服务类型清单（spec §7.1 表）。
+///
+/// **与 spec 的一处偏差**：`_services._dns-sd._udp.local`（元枚举）没有接入——
+/// 它只返回类型名列表，映射到 IP 还要第二轮浏览；策展清单已覆盖 spec 列的全部
+/// 常见类型，元枚举留给 GUI 阶段（C5+）需要「全类型覆盖」时再补。
+pub const MDNS_SERVICES: &[&str] = &[
+    "_airplay._tcp.local.",
+    "_raop._tcp.local.",
+    "_companion-link._tcp.local.",
+    "_ipp._tcp.local.",
+    "_ipps._tcp.local.",
+    "_printer._tcp.local.",
+    "_pdl-datastream._tcp.local.",
+    "_scanner._tcp.local.",
+    "_smb._tcp.local.",
+    "_afpovertcp._tcp.local.",
+    "_googlecast._tcp.local.",
+    "_hap._tcp.local.",
+    "_workstation._tcp.local.",
+    "_ssh._tcp.local.",
+];
+
+/// mDNS 浏览窗口（spec §7.1：一轮 30 s 后收）。dns-sd 实测 4 s 就有结果，
+/// 30 s 是给慢设备（打印机休眠唤醒最慢）的余量。
+pub const MDNS_WINDOW_SECS: u64 = 30;
+/// SSDP 收包窗口（spec §7.2：3 s）。
+pub const SSDP_WINDOW_SECS: u64 = 3;
+
+/// 已启动、尚未收口的 mDNS 浏览会话。
+///
+/// 存在的意义是**重叠**：browse 先启动（daemon 在后台线程收响应），
+/// probe_sweep / neighbors / SSDP 都在窗口期内并行跑，最后 drain 一次收齐——
+/// 30 s 窗口不叠加进总耗时（总耗时 ≈ 窗口本身）。
+pub struct MdnsSession {
+    started: std::time::Instant,
+    daemon: mdns_sd::ServiceDaemon,
+    receivers: Vec<(String, mdns_sd::Receiver<mdns_sd::ServiceEvent>)>,
+}
+
+/// 启动 mDNS 浏览（spec §6 步骤 5 的前半段，应尽早调用）。
+/// daemon 创建失败（极少见：本地 socket 耗尽）返回 `None`，调用方当空切片处理。
+pub fn mdns_start() -> Option<MdnsSession> {
+    let daemon = mdns_sd::ServiceDaemon::new().ok()?;
+    let mut receivers = Vec::new();
+    for st in MDNS_SERVICES {
+        // 单个类型浏览失败不致命（如个别防火墙拦特定端口），继续其余类型
+        if let Ok(rx) = daemon.browse(st) {
+            receivers.push(((*st).to_string(), rx));
+        }
+    }
+    if receivers.is_empty() {
+        return None;
+    }
+    Some(MdnsSession {
+        started: std::time::Instant::now(),
+        daemon,
+        receivers,
+    })
+}
+
+impl MdnsSession {
+    /// 等满窗口后停浏览、收齐全部记录。
+    ///
+    /// 只保留 IPv4 地址（spec §7.1）；同一 IP 的多条服务由 merge 合并进
+    /// `services`，这里不聚合。窗口结束后 `recv_timeout(300ms)` 排干管道。
+    pub fn drain(self) -> Vec<MdnsRecord> {
+        use mdns_sd::ServiceEvent;
+
+        let remain =
+            std::time::Duration::from_secs(MDNS_WINDOW_SECS).saturating_sub(self.started.elapsed());
+        if !remain.is_zero() {
+            std::thread::sleep(remain);
+        }
+        let mut out = Vec::new();
+        for (ty, rx) in &self.receivers {
+            let _ = self.daemon.stop_browse(ty);
+            while let Ok(ev) = rx.recv_timeout(std::time::Duration::from_millis(300)) {
+                let ServiceEvent::ServiceResolved(info) = ev else {
+                    continue;
+                };
+                let service = normalize_service_type(&info.ty_domain);
+                let hostname = normalize_hostname(&info.host);
+                for scoped in &info.addresses {
+                    if let mdns_sd::ScopedIp::V4(v4) = scoped {
+                        out.push(MdnsRecord {
+                            ip: *v4.addr(),
+                            service: service.clone(),
+                            hostname: Some(hostname.clone()),
+                        });
+                    }
+                }
+            }
+        }
+        let _ = self.daemon.shutdown();
+        out
+    }
+}
+
+/// SSDP M-SEARCH 一轮（spec §7.2）：`ssdp:all` 发 239.255.255.250:1900，收 3 s。
+///
+/// Windows 上优先靠它（M-SEARCH 出站发起、响应单播回包，状态化防火墙放行关联；
+/// mDNS 监听 5353 入站可能被 Defender 静默 DROP）。解析只取 `ST` 头，
+/// **不请求 `LOCATION` 指向的 XML**——越界红线见 [`parse_ssdp_response`]。
+pub fn ssdp_discover() -> Vec<SsdpRecord> {
+    use std::collections::HashSet;
+    use std::net::UdpSocket;
+
+    let Ok(socket) = UdpSocket::bind("0.0.0.0:0") else {
+        return Vec::new();
+    };
+    if socket
+        .set_read_timeout(Some(std::time::Duration::from_millis(500)))
+        .is_err()
+    {
+        return Vec::new();
+    }
+    const MSEARCH: &str = "M-SEARCH * HTTP/1.1\r\n\
+        HOST: 239.255.255.250:1900\r\n\
+        MAN: \"ssdp:discover\"\r\n\
+        MX: 2\r\n\
+        ST: ssdp:all\r\n\
+        \r\n";
+    if socket
+        .send_to(MSEARCH.as_bytes(), "239.255.255.250:1900")
+        .is_err()
+    {
+        return Vec::new();
+    }
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(SSDP_WINDOW_SECS);
+    let mut seen = HashSet::new();
+    let mut out = Vec::new();
+    let mut buf = [0u8; 2048];
+    while std::time::Instant::now() < deadline {
+        match socket.recv_from(&mut buf) {
+            Ok((n, src)) => {
+                let std::net::IpAddr::V4(ip) = src.ip() else {
+                    continue;
+                };
+                let text = String::from_utf8_lossy(&buf[..n]);
+                if let Some(rec) = parse_ssdp_response(&text, ip) {
+                    // 同一 (ip, ST) 的重复响应（MX 内多次应答）只记一次
+                    if seen.insert((rec.ip, rec.st.clone())) {
+                        out.push(rec);
+                    }
+                }
+            }
+            // 500ms 读超时 = 这一波响应结束，回到 deadline 判断
+            Err(_) => continue,
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------- 编排
@@ -901,16 +1136,24 @@ pub fn snapshot_scan(at: i64, exposed: &[u16]) -> LanSnapshot {
             u32::MAX << (32 - scope.prefix as u32)
         };
 
+    // spec §6 步骤 5「与 3/4 可并行」的实现：mDNS 浏览先启动（后台 daemon
+    // 收响应），SSDP 独立线程 3s 自收——探测与邻居回读都在 30s 窗口内跑完，
+    // 总耗时 ≈ 窗口本身而不是各步之和
+    let mdns = mdns_start();
+    let ssdp = std::thread::spawn(ssdp_discover);
+
     // expand_cidr 已排除网络/广播地址（C1 单测锁定），探测目标直接可用
     let (targets, total) = expand_cidr(Ipv4Addr::from(network), scope.prefix, SCAN_CAP);
     let scanned = probe_sweep(&targets, PROBE_CONCURRENCY, PROBE_TIMEOUT_MS);
 
     let nbrs = neighbors(); // 此时 ARP 缓存已被 probe_sweep 填满
     let peers = established_peers();
+    let mdns_records = mdns.map(MdnsSession::drain).unwrap_or_default();
+    let ssdp_records = ssdp.join().unwrap_or_default();
     let devices = merge(
         &nbrs,
-        &[],
-        &[],
+        &mdns_records,
+        &ssdp_records,
         &peers,
         gateway,
         Some(scope.addr),
@@ -922,6 +1165,17 @@ pub fn snapshot_scan(at: i64, exposed: &[u16]) -> LanSnapshot {
     let mut notes = Vec::new();
     if let Some(note) = scan_truncation_note(targets.len(), total) {
         notes.push(note);
+    }
+    // spec §7.3：两个发现协议都空是「高频且无声」的（防火墙拦截不报错），
+    // 必须明说，绝不让空 services 被读成「没有设备」
+    if mdns_records.is_empty() && ssdp_records.is_empty() {
+        notes
+            .push("mDNS / SSDP 均无响应，可能被防火墙拦截；这不代表局域网内没有设备。".to_string());
+    }
+    // spec §9 第 4 条：随机化 MAC 是常态不是异常，提示一句即可
+    let randomized = devices.iter().filter(|d| d.randomized_mac).count();
+    if randomized > 0 {
+        notes.push(format!("{randomized} 台设备使用随机化 MAC，无法识别厂商。"));
     }
     finalize_snapshot(at, exposed, scope, scanned, total, devices, notes, start)
 }
@@ -1221,7 +1475,169 @@ mod tests {
         assert!(v.get("exposed_ports").is_none());
     }
 
-    // ---- C2：merge 与 lsof 对端解析（fixture 均来自本机实测）----
+    // ---- C4：OUI 查表与服务发现解析 ----
+
+    #[test]
+    fn oui_table_is_sorted_and_parseable() {
+        let table = oui_table();
+        assert!(
+            table.len() > 1000,
+            "表过小({} 行)，数据源可能没加载",
+            table.len()
+        );
+        // binary_search 的前提：按 OUI 严格升序
+        for w in table.windows(2) {
+            assert!(w[0].0 < w[1].0, "乱序：{} 应在 {} 之后", w[1].0, w[0].0);
+        }
+        for (oui, name) in table.iter().take(50) {
+            assert_eq!(oui.len(), 6, "OUI 必须是 6 位十六进制：{oui}");
+            assert!(!name.is_empty());
+        }
+    }
+
+    #[test]
+    fn lookup_vendor_hits_real_ouis() {
+        // 本机 ARP_SAMPLE 里的两个全局 MAC（fixture 与实测一一对应）
+        assert_eq!(
+            lookup_vendor(&[0xbc, 0x24, 0x11, 0x4c, 0xd8, 0x39]),
+            Some("ProxmoxServe")
+        );
+        assert_eq!(
+            lookup_vendor(&[0xe4, 0x77, 0x27, 0xf0, 0x12, 0x56]),
+            Some("HuaweiTechno")
+        );
+        // 表里没有的 OUI → None（不冒充「未知」）
+        assert_eq!(lookup_vendor(&[0x01, 0x00, 0x5e, 0x00, 0x00, 0xfb]), None);
+    }
+
+    #[test]
+    fn lookup_vendor_rejects_randomized_mac() {
+        // f6:74:4d 是本机实测的随机化 MAC——即使表里碰巧有同前缀也必须 None
+        assert_eq!(lookup_vendor(&[0xf6, 0x74, 0x4d, 0xe9, 0x41, 0x5e]), None);
+        assert!(is_randomized_mac(&[0xf6, 0x74, 0x4d, 0x00, 0x00, 0x00]));
+    }
+
+    #[test]
+    fn mdns_normalize_strips_suffixes() {
+        assert_eq!(
+            normalize_service_type("_airplay._tcp.local."),
+            "_airplay._tcp"
+        );
+        assert_eq!(normalize_service_type("_ipp._tcp.local"), "_ipp._tcp");
+        // 没有 .local 的输入原样返回（防御：直接喂裸类型）
+        assert_eq!(normalize_service_type("_airplay._tcp"), "_airplay._tcp");
+        assert_eq!(normalize_hostname("Apple-TV-3.local."), "Apple-TV-3.local");
+        assert_eq!(normalize_hostname("nas.local"), "nas.local");
+    }
+
+    #[test]
+    fn ssdp_parse_st_header() {
+        let body = "HTTP/1.1 200 OK\r\n\
+                    CACHE-CONTROL: max-age = 1800\r\n\
+                    ST: urn:schemas-upnp-org:device:MediaRenderer:1\r\n\
+                    USN: uuid:abcd::urn:schemas-upnp-org:device:MediaRenderer:1\r\n\
+                    SERVER: Linux/5.4 UPnP/1.0\r\n\
+                    \r\n";
+        let rec = parse_ssdp_response(body, ip("192.168.0.20")).unwrap();
+        assert_eq!(rec.ip, ip("192.168.0.20"));
+        assert_eq!(rec.st, "urn:schemas-upnp-org:device:MediaRenderer:1");
+        // 网关设备（InternetGatewayDevice → kind_from_evidence 规则 1）
+        let gw = parse_ssdp_response(
+            "HTTP/1.1 200 OK\r\nST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n",
+            ip("192.168.1.1"),
+        )
+        .unwrap();
+        assert!(gw.st.contains("InternetGatewayDevice"));
+    }
+
+    #[test]
+    fn ssdp_parse_case_insensitive_and_missing() {
+        // 一些设备回小写 `st:`（大小写不敏感）
+        let rec = parse_ssdp_response(
+            "HTTP/1.1 200 OK\r\nst: upnp:rootdevice\r\n\r\n",
+            ip("10.0.0.2"),
+        );
+        assert_eq!(rec.unwrap().st, "upnp:rootdevice");
+        // 没有 ST 头 → None
+        assert!(
+            parse_ssdp_response("HTTP/1.1 200 OK\r\nUSN: uuid:x\r\n\r\n", ip("10.0.0.2")).is_none()
+        );
+        // 空值 ST 头 → None
+        assert!(parse_ssdp_response("HTTP/1.1 200 OK\r\nST:\r\n\r\n", ip("10.0.0.2")).is_none());
+    }
+
+    #[test]
+    fn kind_airplay_receiver_not_speaker() {
+        // 实测（0.115 / 0.116）：Mac 开「隔空播放接收器」→ _airplay + _raop +
+        // _companion-link，C3 版规则判成音箱（误判），C4 修订后必须定型
+        let mac: Vec<String> = vec![
+            "_airplay._tcp".into(),
+            "_companion-link._tcp".into(),
+            "_raop._tcp".into(),
+        ];
+        assert_eq!(
+            kind_from_evidence(&mac, Some("daqis-MacBook-Air-816.local"), None, false),
+            DeviceKind::Computer
+        );
+        // 主机名定不了型（拼音/代号）→ Unknown，不是音箱
+        assert_eq!(
+            kind_from_evidence(&mac, Some("xuyidebijibendiannao.local"), None, false),
+            DeviceKind::Unknown
+        );
+        // hostname 缺失也 Unknown
+        assert_eq!(
+            kind_from_evidence(&mac, None, None, false),
+            DeviceKind::Unknown
+        );
+        // Apple TV 主机名 → Tv（原规则 2 不变）
+        assert_eq!(
+            kind_from_evidence(&mac, Some("Living-Room-Apple-TV.local"), None, false),
+            DeviceKind::Tv
+        );
+        // HomePod：_airplay/_raop 无 companion → Speaker（原规则 3 收窄后仍命中）
+        assert_eq!(
+            kind_from_evidence(
+                &["_raop._tcp".to_string(), "_airplay._tcp".to_string()],
+                Some("Kitchen.local"),
+                None,
+                false
+            ),
+            DeviceKind::Speaker
+        );
+        // 裸 _raop（无 _airplay）→ Speaker
+        assert_eq!(
+            kind_from_evidence(&["_raop._tcp".to_string()], None, None, false),
+            DeviceKind::Speaker
+        );
+    }
+
+    #[test]
+    fn merge_applies_vendor_and_ssdp_kind() {
+        // SSDP ST 归一化并入 services（C1 锁定的 ssdp:<ST> 约定）+ OUI vendor
+        let devs = merge_sample(
+            &[MdnsRecord {
+                ip: ip("192.168.0.44"),
+                service: "_smb._tcp".to_string(),
+                hostname: Some("nas.local".to_string()),
+            }],
+            &[SsdpRecord {
+                ip: ip("192.168.0.20"),
+                st: "urn:schemas-upnp-org:device:MediaRenderer:1".to_string(),
+            }],
+            &[],
+        );
+        let nas = devs.iter().find(|d| d.ip == "192.168.0.44").unwrap();
+        assert_eq!(nas.vendor.as_deref(), Some("ProxmoxServe"));
+        assert_eq!(nas.kind, DeviceKind::Nas);
+        assert_eq!(nas.hostname.as_deref(), Some("nas.local"));
+        let renderer = devs.iter().find(|d| d.ip == "192.168.0.20").unwrap();
+        assert_eq!(renderer.kind, DeviceKind::Tv); // 规则 4：ssdp MediaRenderer → Tv
+        assert!(renderer.services[0].starts_with("ssdp:"));
+        // 随机 MAC（0.109）vendor 必须是 None
+        let rnd = devs.iter().find(|d| d.ip == "192.168.0.109").unwrap();
+        assert_eq!(rnd.vendor, None);
+        assert!(rnd.randomized_mac);
+    }
 
     #[test]
     fn probe_sweep_counts_every_target() {

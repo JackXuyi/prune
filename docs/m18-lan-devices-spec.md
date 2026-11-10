@@ -418,7 +418,9 @@ Windows 上 mDNS 结果为空是**高频且无声**的（防火墙拦截不报�
 |---|---|---|
 | 1 | `is_gateway` 或 SSDP `ST` 含 `InternetGatewayDevice` | `Router` |
 | 2 | `_airplay._tcp` + hostname 含 `apple-tv` / `appletv` | `Tv` |
-| 3 | `_airplay._tcp` 或 `_raop._tcp` | `Speaker` |
+| 2b | `_airplay._tcp` + hostname 含 `macbook` / `imac` / `mac-mini` / `macmini` | `Computer` |
+| 2c | `_airplay._tcp` + `_companion-link._tcp`（主机名定不了型） | `Unknown` |
+| 3 | `_airplay._tcp`（无 companion）/ `_raop._tcp`（无 companion） | `Speaker` |
 | 4 | `_googlecast._tcp` 或 SSDP `MediaRenderer` | `Tv` |
 | 5 | `_ipp` / `_ipps` / `_printer` / `_pdl-datastream` / `_scanner` | `Printer` |
 | 6 | `_smb._tcp` / `_afpovertcp._tcp` | `Nas` |
@@ -427,6 +429,11 @@ Windows 上 mDNS 结果为空是**高频且无声**的（防火墙拦截不报�
 | 9 | `_workstation._tcp` / `_ssh._tcp` | `Computer` |
 | 10 | vendor 含 `Hikvision` / `Dahua` / `Axis` / `Reolink` | `Camera` |
 | 11 | 以上都不命中 | `Unknown` |
+
+> 2b/2c 与 3 的收窄是 C4 实测修订：Mac 开「隔空播放接收器」后广播
+> `_airplay + _raop + _companion-link`，原规则 3 会把 MacBook 判成音箱
+> （本机实测 `daqis-MacBook-Air-816.local` → 音箱，误判）。主机名能定型的
+> 定型，定不了型的宁可 Unknown——与下方的「错判比不判更糟」一致。
 
 **刻意不做**：TTL 指纹、端口开放组合推 OS、厂商名推设备类型（`Apple` 既可能是手机也可能是 Mac）。错判比不判更糟——`Unknown` 的图标比错误图标诚实。
 
