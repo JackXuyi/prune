@@ -51,7 +51,22 @@ if (conf.version && conf.version !== target) {
   results.push(['src-tauri/tauri.conf.json', conf.version, target])
 }
 
-// 3. src-tauri/Cargo.toml（只改 [package] 下的 version 行）
+// 3. 根 Cargo.toml（workspace.package.version —— prune-core / prune-cli 通过
+//    version.workspace = true 继承；正则只命中 [workspace.package] 下的 version 行）
+const wsCargoPath = join(root, 'Cargo.toml')
+const wsCargoRaw = readFileSync(wsCargoPath, 'utf8')
+let wsChanged = false
+const wsCargoNew = wsCargoRaw.replace(/^version\s*=\s*"[^"]+"/m, (m) => {
+  const oldV = m.match(/"([^"]+)"/)[1]
+  if (oldV !== target) {
+    wsChanged = true
+    results.push(['Cargo.toml (workspace)', oldV, target])
+  }
+  return `version = "${target}"`
+})
+if (wsCargoNew !== wsCargoRaw) writeFileSync(wsCargoPath, wsCargoNew)
+
+// 4. src-tauri/Cargo.toml（只改 [package] 下的 version 行）
 const cargoPath = join(root, 'src-tauri', 'Cargo.toml')
 const cargoRaw = readFileSync(cargoPath, 'utf8')
 let changed = false
@@ -65,8 +80,8 @@ const cargoNew = cargoRaw.replace(/^version\s*=\s*"[^"]+"/m, (m) => {
 })
 if (cargoNew !== cargoRaw) writeFileSync(cargoPath, cargoNew)
 
-// 4. Cargo.lock（让锁文件与 workspace 版本保持一致，避免 CI 重复校验失败）
-if (changed) {
+// 5. Cargo.lock（让锁文件与 workspace 版本保持一致，避免 CI 重复校验失败）
+if (changed || wsChanged) {
   const { existsSync } = await import('node:fs')
   const { homedir } = await import('node:os')
   const cargoBins = [
@@ -76,13 +91,16 @@ if (changed) {
   ].filter(Boolean)
   const cargoBin = cargoBins.find((c) => c === 'cargo' || existsSync(c))
   if (!cargoBin) {
-    console.warn('⚠️ 未找到 cargo，请手动运行: cargo update -p prune-app')
+    console.warn('⚠️ 未找到 cargo，请手动运行: cargo update -p prune-app -p prune-core -p prune-cli')
   } else {
     try {
-      execSync(`${cargoBin} update -p prune-app --precise ${target}`, { cwd: root, stdio: 'ignore' })
+      execSync(
+        `${cargoBin} update -p prune-app --precise ${target} -p prune-core --precise ${target} -p prune-cli --precise ${target}`,
+        { cwd: root, stdio: 'ignore' },
+      )
       results.push(['Cargo.lock', current, target])
     } catch {
-      console.warn(`⚠️ cargo update -p prune-app 失败，请手动运行: cargo update -p prune-app --precise ${target}`)
+      console.warn(`⚠️ cargo update 失败，请手动运行: cargo update -p prune-app -p prune-core -p prune-cli`)
     }
   }
 }

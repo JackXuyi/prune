@@ -43,8 +43,14 @@ pub fn version() -> &'static str {
 
 #[cfg(test)]
 mod tests {
+    /// 与仓库根 package.json 交叉校验：防止 bump 脚本漏改某一处后版本漂移。
+    /// 此前断言写死 "0.1.0"，把「未发布」固化成了恒等检查（MCP serverInfo
+    /// 与 CLI --version 一直对外报旧号）。
     #[test]
-    fn version_matches_cargo_pkg() {
-        assert_eq!(super::version(), "0.1.0");
+    fn version_matches_package_json() {
+        let pkg: serde_json::Value = serde_json::from_str(include_str!("../../../package.json"))
+            .expect("package.json 应存在且为合法 JSON");
+        let expected = pkg["version"].as_str().expect("package.json 应有 version 字段");
+        assert_eq!(super::version(), expected);
     }
 }
