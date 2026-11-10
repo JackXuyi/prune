@@ -67,7 +67,9 @@ pub async fn net_diag_run(state: State<'_, Arc<NetDiagState>>) -> Result<NetDiag
 /// 测速 + bufferbloat（macOS `networkQuality -c`，~30 s）。
 /// Windows 无系统等价物 → capability 门控，前端不渲染该卡；误调返回 Err。
 #[tauri::command]
-pub async fn net_diag_speed_run(state: State<'_, Arc<NetDiagState>>) -> Result<SpeedResult, String> {
+pub async fn net_diag_speed_run(
+    state: State<'_, Arc<NetDiagState>>,
+) -> Result<SpeedResult, String> {
     #[cfg(target_os = "macos")]
     {
         let res = tauri::async_runtime::spawn_blocking(run_network_quality)
@@ -206,7 +208,10 @@ fn run_network_quality() -> Result<SpeedResult, String> {
     let mut stdout = child.stdout.take().ok_or("networkQuality 无 stdout")?;
     let deadline = Instant::now() + SPEED_TIMEOUT;
     let status = loop {
-        match child.try_wait().map_err(|e| format!("networkQuality: {e}"))? {
+        match child
+            .try_wait()
+            .map_err(|e| format!("networkQuality: {e}"))?
+        {
             Some(st) => break st,
             None => {
                 if Instant::now() >= deadline {

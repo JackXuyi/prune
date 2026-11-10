@@ -165,12 +165,16 @@ pub fn parse_lsof_tcp(text: &str) -> TcpScan {
                  block: &FdBlock,
                  scan: &mut TcpScan,
                  conns: &mut std::collections::HashMap<u16, u32>| {
-        let Some(pid) = pid else { return };        // 第二道防线：没有 P 行的 fd 是文件/管道，不是 socket（防 `-a` 缺失时的脏输入）
+        let Some(pid) = pid else { return }; // 第二道防线：没有 P 行的 fd 是文件/管道，不是 socket（防 `-a` 缺失时的脏输入）
         let Some(proto) = block.proto else { return };
-        let Some(name) = block.name.as_deref() else { return };
+        let Some(name) = block.name.as_deref() else {
+            return;
+        };
 
         let local = name.split("->").next().unwrap_or(name);
-        let Some((addr, port)) = split_addr(local) else { return };
+        let Some((addr, port)) = split_addr(local) else {
+            return;
+        };
         let v6 = local.starts_with('[') || addr.contains(':');
 
         match block.state.as_deref() {
@@ -255,9 +259,13 @@ pub fn parse_lsof_udp(text: &str) -> Vec<PortBinding> {
         if block.proto.is_none() {
             return;
         }
-        let Some(name) = block.name.as_deref() else { return };
+        let Some(name) = block.name.as_deref() else {
+            return;
+        };
         let local = name.split("->").next().unwrap_or(name);
-        let Some((addr, port)) = split_addr(local) else { return };
+        let Some((addr, port)) = split_addr(local) else {
+            return;
+        };
         let v6 = local.starts_with('[') || addr.contains(':');
         out.push(PortBinding {
             port,
@@ -594,7 +602,10 @@ TST=LISTEN
     fn addr_splitting() {
         assert_eq!(split_addr("*:58578"), Some(("*".into(), 58578)));
         assert_eq!(split_addr("[::1]:1430"), Some(("::1".into(), 1430)));
-        assert_eq!(split_addr("127.0.0.1:7890"), Some(("127.0.0.1".into(), 7890)));
+        assert_eq!(
+            split_addr("127.0.0.1:7890"),
+            Some(("127.0.0.1".into(), 7890))
+        );
         assert_eq!(split_addr("*:*"), None);
         assert_eq!(split_addr("nonsense"), None);
     }

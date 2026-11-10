@@ -278,7 +278,11 @@ pub fn hardware_page_size() -> Option<u64> {
 
 #[cfg(target_os = "macos")]
 fn sysctl(name: &str) -> Option<String> {
-    let out = Command::new("/usr/sbin/sysctl").arg("-n").arg(name).output().ok()?;
+    let out = Command::new("/usr/sbin/sysctl")
+        .arg("-n")
+        .arg(name)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }

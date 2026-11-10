@@ -384,25 +384,24 @@ pub fn aggregate(procs: &[ProcMem]) -> Vec<FamilyMem> {
     let mut out: Vec<FamilyMem> = accs
         .into_iter()
         .map(|(name, a)| {
-            let mut workspaces: Vec<WorkspaceMem> = a
-                .ws
-                .into_iter()
-                .map(|(path, w)| WorkspaceMem {
-                    label: if w.label.is_empty() {
-                        path.rsplit('/').next().unwrap_or(&path).to_string()
-                    } else {
-                        w.label
-                    },
-                    path,
-                    source: w.source.unwrap_or(WorkspaceSource::Label),
-                    process_count: w.count,
-                    rss: w.rss,
-                    footprint: w
-                        .has_footprint
-                        .then_some(w.fp_probed.saturating_add(w.rss_unprobed)),
-                    cpu: w.has_cpu.then_some(w.cpu),
-                })
-                .collect();
+            let mut workspaces: Vec<WorkspaceMem> =
+                a.ws.into_iter()
+                    .map(|(path, w)| WorkspaceMem {
+                        label: if w.label.is_empty() {
+                            path.rsplit('/').next().unwrap_or(&path).to_string()
+                        } else {
+                            w.label
+                        },
+                        path,
+                        source: w.source.unwrap_or(WorkspaceSource::Label),
+                        process_count: w.count,
+                        rss: w.rss,
+                        footprint: w
+                            .has_footprint
+                            .then_some(w.fp_probed.saturating_add(w.rss_unprobed)),
+                        cpu: w.has_cpu.then_some(w.cpu),
+                    })
+                    .collect();
             workspaces.sort_by_key(|w| std::cmp::Reverse(w.total()));
 
             FamilyMem {
@@ -526,7 +525,10 @@ mod tests {
         let cursor = &fams[0];
         assert_eq!(cursor.cpu, Some(42.0));
         assert_eq!(cursor.cpu_covered, 2);
-        assert!(cursor.cpu_covered < cursor.process_count, "部分覆盖必须能被识别为下界");
+        assert!(
+            cursor.cpu_covered < cursor.process_count,
+            "部分覆盖必须能被识别为下界"
+        );
 
         // Chrome：唯一成员已知且为真实 0.0 → Some(0.0)，不是 None
         let chrome = &fams[1];

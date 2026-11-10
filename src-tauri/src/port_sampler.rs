@@ -130,20 +130,15 @@ pub async fn port_round(app: &AppHandle, force: bool) -> Result<(), String> {
     let snap = tauri::async_runtime::spawn_blocking(move || {
         // Windows 的 iphlpapi 只给 pid，进程名从内存轮的全量进程表借；
         // macOS 的 lsof 自带 `c` 行，传 None 即可。
-        let names: Option<HashMap<i32, String>> = handle
-            .try_state::<Arc<MemState>>()
-            .map(|ms| {
-                ms.processes
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .iter()
-                    .map(|p| (p.pid, p.name.clone()))
-                    .collect()
-            });
-        let mut cache = scan_state
-            .cache
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let names: Option<HashMap<i32, String>> = handle.try_state::<Arc<MemState>>().map(|ms| {
+            ms.processes
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .iter()
+                .map(|p| (p.pid, p.name.clone()))
+                .collect()
+        });
+        let mut cache = scan_state.cache.lock().unwrap_or_else(|e| e.into_inner());
         net_ports::scan_cached(names.as_ref(), &mut cache)
     })
     .await

@@ -78,12 +78,11 @@ pub(crate) fn diff_first_level(
         let name = e.file_name().to_string_lossy().to_string();
         let size = if is_dir {
             // 目录：同 name 且同 mtime（纳秒）才复用，宁可多算不可少算
-            cached
-                .and_then(|c| {
-                    c.iter()
-                        .find(|f| f.name == name && f.mtime_nanos == mtime)
-                        .map(|f| f.bytes)
-                })
+            cached.and_then(|c| {
+                c.iter()
+                    .find(|f| f.name == name && f.mtime_nanos == mtime)
+                    .map(|f| f.bytes)
+            })
         } else {
             Some(super::file_bytes(&md))
         };
@@ -220,8 +219,14 @@ mod tests {
     /// 最小可扫 home：Yarn（A1）+ npm cacache，各含可判定的条目
     fn seed_home(home: &Path) {
         let v6 = home.join("Library/Caches/Yarn/v6");
-        write(&v6.join("npm-@next-swc-linux-x64-1.0.0-a/payload.bin"), 4096);
-        write(&v6.join("npm-@next-swc-darwin-arm64-1.0.0-b/payload.bin"), 4096);
+        write(
+            &v6.join("npm-@next-swc-linux-x64-1.0.0-a/payload.bin"),
+            4096,
+        );
+        write(
+            &v6.join("npm-@next-swc-darwin-arm64-1.0.0-b/payload.bin"),
+            4096,
+        );
         write(&v6.join("npm-lodash-4.17.21-c/payload.bin"), 4096);
         write(&home.join(".npm/_cacache/content-v2/f1.bin"), 4096);
         write(&home.join(".npm/_cacache/index-v5/f2.bin"), 4096);
@@ -262,7 +267,10 @@ mod tests {
 
         // 变化：新增死重条目 + 删除普通条目 + npm 首层目录内容变化（直接子项）
         let v6 = home.join("Library/Caches/Yarn/v6");
-        write(&v6.join("npm-@esbuild-linux-arm64-1.0.0-d/payload.bin"), 8192);
+        write(
+            &v6.join("npm-@esbuild-linux-arm64-1.0.0-d/payload.bin"),
+            8192,
+        );
         std::fs::remove_dir_all(v6.join("npm-lodash-4.17.21-c")).unwrap();
         write(&home.join(".npm/_cacache/content-v2/f3.bin"), 4096);
 
@@ -296,14 +304,16 @@ mod tests {
     #[test]
     fn deep_change_waits_for_full_scan() {
         let home = tmp("deep");
-        write(&home.join(".npm/_cacache/content-v2/sha512/ab/deep.bin"), 4096);
+        write(
+            &home.join(".npm/_cacache/content-v2/sha512/ab/deep.bin"),
+            4096,
+        );
         let (r1, s1) = scan_with(&home, None, None);
         assert_eq!(group(&r1, "npm").total_bytes, 4096);
 
         // 深层写入：只动 ab/cd 的 mtime，content-v2 的指纹不变
         write(
-            &home
-                .join(".npm/_cacache/content-v2/sha512/ab/cd/deeper.bin"),
+            &home.join(".npm/_cacache/content-v2/sha512/ab/cd/deeper.bin"),
             4096,
         );
 

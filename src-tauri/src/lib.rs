@@ -31,11 +31,11 @@ mod popover;
 // 保证命令注册与模块路径在两端一致
 #[cfg(target_os = "macos")]
 mod island;
-#[cfg(target_os = "macos")]
-mod island_geo;
 #[cfg(not(target_os = "macos"))]
 #[path = "island_stub.rs"]
 mod island;
+#[cfg(target_os = "macos")]
+mod island_geo;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -195,9 +195,7 @@ pub fn run() {
                     if !ns_window.is_null() {
                         use objc2::rc::Retained;
                         use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
-                        if let Some(win) =
-                            unsafe { Retained::retain(ns_window as *mut NSWindow) }
-                        {
+                        if let Some(win) = unsafe { Retained::retain(ns_window as *mut NSWindow) } {
                             win.setCollectionBehavior(
                                 NSWindowCollectionBehavior::MoveToActiveSpace
                                     | NSWindowCollectionBehavior::FullScreenAuxiliary,

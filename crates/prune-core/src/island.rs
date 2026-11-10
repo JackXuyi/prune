@@ -101,12 +101,7 @@ impl CpuMonitor {
     }
 
     /// 投入一个采样，返回是否应当提报。
-    pub fn observe(
-        &mut self,
-        now_ms: u64,
-        cpu_pct: f32,
-        th: &CpuThresholds,
-    ) -> Option<CpuAlert> {
+    pub fn observe(&mut self, now_ms: u64, cpu_pct: f32, th: &CpuThresholds) -> Option<CpuAlert> {
         let th = th.clamped();
         let cap = th.capacity();
 
@@ -160,11 +155,7 @@ impl CpuMonitor {
 
         self.armed = false;
         let avg = self.samples.iter().sum::<f32>() / total as f32;
-        let peak = self
-            .samples
-            .iter()
-            .copied()
-            .fold(0.0f32, f32::max);
+        let peak = self.samples.iter().copied().fold(0.0f32, f32::max);
         Some(CpuAlert {
             avg_pct: avg,
             peak_pct: peak,
@@ -512,7 +503,10 @@ mod tests {
         };
         // 不 reset，直接按新阈值判下一个点 → 旧样本全部达标，会触发
         let misfire = m.observe(64_000, 85.0, &lower);
-        assert!(misfire.is_some(), "旧窗口按新阈值会误触发（这是 reset 存在的理由）");
+        assert!(
+            misfire.is_some(),
+            "旧窗口按新阈值会误触发（这是 reset 存在的理由）"
+        );
 
         m.reset();
         assert!(
@@ -582,7 +576,11 @@ mod tests {
     ) -> Option<MemAlert> {
         levels
             .iter()
-            .zip(ratios.iter().chain(std::iter::repeat(&ratios[ratios.len() - 1])))
+            .zip(
+                ratios
+                    .iter()
+                    .chain(std::iter::repeat(&ratios[ratios.len() - 1])),
+            )
             .enumerate()
             .filter_map(|(i, (lv, r))| m.observe(start_ms + i as u64 * 2000, *lv, *r, &mem_th()))
             .next()
@@ -623,7 +621,10 @@ mod tests {
     #[test]
     fn mem_warning_rearms_only_at_normal() {
         let mut m = MemMonitor::new();
-        assert!(feed_mem(&mut m, &[PL::Warning; 16], &[30.0], 0).is_some(), "首次触发");
+        assert!(
+            feed_mem(&mut m, &[PL::Warning; 16], &[30.0], 0).is_some(),
+            "首次触发"
+        );
         // Warning 挂着不放：不应重复报
         assert!(
             feed_mem(&mut m, &[PL::Warning; 60], &[30.0], 34_000).is_none(),

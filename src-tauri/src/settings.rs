@@ -42,7 +42,10 @@ pub fn read_root(app: &AppHandle) -> serde_json::Value {
         root = serde_json::json!({});
     }
     let legacy = read_json(legacy_path(app));
-    if let (Some(new_obj), Some(old_obj)) = (root.as_object_mut(), legacy.as_ref().and_then(|v| v.as_object())) {
+    if let (Some(new_obj), Some(old_obj)) = (
+        root.as_object_mut(),
+        legacy.as_ref().and_then(|v| v.as_object()),
+    ) {
         for (k, v) in old_obj {
             new_obj.entry(k.clone()).or_insert_with(|| v.clone());
         }

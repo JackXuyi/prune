@@ -236,7 +236,13 @@ impl Store {
     /// 语义是 `down_bytes = down_bytes + excluded.down_bytes`，所以重复提交同一批增量
     /// 会双计 —— 只允许**单一采样线程**调用（方案 §3.5）。反过来，它不是「覆盖写」，
     /// 所以重启后接着累加不会把当天已有数字抹掉。
-    pub fn net_add(&self, day: &str, down_delta: u64, up_delta: u64, now: i64) -> rusqlite::Result<()> {
+    pub fn net_add(
+        &self,
+        day: &str,
+        down_delta: u64,
+        up_delta: u64,
+        now: i64,
+    ) -> rusqlite::Result<()> {
         let conn = self.lock();
         conn.execute(
             "INSERT INTO net_daily (day, down_bytes, up_bytes, updated_at)
@@ -334,7 +340,11 @@ impl Store {
     ///
     /// **只返回有行的小时**：缺失由前端画灰柱，不在这里补 0
     /// —— 补 0 等于把「Prune 没运行」说成「那一小时 CPU 为 0」。
-    pub fn app_hourly_get(&self, family: &str, from_bucket: &str) -> rusqlite::Result<Vec<HourlyRow>> {
+    pub fn app_hourly_get(
+        &self,
+        family: &str,
+        from_bucket: &str,
+    ) -> rusqlite::Result<Vec<HourlyRow>> {
         let conn = self.lock();
         let mut stmt = conn.prepare(
             "SELECT bucket, rss_sum, rss_n, rss_peak, cpu_sum, cpu_n, cpu_peak, net_down, net_up
@@ -422,8 +432,12 @@ mod tests {
     #[test]
     fn same_timestamp_is_idempotent() {
         let store = Store::open_in_memory().unwrap();
-        store.record(100, &[proc(1, Some(1000), Some(900))]).unwrap();
-        store.record(100, &[proc(1, Some(1100), Some(950))]).unwrap();
+        store
+            .record(100, &[proc(1, Some(1000), Some(900))])
+            .unwrap();
+        store
+            .record(100, &[proc(1, Some(1100), Some(950))])
+            .unwrap();
         assert_eq!(store.row_count().unwrap(), 1);
         let h = store.history(1, 0, 10).unwrap();
         assert_eq!(h[0].footprint, Some(1100));
@@ -432,7 +446,9 @@ mod tests {
     #[test]
     fn history_filters_by_pid_and_since_and_orders_asc() {
         let store = Store::open_in_memory().unwrap();
-        store.record(100, &[proc(1, Some(1000), None), proc(2, Some(50), None)]).unwrap();
+        store
+            .record(100, &[proc(1, Some(1000), None), proc(2, Some(50), None)])
+            .unwrap();
         store.record(200, &[proc(1, Some(2000), None)]).unwrap();
         store.record(300, &[proc(1, Some(3000), None)]).unwrap();
 
@@ -447,7 +463,9 @@ mod tests {
     fn history_respects_limit_keeping_latest() {
         let store = Store::open_in_memory().unwrap();
         for ts in 1..=5 {
-            store.record(ts, &[proc(1, Some(ts as u64 * 100), None)]).unwrap();
+            store
+                .record(ts, &[proc(1, Some(ts as u64 * 100), None)])
+                .unwrap();
         }
         let h = store.history(1, 0, 2).unwrap();
         assert_eq!(h.len(), 2);
@@ -496,7 +514,9 @@ mod tests {
     #[test]
     fn series_skips_rows_without_footprint() {
         let store = Store::open_in_memory().unwrap();
-        store.record(100, &[proc(1, Some(1000), None), proc(2, None, None)]).unwrap();
+        store
+            .record(100, &[proc(1, Some(1000), None), proc(2, None, None)])
+            .unwrap();
         let s = store.series(0).unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].pid, 1);
@@ -560,7 +580,10 @@ mod tests {
             assert_eq!((d.down_bytes, d.up_bytes), (4_096, 512));
             // 重开后再累加，接着涨（不清零）
             store.net_add("2026-11-05", 1_024, 128, 2).unwrap();
-            assert_eq!(store.net_day("2026-11-05").unwrap().unwrap().down_bytes, 5_120);
+            assert_eq!(
+                store.net_day("2026-11-05").unwrap().unwrap().down_bytes,
+                5_120
+            );
         }
         let _ = std::fs::remove_file(&path);
         // WAL 模式会留下 sidecar 文件
@@ -629,10 +652,16 @@ mod tests {
     fn app_hourly_accumulates_incrementally() {
         let store = Store::open_in_memory().unwrap();
         store
-            .app_hourly_add(&[hourly("Cursor", "2026-11-09T10", 100, 1, 100, 4.0, 1, 4.0)], 1)
+            .app_hourly_add(
+                &[hourly("Cursor", "2026-11-09T10", 100, 1, 100, 4.0, 1, 4.0)],
+                1,
+            )
             .unwrap();
         store
-            .app_hourly_add(&[hourly("Cursor", "2026-11-09T10", 300, 2, 200, 8.0, 2, 5.0)], 2)
+            .app_hourly_add(
+                &[hourly("Cursor", "2026-11-09T10", 300, 2, 200, 8.0, 2, 5.0)],
+                2,
+            )
             .unwrap();
 
         let rows = store.app_hourly_get("Cursor", "2026-11-09T00").unwrap();
@@ -675,7 +704,10 @@ mod tests {
         d.net_down = 4096;
         store.app_hourly_add(&[d], 1).unwrap();
         store
-            .app_hourly_add(&[hourly("Cursor", "2026-11-09T10", 1, 1, 1, 1.0, 1, 1.0)], 1)
+            .app_hourly_add(
+                &[hourly("Cursor", "2026-11-09T10", 1, 1, 1, 1.0, 1, 1.0)],
+                1,
+            )
             .unwrap();
 
         let rows = store.app_hourly_get("Node", "2026-11-09T00").unwrap();
@@ -683,7 +715,13 @@ mod tests {
         assert_eq!(rows[0].cpu_avg, None);
         assert_eq!(rows[0].net_down, 4096);
 
-        assert_eq!(store.app_hourly_get("Cursor", "2026-11-09T00").unwrap().len(), 1);
+        assert_eq!(
+            store
+                .app_hourly_get("Cursor", "2026-11-09T00")
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     /// 保留期清理：只删更早的小时

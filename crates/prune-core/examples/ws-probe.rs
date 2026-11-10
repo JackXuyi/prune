@@ -23,10 +23,7 @@ fn main() {
 
     let mut rows: Vec<(i32, String, u64, &prune_core::mem::WorkspaceRef)> = procs
         .iter()
-        .filter_map(|p| {
-            ws.get(&p.pid)
-                .map(|w| (p.pid, p.name.clone(), p.rss, w))
-        })
+        .filter_map(|p| ws.get(&p.pid).map(|w| (p.pid, p.name.clone(), p.rss, w)))
         .collect();
     rows.sort_by_key(|(_, _, rss, _)| std::cmp::Reverse(*rss));
     for (pid, name, rss, w) in rows.iter().take(20) {

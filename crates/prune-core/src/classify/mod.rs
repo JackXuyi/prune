@@ -138,7 +138,9 @@ pub fn classify(platform: Option<Platform>, arch: Arch, has_rosetta: bool) -> Ve
     };
     match p {
         // macOS 原生跑不了这些平台的二进制，与 Rosetta 无关
-        Platform::Linux | Platform::Win32 | Platform::Android | Platform::Freebsd => Verdict::Deadweight,
+        Platform::Linux | Platform::Win32 | Platform::Android | Platform::Freebsd => {
+            Verdict::Deadweight
+        }
         Platform::DarwinArm64 => match arch {
             Arch::Arm64 => Verdict::Keep,
             // 反向场景（intel 机器上的 arm64 包）很少见，交给人工
@@ -159,7 +161,10 @@ pub fn classify(platform: Option<Platform>, arch: Arch, has_rosetta: bool) -> Ve
 /// 先试 `uname -m`（macOS/Linux）；Windows 没有 uname，退回运行中二进制的
 /// `ARCH` 常量——Windows 上没有 Rosetta 这类「翻译层」歧义，二进制架构即本机架构。
 pub fn host_arch() -> Arch {
-    if let Ok(out) = std::process::Command::new("/usr/bin/uname").arg("-m").output() {
+    if let Ok(out) = std::process::Command::new("/usr/bin/uname")
+        .arg("-m")
+        .output()
+    {
         if out.status.success() {
             return match String::from_utf8_lossy(&out.stdout).trim() {
                 "arm64" | "aarch64" => Arch::Arm64,
@@ -194,9 +199,18 @@ mod tests {
     fn foreign_platforms_are_deadweight() {
         // 真实 Yarn 目录名
         let cases = [
-            ("npm-@esbuild-android-arm64-0.19.12-b0c2-integrity", Platform::Android),
-            ("npm-@next-swc-linux-x64-gnu-14.2.3-abc-integrity", Platform::Linux),
-            ("npm-@rollup-rollup-win32-x64-msvc-4.9.6-def-integrity", Platform::Win32),
+            (
+                "npm-@esbuild-android-arm64-0.19.12-b0c2-integrity",
+                Platform::Android,
+            ),
+            (
+                "npm-@next-swc-linux-x64-gnu-14.2.3-abc-integrity",
+                Platform::Linux,
+            ),
+            (
+                "npm-@rollup-rollup-win32-x64-msvc-4.9.6-def-integrity",
+                Platform::Win32,
+            ),
             ("npm-@esbuild-linux-64-0.21.5-xyz", Platform::Linux),
             ("npm-@esbuild-freebsd-arm64-0.19.0-q", Platform::Freebsd),
             // linux-musl-x64 中间夹 musl
@@ -216,8 +230,14 @@ mod tests {
     fn darwin_arm64_is_kept_on_arm_host() {
         let name = "npm-@next-swc-darwin-arm64-14.2.3-abc-integrity";
         assert_eq!(platform_of(name), Some(Platform::DarwinArm64));
-        assert_eq!(classify(platform_of(name), Arch::Arm64, false), Verdict::Keep);
-        assert_eq!(classify(platform_of(name), Arch::Arm64, true), Verdict::Keep);
+        assert_eq!(
+            classify(platform_of(name), Arch::Arm64, false),
+            Verdict::Keep
+        );
+        assert_eq!(
+            classify(platform_of(name), Arch::Arm64, true),
+            Verdict::Keep
+        );
     }
 
     #[test]
@@ -248,7 +268,10 @@ mod tests {
             "npm-window-size-1.1.0-abc",
         ] {
             assert_eq!(platform_of(name), None, "{name} 不该被判为平台包");
-            assert_eq!(classify(platform_of(name), Arch::Arm64, false), Verdict::Keep);
+            assert_eq!(
+                classify(platform_of(name), Arch::Arm64, false),
+                Verdict::Keep
+            );
         }
     }
 
@@ -270,7 +293,14 @@ mod tests {
         let has = has_rosetta();
         let v = classify(Some(Platform::DarwinX64), arch, has);
         if arch == Arch::Arm64 {
-            assert_eq!(v, if has { Verdict::NeedsConfirm } else { Verdict::Deadweight });
+            assert_eq!(
+                v,
+                if has {
+                    Verdict::NeedsConfirm
+                } else {
+                    Verdict::Deadweight
+                }
+            );
         }
     }
 }

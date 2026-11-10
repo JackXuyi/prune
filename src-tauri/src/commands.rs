@@ -47,11 +47,7 @@ pub fn mem_processes(state: State<'_, Arc<MemState>>) -> Vec<ProcMem> {
 }
 
 #[tauri::command]
-pub fn mem_history(
-    state: State<'_, Arc<MemState>>,
-    pid: i32,
-    minutes: u32,
-) -> Vec<Point> {
+pub fn mem_history(state: State<'_, Arc<MemState>>, pid: i32, minutes: u32) -> Vec<Point> {
     let since = now_secs() - (minutes.max(1) as i64) * 60;
     state.history(pid, since, 2000)
 }
@@ -110,8 +106,7 @@ pub fn reveal_path(path: String) -> Result<(), String> {
     if !p.exists() {
         return Err(format!("路径不存在：{path}"));
     }
-    reveal_impl(p)
-        .map_err(|e| format!("打开文件管理器失败：{e}"))
+    reveal_impl(p).map_err(|e| format!("打开文件管理器失败：{e}"))
 }
 
 #[cfg(target_os = "macos")]
@@ -147,7 +142,10 @@ fn reveal_impl(p: &std::path::Path) -> std::io::Result<()> {
     } else {
         p.parent().unwrap_or(p).to_path_buf()
     };
-    std::process::Command::new("xdg-open").arg(target).spawn().map(|_| ())
+    std::process::Command::new("xdg-open")
+        .arg(target)
+        .spawn()
+        .map(|_| ())
 }
 
 fn now_secs() -> i64 {
@@ -186,7 +184,12 @@ pub struct AppDiskState {
     cache: Mutex<AppDiskCache>,
     /// M10 批量本体测量缓存：卡片首屏每张卡都要一个数，同一批数据不该反复 du。
     /// 键是家族名；30 min 足以覆盖一次会话里反复切 tab 的场景。
-    bundles: Mutex<Option<(std::time::Instant, std::collections::HashMap<String, BundleSize>)>>,
+    bundles: Mutex<
+        Option<(
+            std::time::Instant,
+            std::collections::HashMap<String, BundleSize>,
+        )>,
+    >,
 }
 
 impl AppDiskState {
@@ -251,7 +254,9 @@ pub async fn app_bundles(
 
         // 命中缓存：同一批家族且未过期就直接用（新家族单独补测）
         let mut cached: std::collections::HashMap<String, BundleSize> = match guard.as_ref() {
-            Some((at, map)) if !force.unwrap_or(false) && at.elapsed() < prune_core::appdisk::TTL => {
+            Some((at, map))
+                if !force.unwrap_or(false) && at.elapsed() < prune_core::appdisk::TTL =>
+            {
                 map.clone()
             }
             _ => std::collections::HashMap::new(),
@@ -429,7 +434,9 @@ pub async fn app_icons(items: Vec<IconQuery>) -> Result<HashMap<String, String>,
                 scope.spawn(|| loop {
                     let i = cursor.fetch_add(1, Ordering::Relaxed);
                     let Some(item) = items.get(i) else { break };
-                    let Some(exe) = item.exe.as_deref() else { continue };
+                    let Some(exe) = item.exe.as_deref() else {
+                        continue;
+                    };
 
                     let t0 = std::time::Instant::now();
                     let Ok(path) =
@@ -445,7 +452,9 @@ pub async fn app_icons(items: Vec<IconQuery>) -> Result<HashMap<String, String>,
                         );
                         continue;
                     }
-                    let Ok(bytes) = std::fs::read(&path) else { continue };
+                    let Ok(bytes) = std::fs::read(&path) else {
+                        continue;
+                    };
                     let url = format!(
                         "data:image/png;base64,{}",
                         prune_core::base64::encode(&bytes)
@@ -482,9 +491,8 @@ pub fn app_history(
     family: String,
     hours: u32,
 ) -> Result<Vec<HourlyRow>, String> {
-    let from = prune_core::localtime::hour_string(
-        now_secs() - (hours.clamp(1, 24 * 10) as i64) * 3600,
-    );
+    let from =
+        prune_core::localtime::hour_string(now_secs() - (hours.clamp(1, 24 * 10) as i64) * 3600);
     state
         .app_history(&family, &from)
         .map_err(|e| format!("读取应用历史失败：{e}"))

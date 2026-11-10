@@ -101,9 +101,8 @@ pub fn default_gateway() -> Option<String> {
             continue;
         }
         // SAFETY: 按 sockaddr_in ABI 读 NextHop 起始的 16 字节（见函数注释）
-        let hop_bytes: [u8; 16] = unsafe {
-            std::ptr::read(std::ptr::addr_of!(row.NextHop) as *const [u8; 16])
-        };
+        let hop_bytes: [u8; 16] =
+            unsafe { std::ptr::read(std::ptr::addr_of!(row.NextHop) as *const [u8; 16]) };
         if hop_bytes[4..8] == [0, 0, 0, 0] {
             continue; // on-link 默认路由没有网关
         }

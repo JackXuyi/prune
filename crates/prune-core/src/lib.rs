@@ -50,7 +50,9 @@ mod tests {
     fn version_matches_package_json() {
         let pkg: serde_json::Value = serde_json::from_str(include_str!("../../../package.json"))
             .expect("package.json 应存在且为合法 JSON");
-        let expected = pkg["version"].as_str().expect("package.json 应有 version 字段");
+        let expected = pkg["version"]
+            .as_str()
+            .expect("package.json 应有 version 字段");
         assert_eq!(super::version(), expected);
     }
 }

@@ -114,7 +114,11 @@ pub fn parse_sample(text: &str) -> HashMap<i32, RawBytes> {
 ///   编一个数就是假事实；下一秒就有真实基线了。
 /// - 计数器变小（进程重启 / pid 复用）：按 0 处理，不能算负数后回绕成天文数字。
 /// - `secs <= 0`（时钟异常）：全部 0。
-pub fn diff(prev: &HashMap<i32, RawBytes>, cur: &HashMap<i32, RawBytes>, secs: f64) -> HashMap<i32, Speed> {
+pub fn diff(
+    prev: &HashMap<i32, RawBytes>,
+    cur: &HashMap<i32, RawBytes>,
+    secs: f64,
+) -> HashMap<i32, Speed> {
     let mut out = HashMap::with_capacity(cur.len());
     if secs <= 0.0 {
         return out;
@@ -251,7 +255,13 @@ WeChat.626,10,20,
         let mut prev = HashMap::new();
         prev.insert(1, RawBytes { down: 1000, up: 0 });
         let mut cur = HashMap::new();
-        cur.insert(1, RawBytes { down: 3000, up: 500 });
+        cur.insert(
+            1,
+            RawBytes {
+                down: 3000,
+                up: 500,
+            },
+        );
         let s = diff(&prev, &cur, 2.0);
         assert_eq!(s[&1].down_bps, 1000.0);
         assert_eq!(s[&1].up_bps, 250.0);
@@ -262,7 +272,13 @@ WeChat.626,10,20,
         // 新进程没有基线：编一个数就是假事实
         let prev = HashMap::new();
         let mut cur = HashMap::new();
-        cur.insert(7, RawBytes { down: 9_999_999, up: 1 });
+        cur.insert(
+            7,
+            RawBytes {
+                down: 9_999_999,
+                up: 1,
+            },
+        );
         let s = diff(&prev, &cur, 1.0);
         assert_eq!(s[&7].down_bps, 0.0);
     }
@@ -271,7 +287,13 @@ WeChat.626,10,20,
     fn counter_reset_does_not_wrap() {
         // 进程重启后累计值变小：不能算成 2^64 级的负数回绕
         let mut prev = HashMap::new();
-        prev.insert(3, RawBytes { down: 10_000, up: 10_000 });
+        prev.insert(
+            3,
+            RawBytes {
+                down: 10_000,
+                up: 10_000,
+            },
+        );
         let mut cur = HashMap::new();
         cur.insert(3, RawBytes { down: 100, up: 100 });
         let s = diff(&prev, &cur, 1.0);
@@ -291,8 +313,20 @@ WeChat.626,10,20,
     #[test]
     fn family_sum_ignores_unknown_pids() {
         let mut per = HashMap::new();
-        per.insert(1, Speed { down_bps: 100.0, up_bps: 10.0 });
-        per.insert(2, Speed { down_bps: 50.0, up_bps: 5.0 });
+        per.insert(
+            1,
+            Speed {
+                down_bps: 100.0,
+                up_bps: 10.0,
+            },
+        );
+        per.insert(
+            2,
+            Speed {
+                down_bps: 50.0,
+                up_bps: 5.0,
+            },
+        );
         let s = sum_of(&per, &[1, 2, 999]);
         assert_eq!(s.down_bps, 150.0);
         assert_eq!(s.up_bps, 15.0);
@@ -305,7 +339,14 @@ WeChat.626,10,20,
     fn parses_real_nettop_output() {
         let out = std::process::Command::new("nettop")
             .args([
-                "-P", "-x", "-l", "1", "-t", "external", "-J", "bytes_in,bytes_out",
+                "-P",
+                "-x",
+                "-l",
+                "1",
+                "-t",
+                "external",
+                "-J",
+                "bytes_in,bytes_out",
             ])
             .output()
             .expect("本机应有 nettop");

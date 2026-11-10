@@ -293,10 +293,7 @@ async fn app_net_round(
     *prev = Some((cur, now));
 
     // pid → family：复用上一轮快照的进程表，不额外枚举进程
-    let mem = app
-        .state::<Arc<crate::sampler::MemState>>()
-        .inner()
-        .clone();
+    let mem = app.state::<Arc<crate::sampler::MemState>>().inner().clone();
     let families: HashMap<i32, String> = mem
         .processes
         .lock()
@@ -327,7 +324,8 @@ async fn app_net_round(
 }
 
 #[cfg(target_os = "macos")]
-fn read_nettop() -> Result<String, String> {    use std::process::Command;
+fn read_nettop() -> Result<String, String> {
+    use std::process::Command;
     let out = Command::new("nettop")
         .args([
             "-P", // 按进程聚合（不按 socket）
@@ -488,7 +486,10 @@ impl TotalNetState {
     }
 
     pub fn snapshot(&self) -> Option<NetTotalSample> {
-        self.sample.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.sample
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// 网络 tab 还开着才提速到 1 s；切走只降节拍，**不清基线**
@@ -604,7 +605,10 @@ impl TotalNetState {
         };
         // note 只承载「必须让用户知道」的原因：连续 2 次落库失败才提示
         let note = if self.flush_failures.load(Ordering::Relaxed) >= 2 {
-            self.flush_err.lock().unwrap_or_else(|e| e.into_inner()).clone()
+            self.flush_err
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone()
         } else {
             None
         };
@@ -684,7 +688,8 @@ impl TotalNetState {
 
         let flushed = self.flush(&old, now);
         *self.today.lock().unwrap_or_else(|e| e.into_inner()) = Some(DayTraffic::zero(day.clone()));
-        *self.persisted_at.lock().unwrap_or_else(|e| e.into_inner()) = if flushed { now } else { 0 };
+        *self.persisted_at.lock().unwrap_or_else(|e| e.into_inner()) =
+            if flushed { now } else { 0 };
         eprintln!("[m14-net] 跨天：{old} → {day}（旧日已落库 = {flushed}）");
         true
     }
@@ -695,11 +700,19 @@ impl TotalNetState {
         if pending == (0, 0) {
             return;
         }
-        let attempted = *self.flush_attempt_at.lock().unwrap_or_else(|e| e.into_inner());
+        let attempted = *self
+            .flush_attempt_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         if now - attempted < FLUSH_INTERVAL_SECS {
             return;
         }
-        let day = match self.today.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+        let day = match self
+            .today
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+        {
             Some(t) => t.day.clone(),
             None => return,
         };
@@ -715,7 +728,10 @@ impl TotalNetState {
         if down == 0 && up == 0 {
             return true;
         }
-        *self.flush_attempt_at.lock().unwrap_or_else(|e| e.into_inner()) = now;
+        *self
+            .flush_attempt_at
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = now;
         let res = store.net_add(day, down, up, now).map_err(|e| e.to_string());
         self.apply_flush(day, now, down, up, res)
     }
@@ -756,7 +772,10 @@ impl TotalNetState {
     fn prune_once(&self, day: &str, now: i64) {
         let Some(store) = &self.store else { return };
         {
-            let mut last = self.last_prune_day.lock().unwrap_or_else(|e| e.into_inner());
+            let mut last = self
+                .last_prune_day
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
             if last.as_deref() == Some(day) {
                 return;
             }

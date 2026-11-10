@@ -108,7 +108,11 @@ mod tests {
     #[test]
     fn home_dir_is_absolute_when_env_present() {
         if let Some(home) = home_dir() {
-            assert!(home.is_absolute(), "主目录必须是绝对路径：{}", home.display());
+            assert!(
+                home.is_absolute(),
+                "主目录必须是绝对路径：{}",
+                home.display()
+            );
         }
     }
 
@@ -122,7 +126,11 @@ mod tests {
     fn config_dir_sits_under_home() {
         let home = std::env::temp_dir().join("prune-paths-home");
         let cfg = config_dir_in(&home);
-        assert!(cfg.starts_with(&home), "配置目录必须在 home 之下：{}", cfg.display());
+        assert!(
+            cfg.starts_with(&home),
+            "配置目录必须在 home 之下：{}",
+            cfg.display()
+        );
         assert_ne!(cfg, home, "配置目录不能等于 home 本身");
     }
 

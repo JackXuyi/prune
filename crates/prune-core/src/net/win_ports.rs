@@ -66,9 +66,7 @@ unsafe fn rows<T: Copy>(buf: &[u8]) -> Vec<T> {
         if off + row_size > buf.len() {
             break;
         }
-        out.push(std::ptr::read_unaligned(
-            buf.as_ptr().add(off) as *const T,
-        ));
+        out.push(std::ptr::read_unaligned(buf.as_ptr().add(off) as *const T));
     }
     out
 }
@@ -114,20 +112,16 @@ pub fn scan_tcp() -> Result<TcpScan, String> {
 
     unsafe {
         // IPv4
-        let buf = query(|p, s| {
-            GetExtendedTcpTable(p, s, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_ALL, 0)
-        })?;
+        let buf =
+            query(|p, s| GetExtendedTcpTable(p, s, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_ALL, 0))?;
         for row in rows::<MIB_TCPROW_OWNER_PID>(&buf) {
             let port = port_of(row.dwLocalPort);
             let addr = Ipv4Addr::from(row.dwLocalAddr.to_ne_bytes()).to_string();
             bump(&mut scan, row.dwOwningPid, row.dwState);
             match row.dwState {
-                STATE_LISTEN => scan.listeners.push(binding(
-                    port,
-                    &addr,
-                    false,
-                    row.dwOwningPid,
-                )),
+                STATE_LISTEN => scan
+                    .listeners
+                    .push(binding(port, &addr, false, row.dwOwningPid)),
                 STATE_ESTAB => *conns.entry(port).or_insert(0) += 1,
                 _ => {}
             }
@@ -142,7 +136,9 @@ pub fn scan_tcp() -> Result<TcpScan, String> {
             let addr = Ipv6Addr::from(row.ucLocalAddr).to_string();
             bump(&mut scan, row.dwOwningPid, row.dwState);
             match row.dwState {
-                STATE_LISTEN => scan.listeners.push(binding(port, &addr, true, row.dwOwningPid)),
+                STATE_LISTEN => scan
+                    .listeners
+                    .push(binding(port, &addr, true, row.dwOwningPid)),
                 STATE_ESTAB => {
                     // 同一服务端口的连接只按 v4/v6 各统计一次，端口相同即合并
                     *conns.entry(port).or_insert(0) += 1
@@ -161,9 +157,8 @@ pub fn scan_tcp() -> Result<TcpScan, String> {
 pub fn scan_udp() -> Result<Vec<PortBinding>, String> {
     let mut out = Vec::new();
     unsafe {
-        let buf = query(|p, s| {
-            GetExtendedUdpTable(p, s, 0, AF_INET as u32, UDP_TABLE_OWNER_PID, 0)
-        })?;
+        let buf =
+            query(|p, s| GetExtendedUdpTable(p, s, 0, AF_INET as u32, UDP_TABLE_OWNER_PID, 0))?;
         for row in rows::<MIB_UDPROW_OWNER_PID>(&buf) {
             let port = port_of(row.dwLocalPort);
             if port == 0 {
@@ -173,9 +168,8 @@ pub fn scan_udp() -> Result<Vec<PortBinding>, String> {
             out.push(binding(port, &addr, false, row.dwOwningPid));
         }
 
-        let buf6 = query(|p, s| {
-            GetExtendedUdpTable(p, s, 0, AF_INET6 as u32, UDP_TABLE_OWNER_PID, 0)
-        })?;
+        let buf6 =
+            query(|p, s| GetExtendedUdpTable(p, s, 0, AF_INET6 as u32, UDP_TABLE_OWNER_PID, 0))?;
         for row in rows::<MIB_UDP6ROW_OWNER_PID>(&buf6) {
             let port = port_of(row.dwLocalPort);
             if port == 0 {
@@ -197,10 +191,9 @@ pub fn scan_kernel_tcp() -> Option<KernelTcp> {
     let mut tw: std::collections::BTreeSet<u16> = std::collections::BTreeSet::new();
 
     unsafe {
-        let buf = query(|p, s| {
-            GetExtendedTcpTable(p, s, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_ALL, 0)
-        })
-        .ok()?;
+        let buf =
+            query(|p, s| GetExtendedTcpTable(p, s, 0, AF_INET as u32, TCP_TABLE_OWNER_PID_ALL, 0))
+                .ok()?;
         for row in rows::<MIB_TCPROW_OWNER_PID>(&buf) {
             match row.dwState {
                 STATE_LISTEN => out.listen_total += 1,
@@ -213,10 +206,9 @@ pub fn scan_kernel_tcp() -> Option<KernelTcp> {
                 _ => {}
             }
         }
-        let buf6 = query(|p, s| {
-            GetExtendedTcpTable(p, s, 0, AF_INET6 as u32, TCP_TABLE_OWNER_PID_ALL, 0)
-        })
-        .ok()?;
+        let buf6 =
+            query(|p, s| GetExtendedTcpTable(p, s, 0, AF_INET6 as u32, TCP_TABLE_OWNER_PID_ALL, 0))
+                .ok()?;
         for row in rows::<MIB_TCP6ROW_OWNER_PID>(&buf6) {
             match row.dwState {
                 STATE_LISTEN => out.listen_total += 1,
@@ -234,4 +226,3 @@ pub fn scan_kernel_tcp() -> Option<KernelTcp> {
     out.time_wait_ports = tw.into_iter().collect();
     Some(out)
 }
-

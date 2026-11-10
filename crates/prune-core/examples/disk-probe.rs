@@ -10,7 +10,7 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use prune_core::classify::{self, host_arch, has_rosetta};
+use prune_core::classify::{self, has_rosetta, host_arch};
 use prune_core::disk;
 use prune_core::disk::whitelist::Level;
 use prune_core::reclaim;
@@ -49,9 +49,16 @@ fn main() {
     let elapsed = started.elapsed();
     let report = &report;
 
-    println!("\n== 扫描完成 {} ms（in-report {} ms）==", elapsed.as_millis(), report.scan_elapsed_ms);
+    println!(
+        "\n== 扫描完成 {} ms（in-report {} ms）==",
+        elapsed.as_millis(),
+        report.scan_elapsed_ms
+    );
 
-    println!("\n{:<28} {:>10} {:>8} {:>6}  {}", "组", "体积", "条目", "级别", "Deadweight");
+    println!(
+        "\n{:<28} {:>10} {:>8} {:>6}  {}",
+        "组", "体积", "条目", "级别", "Deadweight"
+    );
     for g in &report.groups {
         let dw = g
             .deadweight
@@ -63,7 +70,9 @@ fn main() {
                     d.entry_count,
                     mb(d.native_bytes),
                     mb(d.other_bytes),
-                    d.ratio.map(|r| format!("{r:.2}:1")).unwrap_or_else(|| "—".into())
+                    d.ratio
+                        .map(|r| format!("{r:.2}:1"))
+                        .unwrap_or_else(|| "—".into())
                 )
             })
             .unwrap_or_else(|| "—".into());
@@ -101,11 +110,21 @@ fn main() {
         if let Some(dw) = &yarn.deadweight {
             println!("\n== A1 平台分布（严格匹配）==");
             for p in &dw.by_platform {
-                println!("  {:<12} {:>4} 条  {:>10}", p.platform, p.entry_count, mb(p.bytes));
+                println!(
+                    "  {:<12} {:>4} 条  {:>10}",
+                    p.platform,
+                    p.entry_count,
+                    mb(p.bytes)
+                );
             }
             println!("\n== Top 10 死重条目 ==");
             for it in dw.items.iter().take(10) {
-                println!("  {:>10}  {:<12} {}", mb(it.bytes), it.platform.clone().unwrap_or_default(), it.name);
+                println!(
+                    "  {:>10}  {:<12} {}",
+                    mb(it.bytes),
+                    it.platform.clone().unwrap_or_default(),
+                    it.name
+                );
             }
         }
         // 覆盖率对照：松散匹配（任何 linux/win32/android/darwin-x64 字样）
@@ -114,7 +133,9 @@ fn main() {
             .iter()
             .filter(|(n, _)| {
                 let l = n.to_ascii_lowercase();
-                ["linux", "win32", "android", "darwin-x64"].iter().any(|t| l.contains(t))
+                ["linux", "win32", "android", "darwin-x64"]
+                    .iter()
+                    .any(|t| l.contains(t))
             })
             .count();
         let strict = sizes
@@ -138,7 +159,9 @@ fn main() {
         if let Ok(out) = std::env::var("PRUNE_A1_SAMPLE") {
             let has_token = |n: &str| {
                 let l = n.to_ascii_lowercase();
-                ["linux", "win32", "android", "darwin"].iter().any(|t| l.contains(t))
+                ["linux", "win32", "android", "darwin"]
+                    .iter()
+                    .any(|t| l.contains(t))
             };
             let (hits, rest): (Vec<_>, Vec<_>) = sizes.iter().partition(|(n, _)| has_token(n));
             let mut picked: Vec<&(String, u64)> = Vec::new();
@@ -187,7 +210,11 @@ fn main() {
     println!(
         "扫描 {} ms（预算 20000 ms）→ {}",
         elapsed.as_millis(),
-        if elapsed.as_millis() < 20_000 { "✅ 通过" } else { "❌ 超标" }
+        if elapsed.as_millis() < 20_000 {
+            "✅ 通过"
+        } else {
+            "❌ 超标"
+        }
     );
 
     // ---------------------------------------------------------------- dry-run

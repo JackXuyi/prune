@@ -14,8 +14,8 @@ use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
-use prune_core::disk::{self, CacheGroup};
 use prune_core::disk::whitelist::Level;
+use prune_core::disk::{self, CacheGroup};
 use prune_core::leak;
 use prune_core::mem;
 use prune_core::net;
@@ -26,13 +26,28 @@ use prune_core::swap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Scan { json: bool },
-    Reclaim { yes: bool },
-    Mem { swapped: bool, json: bool, watch: Option<u64> },
+    Scan {
+        json: bool,
+    },
+    Reclaim {
+        yes: bool,
+    },
+    Mem {
+        swapped: bool,
+        json: bool,
+        watch: Option<u64>,
+    },
     /// `prune port` 列关注层；`prune port 3000` 查单个端口；`--all` 含内部 IPC
-    Port { port: Option<u16>, json: bool, all: bool },
+    Port {
+        port: Option<u16>,
+        json: bool,
+        all: bool,
+    },
     /// `prune app <家族名>`：一个应用的五域资源画像（M8）
-    App { name: String, json: bool },
+    App {
+        name: String,
+        json: bool,
+    },
     Mcp,
     Version,
 }
@@ -89,7 +104,9 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                     "--watch" => watch = Some(10),
                     "--interval" => {
                         i += 1;
-                        let v = all.get(i).ok_or_else(|| "--interval 需要一个秒数".to_string())?;
+                        let v = all
+                            .get(i)
+                            .ok_or_else(|| "--interval 需要一个秒数".to_string())?;
                         watch = Some(
                             v.parse::<u64>()
                                 .map_err(|_| format!("--interval 不是数字: {v:?}"))?,
@@ -99,7 +116,11 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                 }
                 i += 1;
             }
-            Ok(Command::Mem { swapped, json, watch })
+            Ok(Command::Mem {
+                swapped,
+                json,
+                watch,
+            })
         }
         "port" => {
             let mut json = false;
@@ -185,14 +206,19 @@ fn main() {
         }
         Command::Scan { json } => cmd_scan(json),
         Command::Reclaim { yes } => cmd_reclaim(yes),
-        Command::Mem { swapped, json, watch } => match watch {
+        Command::Mem {
+            swapped,
+            json,
+            watch,
+        } => match watch {
             Some(interval) => cmd_watch(interval),
             None => cmd_mem(swapped, json),
         },
         Command::Port { port, json, all } => cmd_port(port, json, all),
         Command::App { name, json } => cmd_app(&name, json),
         Command::Mcp => cmd_mcp(),
-    };    std::process::exit(code);
+    };
+    std::process::exit(code);
 }
 
 fn home_dir() -> PathBuf {
@@ -252,10 +278,7 @@ fn cmd_scan(json: bool) -> i32 {
         hb(t.l3)
     );
     if t.l4 > 0 {
-        println!(
-            "（另有 L4 Docker {}，不自动处理，见文末命令）",
-            hb(t.l4)
-        );
+        println!("（另有 L4 Docker {}，不自动处理，见文末命令）", hb(t.l4));
     }
     println!();
     println!("{:<34}{:>12}  {:>8}  {}", "分组", "体积", "条目", "说明");
@@ -281,7 +304,12 @@ fn cmd_scan(json: bool) -> i32 {
                 dw.ratio.unwrap_or(0.0)
             );
             for s in dw.by_platform.iter().take(6) {
-                println!("  {:<10} {:>4} 条  {:>10}", s.platform, s.entry_count, hb(s.bytes));
+                println!(
+                    "  {:<10} {:>4} 条  {:>10}",
+                    s.platform,
+                    s.entry_count,
+                    hb(s.bytes)
+                );
             }
             println!("  最大的几条：");
             for it in dw.items.iter().take(5) {
@@ -345,7 +373,11 @@ fn cmd_reclaim(yes: bool) -> i32 {
         println!("没有可清理的零风险项。");
         return 0;
     }
-    println!("将清理 {} 项，合计 {}：", pv.items.len(), hb(pv.total_bytes));
+    println!(
+        "将清理 {} 项，合计 {}：",
+        pv.items.len(),
+        hb(pv.total_bytes)
+    );
     for it in &pv.items {
         println!("  {:>10}  {}", hb(it.bytes), it.path);
     }
@@ -362,11 +394,7 @@ fn cmd_reclaim(yes: bool) -> i32 {
     // CLI v1 只做 L1（A1 死重条目），静态白名单足够；报告派生白名单留给桌面端 A4/A5
     match reclaim::execute(&pv.items, &home, true, Limits::default(), &[]) {
         Ok(rep) => {
-            println!(
-                "已移入废纸篓 {} 项，{}。",
-                rep.moved,
-                hb(rep.bytes)
-            );
+            println!("已移入废纸篓 {} 项，{}。", rep.moved, hb(rep.bytes));
             for f in &rep.failed {
                 println!("  ⚠️ 失败 {}：{}", f.path, f.reason);
             }
@@ -426,7 +454,10 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
     );
     println!();
     let head = if swapped {
-        format!("{:<22}{:>11}{:>11}{:>6}  {}", "应用家族", "占用", "其中换出", "进程", "口径")
+        format!(
+            "{:<22}{:>11}{:>11}{:>6}  {}",
+            "应用家族", "占用", "其中换出", "进程", "口径"
+        )
     } else {
         format!("{:<22}{:>11}{:>6}  {}", "应用家族", "占用", "进程", "口径")
     };
@@ -513,7 +544,10 @@ fn cmd_port(only: Option<u16>, json: bool, all: bool) -> i32 {
                 exposure_cn(e.exposure)
             );
             for b in &e.listeners {
-                let pid = b.pid.map(|p| p.to_string()).unwrap_or_else(|| "内核持有".into());
+                let pid = b
+                    .pid
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "内核持有".into());
                 println!("  持有者  {} (pid {})  绑定 {}", b.comm, pid, b.addr);
                 if let (Some(label), Some(path)) = (&b.project_label, &b.project) {
                     println!("  项目    {label}\n          {path}");
@@ -685,7 +719,12 @@ pub fn app_resource_report(query: &str) -> Result<AppResource, AppMatchError> {
     let ports: Vec<(u16, net::BindScope)> = snap
         .entries
         .iter()
-        .filter(|e| e.watched && e.listeners.iter().any(|b| b.pid.is_some_and(|p| pids.contains(&p))))
+        .filter(|e| {
+            e.watched
+                && e.listeners
+                    .iter()
+                    .any(|b| b.pid.is_some_and(|p| pids.contains(&p)))
+        })
         .map(|e| (e.port, e.exposure))
         .collect();
 
@@ -720,7 +759,10 @@ fn cmd_app(query: &str, json: bool) -> i32 {
             2
         }
         Err(AppMatchError::Ambiguous(candidates)) => {
-            eprintln!("{query:?} 同时匹配了 {} 个家族，请用全名重试：", candidates.len());
+            eprintln!(
+                "{query:?} 同时匹配了 {} 个家族，请用全名重试：",
+                candidates.len()
+            );
             for n in &candidates {
                 eprintln!("  {n}");
             }
@@ -745,14 +787,15 @@ fn cmd_app(query: &str, json: bool) -> i32 {
                 return 0;
             }
 
-            println!(
-                "{} · {} 个进程",
-                r.family, r.process_count
-            );
+            println!("{} · {} 个进程", r.family, r.process_count);
             println!(
                 "内存  {}{}",
                 hb(r.memory_bytes),
-                if r.memory_exact { "" } else { "（≈ RSS 下界，未深探）" }
+                if r.memory_exact {
+                    ""
+                } else {
+                    "（≈ RSS 下界，未深探）"
+                }
             );
             println!(
                 "CPU   {}",
@@ -760,7 +803,11 @@ fn cmd_app(query: &str, json: bool) -> i32 {
                     .map(|c| format!(
                         "{}{}",
                         format!("{c:.1}%"),
-                        if r.cpu_covered < r.process_count { "（下界）" } else { "" }
+                        if r.cpu_covered < r.process_count {
+                            "（下界）"
+                        } else {
+                            ""
+                        }
                     ))
                     .unwrap_or_else(|| "—".into())
             );
@@ -926,7 +973,12 @@ fn ts_hms(ts: i64) -> String {
         let t = ts as libc::time_t;
         let tm = libc::localtime(&t);
         if !tm.is_null() {
-            return format!("{:02}:{:02}:{:02}", (*tm).tm_hour, (*tm).tm_min, (*tm).tm_sec);
+            return format!(
+                "{:02}:{:02}:{:02}",
+                (*tm).tm_hour,
+                (*tm).tm_min,
+                (*tm).tm_sec
+            );
         }
     }
     format!("{ts}")
@@ -976,15 +1028,27 @@ mod tests {
         );
         assert_eq!(
             parse_args(&[s("mem"), s("--swapped")]).unwrap(),
-            Command::Mem { swapped: true, json: false, watch: None }
+            Command::Mem {
+                swapped: true,
+                json: false,
+                watch: None
+            }
         );
         assert_eq!(
             parse_args(&[s("mem"), s("--watch")]).unwrap(),
-            Command::Mem { swapped: false, json: false, watch: Some(10) }
+            Command::Mem {
+                swapped: false,
+                json: false,
+                watch: Some(10)
+            }
         );
         assert_eq!(
             parse_args(&[s("mem"), s("--watch"), s("--interval"), s("5")]).unwrap(),
-            Command::Mem { swapped: false, json: false, watch: Some(5) }
+            Command::Mem {
+                swapped: false,
+                json: false,
+                watch: Some(5)
+            }
         );
         assert_eq!(parse_args(&[s("mcp")]).unwrap(), Command::Mcp);
         assert_eq!(parse_args(&[s("--version")]).unwrap(), Command::Version);
@@ -1018,15 +1082,27 @@ mod tests {
     fn parses_port_subcommand() {
         assert_eq!(
             parse_args(&[s("port")]).unwrap(),
-            Command::Port { port: None, json: false, all: false }
+            Command::Port {
+                port: None,
+                json: false,
+                all: false
+            }
         );
         assert_eq!(
             parse_args(&[s("port"), s("3000")]).unwrap(),
-            Command::Port { port: Some(3000), json: false, all: false }
+            Command::Port {
+                port: Some(3000),
+                json: false,
+                all: false
+            }
         );
         assert_eq!(
             parse_args(&[s("port"), s("3000"), s("--json"), s("--all")]).unwrap(),
-            Command::Port { port: Some(3000), json: true, all: true }
+            Command::Port {
+                port: Some(3000),
+                json: true,
+                all: true
+            }
         );
         // 端口 0 是通配 fd，不是服务：命令行上接受但扫描层会丢掉
         assert!(parse_args(&[s("port"), s("0")]).is_ok());

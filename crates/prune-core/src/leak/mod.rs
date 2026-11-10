@@ -207,13 +207,7 @@ pub fn is_gc_runtime(name: &str, family: &str) -> bool {
 /// 它们是用户可行动对象（能重启验证），而 Chrome 的涨落由页面驱动、报了也不可行动。
 /// 见方案 D-L2。
 const BENIGN_FAMILIES: &[&str] = &[
-    "chrome",
-    "safari",
-    "firefox",
-    "arc",
-    "electron",
-    "docker",
-    "prune",
+    "chrome", "safari", "firefox", "arc", "electron", "docker", "prune",
 ];
 
 /// 良性名单里的名字/路径关键词（虚拟机与容器运行时）
@@ -228,7 +222,12 @@ const BENIGN_TOKENS: &[&str] = &[
 ];
 
 /// 系统进程：这些路径下的进程不归用户处置
-const SYSTEM_PREFIXES: &[&str] = &["/System/", "/System/Library/", "/usr/libexec/", "/usr/sbin/"];
+const SYSTEM_PREFIXES: &[&str] = &[
+    "/System/",
+    "/System/Library/",
+    "/usr/libexec/",
+    "/usr/sbin/",
+];
 
 /// 是否属于「不该报」的良性对象
 pub fn is_benign(family: &str, name: &str, exe: Option<&str>) -> bool {
@@ -255,7 +254,9 @@ pub fn is_benign(family: &str, name: &str, exe: Option<&str>) -> bool {
 pub fn analyze(series: &ProcSeries, procs: &[ProcMem], now: i64) -> Outcome {
     let exe = procs
         .iter()
-        .find(|p| p.pid == series.pid && (series.start_time == 0 || p.start_time == series.start_time))
+        .find(|p| {
+            p.pid == series.pid && (series.start_time == 0 || p.start_time == series.start_time)
+        })
         .and_then(|p| p.exe.clone());
     let exe = exe.as_deref();
 
@@ -276,7 +277,11 @@ pub fn analyze(series: &ProcSeries, procs: &[ProcMem], now: i64) -> Outcome {
     }
 
     // 条件 2/3：窗口内覆盖与连续性
-    let windowed: Vec<&Sample> = series.samples.iter().filter(|s| s.ts >= window_start).collect();
+    let windowed: Vec<&Sample> = series
+        .samples
+        .iter()
+        .filter(|s| s.ts >= window_start)
+        .collect();
     if windowed.len() < MIN_POINTS {
         return Outcome::Insufficient;
     }
@@ -288,7 +293,10 @@ pub fn analyze(series: &ProcSeries, procs: &[ProcMem], now: i64) -> Outcome {
     if series.start_time == 0 && last.ts - first.ts < (window as f64 * COVERAGE_SLACK) as i64 {
         return Outcome::Insufficient;
     }
-    if windowed.windows(2).any(|w| w[1].ts - w[0].ts > MAX_GAP_SECS) {
+    if windowed
+        .windows(2)
+        .any(|w| w[1].ts - w[0].ts > MAX_GAP_SECS)
+    {
         return Outcome::Insufficient;
     }
 
@@ -475,7 +483,11 @@ mod tests {
             .iter()
             .map(|p| ((p.ts - TS0) as f64 / 60.0, p.footprint as f64))
             .collect();
-        assert!(fit(&pts).r2 > R2_MIN, "该形态 R² 应达标，实得 {}", fit(&pts).r2);
+        assert!(
+            fit(&pts).r2 > R2_MIN,
+            "该形态 R² 应达标，实得 {}",
+            fit(&pts).r2
+        );
 
         match analyze(&s, &[], NOW) {
             Outcome::Below => {}
@@ -528,7 +540,9 @@ mod tests {
     #[test]
     fn insufficient_series_never_produce_items() {
         // 只有 3 个点
-        let short = series(5, "Cursor", NOW - 900, 300, 3, |i| mb_u64(100 + 100 * i as u64));
+        let short = series(5, "Cursor", NOW - 900, 300, 3, |i| {
+            mb_u64(100 + 100 * i as u64)
+        });
         assert_eq!(analyze(&short, &[], NOW), Outcome::Insufficient);
 
         // 序列够长，但进程是 10 min 前才启动的
@@ -546,13 +560,31 @@ mod tests {
             family: "Cursor".into(),
             name: "p7".into(),
             samples: vec![
-                Sample { ts: TS0, footprint: mb_u64(100) },
-                Sample { ts: TS0 + 300, footprint: mb_u64(130) },
-                Sample { ts: TS0 + 600, footprint: mb_u64(160) },
+                Sample {
+                    ts: TS0,
+                    footprint: mb_u64(100),
+                },
+                Sample {
+                    ts: TS0 + 300,
+                    footprint: mb_u64(130),
+                },
+                Sample {
+                    ts: TS0 + 600,
+                    footprint: mb_u64(160),
+                },
                 // 断档 20 min
-                Sample { ts: TS0 + 1800, footprint: mb_u64(400) },
-                Sample { ts: TS0 + 1860, footprint: mb_u64(410) },
-                Sample { ts: TS0 + 1920, footprint: mb_u64(420) },
+                Sample {
+                    ts: TS0 + 1800,
+                    footprint: mb_u64(400),
+                },
+                Sample {
+                    ts: TS0 + 1860,
+                    footprint: mb_u64(410),
+                },
+                Sample {
+                    ts: TS0 + 1920,
+                    footprint: mb_u64(420),
+                },
             ],
         };
         assert_eq!(analyze(&s, &[], NOW), Outcome::Insufficient);
@@ -567,14 +599,30 @@ mod tests {
             analyze(&s, &procs, NOW)
         };
         for (pid, family, exe) in [
-            (10, "Chrome", Some("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")),
+            (
+                10,
+                "Chrome",
+                Some("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"),
+            ),
             (11, "Electron", None),
             (12, "Docker", None),
-            (13, "Prune", Some("/Applications/Prune.app/Contents/MacOS/prune-app")),
-            (14, "SomeApp", Some("/System/Library/Frameworks/Foo.framework/foo")),
+            (
+                13,
+                "Prune",
+                Some("/Applications/Prune.app/Contents/MacOS/prune-app"),
+            ),
+            (
+                14,
+                "SomeApp",
+                Some("/System/Library/Frameworks/Foo.framework/foo"),
+            ),
             (15, "qemu-system-aarch64", None),
         ] {
-            assert_eq!(climb(pid, family, exe), Outcome::Benign, "{family} 应被判为良性");
+            assert_eq!(
+                climb(pid, family, exe),
+                Outcome::Benign,
+                "{family} 应被判为良性"
+            );
         }
     }
 
@@ -597,15 +645,25 @@ mod tests {
     #[test]
     fn gc_runtime_needs_double_threshold() {
         // 30 min +200 MB，对普通进程够，对 Node 不够
-        let node_like = series(30, "Node", TS0, 300, 7, |i| mb_u64(400 + (200 / 6) * i as u64));
-        assert_eq!(analyze(&node_like, &[], NOW), Outcome::Insufficient, "GC 窗口是 60 min，30 min 数据不足");
+        let node_like = series(30, "Node", TS0, 300, 7, |i| {
+            mb_u64(400 + (200 / 6) * i as u64)
+        });
+        assert_eq!(
+            analyze(&node_like, &[], NOW),
+            Outcome::Insufficient,
+            "GC 窗口是 60 min，30 min 数据不足"
+        );
 
         // 普通进程同样数据 → 命中
-        let plain = series(31, "Cursor", TS0, 300, 7, |i| mb_u64(400 + (200 / 6) * i as u64));
+        let plain = series(31, "Cursor", TS0, 300, 7, |i| {
+            mb_u64(400 + (200 / 6) * i as u64)
+        });
         assert!(matches!(analyze(&plain, &[], NOW), Outcome::Leak(_)));
 
         // Node 在 60 min 窗口 +350 MB → 命中
-        let node_long = series(32, "Node", NOW - 3600, 300, 13, |i| mb_u64(400 + 30 * i as u64));
+        let node_long = series(32, "Node", NOW - 3600, 300, 13, |i| {
+            mb_u64(400 + 30 * i as u64)
+        });
         match analyze(&node_long, &[], NOW) {
             Outcome::Leak(item) => {
                 assert!(item.gc_runtime);
@@ -619,7 +677,9 @@ mod tests {
     #[test]
     fn reused_pid_series_are_judged_independently() {
         let old = series(40, "Cursor", TS0, 300, 7, |i| mb_u64(400 + 40 * i as u64));
-        let mut new = series(40, "Cursor", NOW - 600, 300, 3, |i| mb_u64(900 + 50 * i as u64));
+        let mut new = series(40, "Cursor", NOW - 600, 300, 3, |i| {
+            mb_u64(900 + 50 * i as u64)
+        });
         new.start_time = (NOW - 600) as u64;
         assert!(matches!(analyze(&old, &[], NOW), Outcome::Leak(_)));
         assert_eq!(analyze(&new, &[], NOW), Outcome::Insufficient);

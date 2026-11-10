@@ -168,7 +168,11 @@ pub async fn scan_now(app: &AppHandle, full: bool) -> Result<(), String> {
 
     eprintln!(
         "[m1-disk] {}完成 {} ms · 主数字 {:.2} GB · 死重 {:.2} GB",
-        if is_full { "全量扫描" } else { "增量扫描" },
+        if is_full {
+            "全量扫描"
+        } else {
+            "增量扫描"
+        },
         elapsed,
         report.totals.reclaimable as f64 / 1e9,
         report.totals.deadweight as f64 / 1e9

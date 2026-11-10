@@ -32,11 +32,18 @@ pub fn default_db_path() -> PathBuf {
 }
 
 /// 处理一行 JSON-RPC 消息。通知（无 id）返回 None，其余返回响应行。
-pub fn handle_message(line: &str, tools: &dyn Fn(&str, &Value) -> Result<Value, String>) -> Option<String> {
+pub fn handle_message(
+    line: &str,
+    tools: &dyn Fn(&str, &Value) -> Result<Value, String>,
+) -> Option<String> {
     let msg: Value = match serde_json::from_str(line) {
         Ok(v) => v,
         Err(e) => {
-            return Some(error_response(Value::Null, -32700, &format!("parse error: {e}")));
+            return Some(error_response(
+                Value::Null,
+                -32700,
+                &format!("parse error: {e}"),
+            ));
         }
     };
 
@@ -67,7 +74,13 @@ pub fn handle_message(line: &str, tools: &dyn Fn(&str, &Value) -> Result<Value, 
                 Err(e) => Err(e),
             }
         }
-        _ => return Some(error_response(id, -32601, &format!("method not found: {method}"))),
+        _ => {
+            return Some(error_response(
+                id,
+                -32601,
+                &format!("method not found: {method}"),
+            ))
+        }
     };
 
     Some(match result {
@@ -339,7 +352,10 @@ fn tool_port_listeners(args: &Value) -> Value {
 pub fn docker_hints() -> Vec<(&'static str, &'static str)> {
     vec![
         ("docker system prune", "清理悬空镜像、停止的容器、无用网络"),
-        ("docker system prune --volumes", "连同未使用的数据卷一起清理（⚠️ 数据卷删除后不可恢复）"),
+        (
+            "docker system prune --volumes",
+            "连同未使用的数据卷一起清理（⚠️ 数据卷删除后不可恢复）",
+        ),
         ("docker builder prune", "清理构建缓存"),
     ]
 }
@@ -474,7 +490,13 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            ["mem_snapshot", "mem_leaks", "disk_report", "port_listeners", "app_resources"]
+            [
+                "mem_snapshot",
+                "mem_leaks",
+                "disk_report",
+                "port_listeners",
+                "app_resources"
+            ]
         );
         for t in defs.as_array().unwrap() {
             assert!(t["description"].as_str().unwrap().len() > 10);

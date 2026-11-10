@@ -483,11 +483,12 @@ mod tests {
 
     #[test]
     fn windows_entries_are_home_relative_appdata_paths() {
-        let win: Vec<&WhitelistEntry> = ENTRIES
-            .iter()
-            .filter(|e| e.os == Os::WindowsOnly)
-            .collect();
-        assert!(!win.is_empty(), "必须登记 Windows 规则，否则 Windows 上扫不出东西");
+        let win: Vec<&WhitelistEntry> =
+            ENTRIES.iter().filter(|e| e.os == Os::WindowsOnly).collect();
+        assert!(
+            !win.is_empty(),
+            "必须登记 Windows 规则，否则 Windows 上扫不出东西"
+        );
         for e in win {
             assert!(
                 !Path::new(e.rel).is_absolute(),
@@ -511,7 +512,11 @@ mod tests {
     #[test]
     fn macos_entries_are_home_relative() {
         for e in ENTRIES.iter().filter(|e| e.os == Os::MacOnly) {
-            assert!(!Path::new(e.rel).is_absolute(), "{} 的 rel 必须相对 home", e.key);
+            assert!(
+                !Path::new(e.rel).is_absolute(),
+                "{} 的 rel 必须相对 home",
+                e.key
+            );
             assert!(!e.rel.starts_with("AppData/"), "{} 是 macOS 条目", e.key);
         }
     }

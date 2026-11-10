@@ -13,9 +13,7 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
-use tauri::{
-    AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent,
-};
+use tauri::{AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent};
 
 #[cfg(target_os = "macos")]
 use crate::popover;
@@ -114,8 +112,7 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     LAST_FRAME.store(FRAME_STATIC, Ordering::Relaxed);
 
     let open_main = MenuItem::with_id(app, "open-main", "打开主窗口", true, None::<&str>)?;
-    let check_update =
-        MenuItem::with_id(app, MENU_CHECK_UPDATE, "检查更新", true, None::<&str>)?;
+    let check_update = MenuItem::with_id(app, MENU_CHECK_UPDATE, "检查更新", true, None::<&str>)?;
     let cpu_anim = CheckMenuItem::with_id(
         app,
         MENU_TOGGLE_CPU_ANIM,
@@ -171,7 +168,9 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             &quit,
         ],
     )?;
-    app.manage(TrayMenuState { themes: theme_items });
+    app.manage(TrayMenuState {
+        themes: theme_items,
+    });
 
     let tray = TrayIconBuilder::with_id(TRAY_ID)
         .icon(theme.static_icon())
@@ -245,7 +244,11 @@ fn switch_theme(app: &AppHandle, theme: IconTheme) {
         // 真正把新主题的静态图下发一次（否则图标停在旧皮肤上）
         LAST_FRAME.store(FRAME_DIRTY, Ordering::Relaxed);
         set_frame(app, None);
-        eprintln!("[m11-tray] 顶部图标已切换: {}（{}）", theme.label(), theme.id());
+        eprintln!(
+            "[m11-tray] 顶部图标已切换: {}（{}）",
+            theme.label(),
+            theme.id()
+        );
     }
     sync_checks(app, theme);
 }
@@ -358,7 +361,9 @@ fn set_icon_frame(
 /// 切到指定帧（None = 回静态原图）。失败只记日志，不 panic、不中断循环；
 /// 相同帧跳过 set。
 fn set_frame(app: &AppHandle, frame: Option<usize>) {
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
     let theme = current_theme();
     let target = frame.unwrap_or(FRAME_STATIC);
     if LAST_FRAME.load(Ordering::Relaxed) == target {
@@ -400,9 +405,9 @@ pub async fn run_anim(app: AppHandle) {
                 break;
             }
             set_frame(&app, Some(beat));
-            tokio::time::sleep(std::time::Duration::from_millis(anim_beat_ms(fresh_cpu_usage(
-                &app,
-            ))))
+            tokio::time::sleep(std::time::Duration::from_millis(anim_beat_ms(
+                fresh_cpu_usage(&app),
+            )))
             .await;
         }
     }
@@ -414,7 +419,9 @@ pub async fn run_anim(app: AppHandle) {
 /// M13-T5 起 tooltip 承载**完整**读数（下载 + 上传 + 内存）：菜单栏标题为了不
 /// 被系统隐藏，只放得下 `↓2.1M` 一个指标，剩下的在悬停时补齐。
 pub fn update_tooltip(app: &AppHandle, usage: Option<f32>) {
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
     let mut tip = match usage {
         Some(u) => format!("Prune · CPU {u:.0}%"),
         None => "Prune".to_string(),
@@ -571,7 +578,9 @@ pub(crate) fn update_title_mem(app: &AppHandle, used_bytes: Option<u64>) {
 /// 重刷菜单栏标题。开关关闭 → 清空；macOS 写 set_title，
 /// 其它平台 set_title 无效，数字改走 tooltip（见 update_tooltip）。
 fn refresh_title(app: &AppHandle) {
-    let Some(tray) = app.tray_by_id(TRAY_ID) else { return };
+    let Some(tray) = app.tray_by_id(TRAY_ID) else {
+        return;
+    };
     let title = if MENU_NUMBERS_ENABLED.load(Ordering::Relaxed) {
         numbers_suffix()
     } else {
@@ -603,7 +612,10 @@ fn toggle_menu_numbers(app: &AppHandle) {
         eprintln!("[m13-tray] ⚠️ 设置持久化失败（本次会话内仍生效）: {e}");
     }
     refresh_title(app);
-    eprintln!("[m13-tray] 菜单栏数字已{}", if next { "开启" } else { "关闭" });
+    eprintln!(
+        "[m13-tray] 菜单栏数字已{}",
+        if next { "开启" } else { "关闭" }
+    );
 }
 
 // ---- M6-T3 · 开关持久化 ----
@@ -778,7 +790,10 @@ pub fn show_main(app: &AppHandle) {
 
 /// 把主窗口定位到菜单栏图标所在屏幕的居中位置（逻辑同 position_panel 的坐标系换算）
 fn position_main(app: &AppHandle, main: &WebviewWindow) {
-    let Some(rect) = app.tray_by_id(TRAY_ID).and_then(|t| t.rect().ok().flatten()) else {
+    let Some(rect) = app
+        .tray_by_id(TRAY_ID)
+        .and_then(|t| t.rect().ok().flatten())
+    else {
         eprintln!("[m0-tray] ⚠️ tray.rect() 不可用，主窗口保持原位置");
         return;
     };
@@ -821,9 +836,7 @@ fn position_main(app: &AppHandle, main: &WebviewWindow) {
     let x = (rx + rw / 2.0 - mw / 2.0).max(mx).min(mx + sw - mw);
     let y = (my + sh / 2.0 - mh / 2.0).max(my);
 
-    eprintln!(
-        "[m0-tray] 主窗口定位: ({x:.0}, {y:.0}) scale {scale}（tray 所在屏幕）"
-    );
+    eprintln!("[m0-tray] 主窗口定位: ({x:.0}, {y:.0}) scale {scale}（tray 所在屏幕）");
     let _ = main.set_position(PhysicalPosition::new(x.round() as i32, y.round() as i32));
 }
 

@@ -20,15 +20,34 @@ fn main() {
     let t = Instant::now();
     let (r1, snap) = disk::scan_with(&home, None, Some(&|p: ScanProgress| progress("全量", &p)));
     let ms = t.elapsed().as_millis() as u64;
-    rounds.push(("全量 #1", ms, r1.totals.reclaimable, r1.totals.deadweight, r1.groups.len() as u64));
+    rounds.push((
+        "全量 #1",
+        ms,
+        r1.totals.reclaimable,
+        r1.totals.deadweight,
+        r1.groups.len() as u64,
+    ));
 
     // 2) 无变化增量：应命中全部指纹，预期亚秒
     let t = Instant::now();
-    let (r2, snap) = disk::scan_with(&home, Some(&snap), Some(&|p: ScanProgress| progress("增量", &p)));
+    let (r2, snap) = disk::scan_with(
+        &home,
+        Some(&snap),
+        Some(&|p: ScanProgress| progress("增量", &p)),
+    );
     let ms = t.elapsed().as_millis() as u64;
-    rounds.push(("增量 #1（无变化）", ms, r2.totals.reclaimable, r2.totals.deadweight, r2.groups.len() as u64));
+    rounds.push((
+        "增量 #1（无变化）",
+        ms,
+        r2.totals.reclaimable,
+        r2.totals.deadweight,
+        r2.groups.len() as u64,
+    ));
     assert!(r2.incremental);
-    assert_eq!(r1.totals.reclaimable, r2.totals.reclaimable, "无变化增量必须与全量一致");
+    assert_eq!(
+        r1.totals.reclaimable, r2.totals.reclaimable,
+        "无变化增量必须与全量一致"
+    );
     assert_eq!(r1.totals.deadweight, r2.totals.deadweight);
 
     // 3) 制造变化：临时死重条目 + npm 首层直接写入
@@ -46,16 +65,35 @@ fn main() {
     let _ = npm_touch;
 
     let t = Instant::now();
-    let (r3, snap) = disk::scan_with(&home, Some(&snap), Some(&|p: ScanProgress| progress("增量", &p)));
+    let (r3, snap) = disk::scan_with(
+        &home,
+        Some(&snap),
+        Some(&|p: ScanProgress| progress("增量", &p)),
+    );
     let ms = t.elapsed().as_millis() as u64;
-    rounds.push(("增量 #2（有变化）", ms, r3.totals.reclaimable, r3.totals.deadweight, r3.groups.len() as u64));
+    rounds.push((
+        "增量 #2（有变化）",
+        ms,
+        r3.totals.reclaimable,
+        r3.totals.deadweight,
+        r3.groups.len() as u64,
+    ));
 
     // 4) 全量校准：数字必须与增量一致
     let t = Instant::now();
     let (r4, _snap) = disk::scan_with(&home, None, Some(&|p: ScanProgress| progress("全量", &p)));
     let ms = t.elapsed().as_millis() as u64;
-    rounds.push(("全量 #2", ms, r4.totals.reclaimable, r4.totals.deadweight, r4.groups.len() as u64));
-    assert_eq!(r3.totals.reclaimable, r4.totals.reclaimable, "增量捕获变化后应与全量一致");
+    rounds.push((
+        "全量 #2",
+        ms,
+        r4.totals.reclaimable,
+        r4.totals.deadweight,
+        r4.groups.len() as u64,
+    ));
+    assert_eq!(
+        r3.totals.reclaimable, r4.totals.reclaimable,
+        "增量捕获变化后应与全量一致"
+    );
     assert_eq!(r3.totals.deadweight, r4.totals.deadweight);
 
     // 清理探针产物
@@ -67,7 +105,10 @@ fn main() {
         let _ = std::fs::remove_file(first.path().join("_prune_probe_marker"));
     }
 
-    println!("\n{:<22}{:>10}{:>14}{:>14}{:>8}", "轮次", "耗时ms", "可回收GB", "死重GB", "组数");
+    println!(
+        "\n{:<22}{:>10}{:>14}{:>14}{:>8}",
+        "轮次", "耗时ms", "可回收GB", "死重GB", "组数"
+    );
     for (tag, ms, rec, dw, n) in &rounds {
         println!(
             "{:<22}{:>10}{:>14.2}{:>14.2}{:>8}",

@@ -299,9 +299,7 @@ where
                     break;
                 }
                 let r = f(&items[i]);
-                out.lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .push((i, r));
+                out.lock().unwrap_or_else(|e| e.into_inner()).push((i, r));
             });
         }
     });
@@ -321,7 +319,9 @@ pub fn first_level_sizes(root: &Path) -> Vec<(String, u64)> {
         .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
         .map(|e| (e.file_name().to_string_lossy().to_string(), e.path()))
         .collect();
-    parallel_map(entries, SCAN_CONCURRENCY, |(name, path)| (name.clone(), tree_size(path)))
+    parallel_map(entries, SCAN_CONCURRENCY, |(name, path)| {
+        (name.clone(), tree_size(path))
+    })
 }
 
 /// 在若干项目根下查找指定目录名（不进入已命中的目录，跳过隐藏目录与 Library）
@@ -356,11 +356,20 @@ pub fn find_dirs_named(roots: &[PathBuf], name: &str, max_depth: usize) -> Vec<P
 
 /// 项目根候选（存在才扫）
 pub fn project_roots(home: &Path) -> Vec<PathBuf> {
-    ["Desktop", "Documents", "Downloads", "Projects", "code", "git", "dev", "work"]
-        .iter()
-        .map(|r| home.join(r))
-        .filter(|p| p.is_dir())
-        .collect()
+    [
+        "Desktop",
+        "Documents",
+        "Downloads",
+        "Projects",
+        "code",
+        "git",
+        "dev",
+        "work",
+    ]
+    .iter()
+    .map(|r| home.join(r))
+    .filter(|p| p.is_dir())
+    .collect()
 }
 
 // ---------------------------------------------------------------- 报告装配
@@ -393,7 +402,12 @@ fn age_days_of(mtime_nanos: i64, now_nanos: i64) -> u64 {
 ///
 /// 指纹里 mtime/bytes 都是扫描副产品，这里唯一的额外 IO 是 simulator 的
 /// `device.plist` 读取（几十个小文件，忽略不计）。
-fn build_details(entry_key: &str, root: &Path, fps: &[EntryFingerprint], now_nanos: i64) -> Vec<DetailItem> {
+fn build_details(
+    entry_key: &str,
+    root: &Path,
+    fps: &[EntryFingerprint],
+    now_nanos: i64,
+) -> Vec<DetailItem> {
     if !DETAIL_KEYS.contains(&entry_key) {
         return Vec::new();
     }
@@ -497,7 +511,9 @@ pub fn deadweight_stats(
             Verdict::Deadweight => {
                 bytes = bytes.saturating_add(size);
                 entry_count += 1;
-                let key = platform.map(|p| p.as_str().to_string()).unwrap_or_else(|| "unknown".into());
+                let key = platform
+                    .map(|p| p.as_str().to_string())
+                    .unwrap_or_else(|| "unknown".into());
                 let stat = by_platform.entry(key.clone()).or_insert(PlatformStat {
                     platform: key,
                     entry_count: 0,
@@ -643,7 +659,8 @@ pub fn scan_with(
     // node_modules 发现与定点目录扫描互相独立 → 并行跑，墙钟取 max 而不是 sum
     let (nm_count, nm_bytes, nm_map) = std::thread::scope(|scope| {
         let nm = scope.spawn(|| -> (usize, u64, BTreeMap<String, (i64, u64)>) {
-            let dirs = find_dirs_named(&project_roots(home), "node_modules", NODE_MODULES_MAX_DEPTH);
+            let dirs =
+                find_dirs_named(&project_roots(home), "node_modules", NODE_MODULES_MAX_DEPTH);
             let count = dirs.len();
             let cached_nm = prev.map(|p| &p.node_modules);
             let dir_refs: Vec<&PathBuf> = dirs.iter().collect();
@@ -713,7 +730,9 @@ pub fn scan_with(
                 .and_then(|s| s.groups.get(entry.key))
                 .map(|v| v.as_slice());
             let (pairs, fps) = incremental::resolve_group(path, false, cached);
-            let size = pairs.iter().fold(0u64, |acc, (_, b)| acc.saturating_add(*b));
+            let size = pairs
+                .iter()
+                .fold(0u64, |acc, (_, b)| acc.saturating_add(*b));
             bytes_done.fetch_add(size, Ordering::Relaxed);
             report(entry.key);
             let details = build_details(entry.key, path, &fps, now_nanos);
@@ -754,11 +773,15 @@ pub fn scan_with(
 
     // A1 组置顶
     groups.sort_by_key(|g| {
-        let rank = if g.deadweight.is_some() { 0 } else { match g.level {
-            Level::L1 | Level::L2 => 1,
-            Level::L3 => 2,
-            Level::L4 => 3,
-        } };
+        let rank = if g.deadweight.is_some() {
+            0
+        } else {
+            match g.level {
+                Level::L1 | Level::L2 => 1,
+                Level::L3 => 2,
+                Level::L4 => 3,
+            }
+        };
         (rank, std::cmp::Reverse(g.total_bytes))
     });
 
@@ -892,7 +915,10 @@ mod tests {
             root,
         );
         assert_eq!(dw2.bytes, 0);
-        assert_eq!(dw2.other_bytes, 50, "待确认条目归入 other，不进死重也不充作原生可用");
+        assert_eq!(
+            dw2.other_bytes, 50,
+            "待确认条目归入 other，不进死重也不充作原生可用"
+        );
         assert_eq!(dw2.ratio, None, "没有原生可用体积就不编造比例");
     }
 
@@ -983,7 +1009,10 @@ mod tests {
     fn details_only_for_a5_keys_and_sorted_by_bytes() {
         let root = Path::new("/tmp/sim");
         let fps = vec![fp("small-device", 10, 100), fp("big-device", 400, 900)];
-        assert!(build_details("yarn", root, &fps, NOW_NANOS).is_empty(), "A1 组不出明细");
+        assert!(
+            build_details("yarn", root, &fps, NOW_NANOS).is_empty(),
+            "A1 组不出明细"
+        );
         let got = build_details("simulator", root, &fps, NOW_NANOS);
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].name, "big-device", "按体积降序");
@@ -1025,8 +1054,14 @@ mod tests {
 
     #[test]
     fn runtime_is_prettified() {
-        assert_eq!(pretty_runtime("com.apple.CoreSimulator.SimRuntime.iOS-17-5".into()), "iOS 17.5");
-        assert_eq!(pretty_runtime("com.apple.CoreSimulator.SimRuntime.tvOS-18".into()), "tvOS 18");
+        assert_eq!(
+            pretty_runtime("com.apple.CoreSimulator.SimRuntime.iOS-17-5".into()),
+            "iOS 17.5"
+        );
+        assert_eq!(
+            pretty_runtime("com.apple.CoreSimulator.SimRuntime.tvOS-18".into()),
+            "tvOS 18"
+        );
         assert_eq!(pretty_runtime("weird".into()), "weird", "不认识的原样返回");
     }
 
@@ -1043,7 +1078,10 @@ mod tests {
         let got = node_module_details(&map, &home, NOW_NANOS);
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].name, "/outside/node_modules", "体积降序：8192 在前");
-        assert_eq!(got[1].name, "Desktop/git/prune/node_modules", "home 内路径转相对");
+        assert_eq!(
+            got[1].name, "Desktop/git/prune/node_modules",
+            "home 内路径转相对"
+        );
         assert_eq!(got[1].age_days, 200);
         let _ = std::fs::remove_dir_all(&home);
     }

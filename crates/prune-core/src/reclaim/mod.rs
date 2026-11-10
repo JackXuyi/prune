@@ -232,7 +232,11 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
 
         match &group.deadweight {
             Some(dw) if !dw.items.is_empty() => {
-                for it in dw.items.iter().filter(|i| i.verdict == crate::classify::Verdict::Deadweight) {
+                for it in dw
+                    .items
+                    .iter()
+                    .filter(|i| i.verdict == crate::classify::Verdict::Deadweight)
+                {
                     items.push(ReclaimItem {
                         path: it.path.clone(),
                         label: format!("{} · {}", group.label, it.name),
@@ -376,7 +380,13 @@ mod tests {
         home
     }
 
-    fn group(key: &str, level: Level, root: &Path, bytes: u64, dw: Option<DeadweightStats>) -> CacheGroup {
+    fn group(
+        key: &str,
+        level: Level,
+        root: &Path,
+        bytes: u64,
+        dw: Option<DeadweightStats>,
+    ) -> CacheGroup {
         CacheGroup {
             key: key.into(),
             label: key.into(),
@@ -611,18 +621,11 @@ mod tests {
             bytes: 64,
             level: Level::L2,
         }];
-        let err = execute(
-            &ok,
-            &home,
-            false,
-            Limits {
-                breaker_bytes: 10,
-            },
-            &[],
-        )
-        .unwrap_err();
+        let err = execute(&ok, &home, false, Limits { breaker_bytes: 10 }, &[]).unwrap_err();
         match err {
-            ReclaimError::NeedsExplicitConfirm(n) => assert!(n >= 4096, "体积执行时重算（物理块）: {n}"),
+            ReclaimError::NeedsExplicitConfirm(n) => {
+                assert!(n >= 4096, "体积执行时重算（物理块）: {n}")
+            }
             other => panic!("应触发熔断，实际 {other:?}"),
         }
         assert!(cache.exists(), "熔断时不得动文件");

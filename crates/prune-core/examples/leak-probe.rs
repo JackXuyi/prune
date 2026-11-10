@@ -46,17 +46,19 @@ fn main() {
         println!("库内没有可用序列（footprint 行数为 0），无法判定");
         return;
     }
-    println!(
-        "rows = {rows} · 序列 = {} 条 · now = {now}",
-        series.len()
-    );
+    println!("rows = {rows} · 序列 = {} 条 · now = {now}", series.len());
 
     // 只保留判定窗口内可能用到的部分（GC 窗口 60 min + 余量）
     let since = now - leak::GC_WINDOW_SECS - 300;
     let windowed: Vec<_> = series
         .iter()
         .map(|s| leak::ProcSeries {
-            samples: s.samples.iter().copied().filter(|p| p.ts >= since).collect(),
+            samples: s
+                .samples
+                .iter()
+                .copied()
+                .filter(|p| p.ts >= since)
+                .collect(),
             ..s.clone()
         })
         .filter(|s| !s.samples.is_empty())

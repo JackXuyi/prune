@@ -181,13 +181,7 @@ pub fn mean_abs_deviation(samples: &[f64]) -> Option<f64> {
     }
     let sum: f64 = samples.iter().sum();
     let mean = sum / n as f64;
-    Some(
-        samples
-            .iter()
-            .map(|v| (v - mean).abs())
-            .sum::<f64>()
-            / n as f64,
-    )
+    Some(samples.iter().map(|v| (v - mean).abs()).sum::<f64>() / n as f64)
 }
 
 /// portal 响应判定（纯函数，网络层只负责取回这两段文本）。
@@ -668,7 +662,10 @@ pub fn report_markdown(diag: &NetDiag, speed: Option<&SpeedResult>) -> String {
                         .collect::<Vec<_>>()
                         .join(", ")
                 ),
-                None => format!("| {name} | 探测失败 | {} | — |\n", p.note.as_deref().unwrap_or("")),
+                None => format!(
+                    "| {name} | 探测失败 | {} | — |\n",
+                    p.note.as_deref().unwrap_or("")
+                ),
             },
             None => format!("| {name} | 未探测 | {} | — |\n", extra),
         }
@@ -781,14 +778,7 @@ mod tests {
     #[test]
     fn verdict_gateway_down_wins() {
         let lan = LayerProbe::failed("连不上");
-        let v = verdict(
-            Some(&lan),
-            None,
-            None,
-            None,
-            CaptiveState::Unknown,
-        )
-        .unwrap();
+        let v = verdict(Some(&lan), None, None, None, CaptiveState::Unknown).unwrap();
         assert_eq!(v.label, "连不上路由器");
     }
 
@@ -796,14 +786,7 @@ mod tests {
     fn verdict_dns_failure_wins_over_slow_lan() {
         let lan = probe(Some(80.0), vec![80.0]); // 也超阈值，但 DNS 全失败优先级更高
         let dns = LayerProbe::failed("解析不了");
-        let v = verdict(
-            Some(&lan),
-            Some(&dns),
-            None,
-            None,
-            CaptiveState::None,
-        )
-        .unwrap();
+        let v = verdict(Some(&lan), Some(&dns), None, None, CaptiveState::None).unwrap();
         assert_eq!(v.label, "DNS 解析失败");
     }
 
@@ -811,14 +794,7 @@ mod tests {
     fn verdict_portal_after_dns_ok() {
         let lan = probe(Some(3.0), vec![3.0]);
         let dns = probe(Some(28.0), vec![28.0]);
-        let v = verdict(
-            Some(&lan),
-            Some(&dns),
-            None,
-            None,
-            CaptiveState::Suspected,
-        )
-        .unwrap();
+        let v = verdict(Some(&lan), Some(&dns), None, None, CaptiveState::Suspected).unwrap();
         assert!(v.label.contains("网页登录"));
     }
 
@@ -827,14 +803,7 @@ mod tests {
         let lan = probe(Some(90.0), vec![90.0]);
         let dns = probe(Some(28.0), vec![28.0]);
         let wan = probe(Some(500.0), vec![500.0]); // 差值 410 也超，但 LAN 慢优先
-        let v = verdict(
-            Some(&lan),
-            Some(&dns),
-            Some(&wan),
-            None,
-            CaptiveState::None,
-        )
-        .unwrap();
+        let v = verdict(Some(&lan), Some(&dns), Some(&wan), None, CaptiveState::None).unwrap();
         assert!(v.label.contains("路由器响应慢"));
     }
 

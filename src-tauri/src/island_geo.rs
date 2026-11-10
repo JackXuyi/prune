@@ -83,7 +83,12 @@ pub fn shape_rect(expanded: bool) -> (f64, f64, f64, f64) {
     if expanded {
         (0.0, 0.0, EXPANDED_W, EXPANDED_H)
     } else {
-        ((WINDOW_W - COLLAPSED_W) / 2.0, 0.0, COLLAPSED_W, COLLAPSED_H)
+        (
+            (WINDOW_W - COLLAPSED_W) / 2.0,
+            0.0,
+            COLLAPSED_W,
+            COLLAPSED_H,
+        )
     }
 }
 

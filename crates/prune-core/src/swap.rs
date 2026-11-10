@@ -88,7 +88,10 @@ fn parse_size(token: &str) -> Option<u64> {
         'K' | 'k' => (&token[..token.len() - 1], 1024f64),
         'M' | 'm' => (&token[..token.len() - 1], 1024f64 * 1024.0),
         'G' | 'g' => (&token[..token.len() - 1], 1024f64 * 1024.0 * 1024.0),
-        'T' | 't' => (&token[..token.len() - 1], 1024f64 * 1024.0 * 1024.0 * 1024.0),
+        'T' | 't' => (
+            &token[..token.len() - 1],
+            1024f64 * 1024.0 * 1024.0 * 1024.0,
+        ),
         'B' | 'b' => (&token[..token.len() - 1], 1f64),
         _ => (token, 1f64),
     };
@@ -220,8 +223,9 @@ mod tests {
 
     #[test]
     fn parses_swapusage_megabytes() {
-        let (t, u, f) = parse_swapusage("total = 11264.00M  used = 10482.50M  free = 781.50M  (encrypted)")
-            .unwrap();
+        let (t, u, f) =
+            parse_swapusage("total = 11264.00M  used = 10482.50M  free = 781.50M  (encrypted)")
+                .unwrap();
         assert_eq!(t, 11_264 * 1024 * 1024);
         assert_eq!(u, (10_482.5 * 1024.0 * 1024.0) as u64);
         assert_eq!(f, (781.5 * 1024.0 * 1024.0) as u64);
@@ -244,9 +248,18 @@ mod tests {
     #[test]
     fn counts_new_files_since_midnight() {
         let files = vec![
-            SwapFile { name: "swapfile0".into(), mtime: 100 },
-            SwapFile { name: "swapfile1".into(), mtime: 2_000 },
-            SwapFile { name: "swapfile2".into(), mtime: 3_000 },
+            SwapFile {
+                name: "swapfile0".into(),
+                mtime: 100,
+            },
+            SwapFile {
+                name: "swapfile1".into(),
+                mtime: 2_000,
+            },
+            SwapFile {
+                name: "swapfile2".into(),
+                mtime: 3_000,
+            },
         ];
         assert_eq!(count_new_since(&files, 2_000), 2);
         assert_eq!(count_new_since(&files, 9_999), 0);
@@ -256,7 +269,11 @@ mod tests {
     fn used_ratio_is_zero_safe() {
         let s = SwapInfo::default();
         assert_eq!(s.used_ratio(), 0.0);
-        let s = SwapInfo { total: 100, used: 96, ..Default::default() };
+        let s = SwapInfo {
+            total: 100,
+            used: 96,
+            ..Default::default()
+        };
         assert!((s.used_ratio() - 0.96).abs() < 1e-9);
     }
 

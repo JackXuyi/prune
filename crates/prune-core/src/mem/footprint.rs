@@ -244,7 +244,10 @@ pub fn probe_many(pids: &[i32], concurrency: usize) -> HashMap<i32, FootprintSam
             }
             let pid = pids[idx];
             if let Ok(sample) = probe(pid) {
-                results.lock().unwrap_or_else(|e| e.into_inner()).insert(pid, sample);
+                results
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .insert(pid, sample);
             }
         }));
     }

@@ -13,6 +13,8 @@
 //! 关注度分层（§3.3）是本模块的产品核心：实测本机 27 个监听端口里 19 个（70%）
 //! 是 Electron / 微信 / Cursor 的内部 IPC 随机端口，全列出来等于把功能做废。
 
+/// 网络诊断（docs/net-diag-plan.md）：DNS / 网关 / 出口三层探测 + 分层判定
+pub mod diag;
 pub mod host;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
@@ -22,8 +24,6 @@ pub mod traffic;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof
 #[cfg(windows)]
 pub mod win_ports;
-/// 网络诊断（docs/net-diag-plan.md）：DNS / 网关 / 出口三层探测 + 分层判定
-pub mod diag;
 
 use serde::{Deserialize, Serialize};
 
@@ -245,9 +245,8 @@ impl PortSnapshot {
 /// 「http-alt」这类对开发者毫无用处的名字，还不如一个精确的表。
 pub const WATCHED_PORTS: &[u16] = &[
     // 前端 / 静态服务
-    3000, 3001, 3002, 3003, 4200, 4321, 5173, 5174, 5175, 6006, 7000, 7001, 5000, 5001, 8000,
-    8001, 8002, 8080, 8081, 8082, 8888, 9000, 9090, 4173,
-    // 数据库 / 中间件
+    3000, 3001, 3002, 3003, 4200, 4321, 5173, 5174, 5175, 6006, 7000, 7001, 5000, 5001, 8000, 8001,
+    8002, 8080, 8081, 8082, 8888, 9000, 9090, 4173, // 数据库 / 中间件
     3306, 5432, 6379, 27017, 27018, 9200, 9300, 11211, 5672, 15672, 9092, 2181,
     // 代理 / 容器 / 调试
     1080, 1087, 2375, 2376, 50051, 9229, 9230,
@@ -319,10 +318,7 @@ pub fn port_note(port: u16, comm: &str) -> Option<String> {
 /// 把扁平的 binding 列表聚合成端口行：合并双栈、算连接数、打关注度标记。
 ///
 /// `conns` 是 `(port, established 数)`，由调用方从全 TCP 轮传入（可选）。
-pub fn group(
-    bindings: Vec<PortBinding>,
-    conns: &[(u16, u32)],
-) -> Vec<PortEntry> {
+pub fn group(bindings: Vec<PortBinding>, conns: &[(u16, u32)]) -> Vec<PortEntry> {
     use std::collections::BTreeMap;
 
     let mut map: BTreeMap<(u16, Proto), Vec<PortBinding>> = BTreeMap::new();
@@ -338,9 +334,7 @@ pub fn group(
     for ((port, proto), mut listeners) in map {
         // 同一 pid 在双栈 / 多 fd 下会重复出现：按 (pid, addr) 去重后仍保留
         // v4 与 v6 两条（它们地址不同），但丢掉完全重复的记录。
-        listeners.sort_by(|a, b| {
-            (a.pid, &a.addr, a.v6).cmp(&(b.pid, &b.addr, b.v6))
-        });
+        listeners.sort_by(|a, b| (a.pid, &a.addr, a.v6).cmp(&(b.pid, &b.addr, b.v6)));
         listeners.dedup_by(|a, b| a.pid == b.pid && a.addr == b.addr && a.v6 == b.v6);
 
         let exposure = listeners
@@ -349,9 +343,7 @@ pub fn group(
         let comms: Vec<&str> = listeners.iter().map(|b| b.comm.as_str()).collect();
         let has_project = listeners.iter().any(|b| b.project.is_some());
         let watched = is_watched(port, exposure, &comms, has_project);
-        let note = listeners
-            .iter()
-            .find_map(|b| port_note(port, &b.comm));
+        let note = listeners.iter().find_map(|b| port_note(port, &b.comm));
 
         out.push(PortEntry {
             port,
@@ -438,7 +430,12 @@ mod tests {
         // 有项目归属：就是用户的 dev server（否则 1430 → prune 会被折叠）
         assert!(is_watched(1430, BindScope::Loopback, &["node"], true));
         // 随机高位内部 IPC、无项目、非全开：折叠
-        assert!(!is_watched(50272, BindScope::Loopback, &["Cursor Helper"], false));
+        assert!(!is_watched(
+            50272,
+            BindScope::Loopback,
+            &["Cursor Helper"],
+            false
+        ));
         // 系统进程占着全部网卡：折叠（否则每个 Mac 都会看到 rapportd）
         assert!(!is_watched(58578, BindScope::Any, &["rapportd"], false));
         // 端口 0 永远不关注
@@ -461,14 +458,8 @@ mod tests {
         assert_eq!(BindScope::from_addr("::1"), BindScope::Loopback);
         assert_eq!(BindScope::from_addr("192.168.0.115"), BindScope::Interface);
         // 取最宽
-        assert_eq!(
-            BindScope::Loopback.widest(BindScope::Any),
-            BindScope::Any
-        );
-        assert_eq!(
-            BindScope::Any.widest(BindScope::Loopback),
-            BindScope::Any
-        );
+        assert_eq!(BindScope::Loopback.widest(BindScope::Any), BindScope::Any);
+        assert_eq!(BindScope::Any.widest(BindScope::Loopback), BindScope::Any);
     }
 
     #[test]

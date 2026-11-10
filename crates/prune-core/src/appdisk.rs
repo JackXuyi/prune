@@ -62,11 +62,15 @@ pub struct AppDisk {
 impl AppDisk {
     /// 三层合计（仅用于展示「合计」；不等于可释放空间）
     pub fn total(&self) -> u64 {
-        [self.bundle.as_ref(), self.cache.as_ref(), self.data.as_ref()]
-            .into_iter()
-            .flatten()
-            .map(|l| l.bytes)
-            .sum()
+        [
+            self.bundle.as_ref(),
+            self.cache.as_ref(),
+            self.data.as_ref(),
+        ]
+        .into_iter()
+        .flatten()
+        .map(|l| l.bytes)
+        .sum()
     }
 
     pub fn is_empty(&self) -> bool {
@@ -597,13 +601,23 @@ mod tests {
         let root = std::env::temp_dir().join(format!("prune-batch-{}", std::process::id()));
         let app = root.join("Fake.app");
         std::fs::create_dir_all(app.join("Contents").join("MacOS")).unwrap();
-        std::fs::write(app.join("Contents").join("MacOS").join("Fake"), vec![0u8; 4096]).unwrap();
+        std::fs::write(
+            app.join("Contents").join("MacOS").join("Fake"),
+            vec![0u8; 4096],
+        )
+        .unwrap();
 
         let exe = app.join("Contents").join("MacOS").join("Fake");
         let exe_s = exe.to_string_lossy().to_string();
         let items = vec![
-            BundleQuery { family: "Fake".into(), exe: Some(exe_s.clone()) },
-            BundleQuery { family: "Fake Helper".into(), exe: Some(exe_s) },
+            BundleQuery {
+                family: "Fake".into(),
+                exe: Some(exe_s.clone()),
+            },
+            BundleQuery {
+                family: "Fake Helper".into(),
+                exe: Some(exe_s),
+            },
         ];
         let got = bundle_bytes_batch(&items, Duration::from_secs(2));
         assert_eq!(got.len(), 2);
@@ -616,8 +630,14 @@ mod tests {
     fn batch_skips_apps_without_bundle() {
         // CLI 工具 / 系统进程没有 .app：没有条目 ≠ 0 字节，前端要显示「—」
         let items = vec![
-            BundleQuery { family: "node".into(), exe: Some("/opt/homebrew/bin/node".into()) },
-            BundleQuery { family: "unknown".into(), exe: None },
+            BundleQuery {
+                family: "node".into(),
+                exe: Some("/opt/homebrew/bin/node".into()),
+            },
+            BundleQuery {
+                family: "unknown".into(),
+                exe: None,
+            },
         ];
         assert!(bundle_bytes_batch(&items, Duration::from_secs(1)).is_empty());
     }

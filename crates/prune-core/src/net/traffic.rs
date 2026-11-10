@@ -251,7 +251,10 @@ mod tests {
         assert_eq!(classify_iface("Ethernet"), IfaceKind::Physical);
         assert_eq!(classify_iface("WLAN"), IfaceKind::Physical);
         assert_eq!(classify_iface("vEthernet (WSL)"), IfaceKind::Virtual);
-        assert_eq!(classify_iface("Loopback Pseudo-Interface 1"), IfaceKind::Loopback);
+        assert_eq!(
+            classify_iface("Loopback Pseudo-Interface 1"),
+            IfaceKind::Loopback
+        );
         assert_eq!(classify_iface("lo"), IfaceKind::Loopback);
         assert_eq!(classify_iface("docker0"), IfaceKind::Virtual);
         assert_eq!(classify_iface("wg0"), IfaceKind::Tunnel);
@@ -268,7 +271,10 @@ mod tests {
         assert!(!IfaceKind::Loopback.counted());
 
         assert!(IfaceKind::Physical.visible());
-        assert!(IfaceKind::Tunnel.visible(), "虚拟口要能在折叠区看到，不能丢信息");
+        assert!(
+            IfaceKind::Tunnel.visible(),
+            "虚拟口要能在折叠区看到，不能丢信息"
+        );
         assert!(!IfaceKind::Loopback.visible());
     }
 

@@ -232,13 +232,27 @@ mod tests {
     fn every_theme_has_decodable_icons() {
         for theme in IconTheme::ALL {
             let icon = theme.static_icon();
-            assert!(icon.width() >= icon.height(), "{} 静态图宽高异常", theme.id());
+            assert!(
+                icon.width() >= icon.height(),
+                "{} 静态图宽高异常",
+                theme.id()
+            );
 
             let frames = theme.frames();
             assert!(frames.len() >= 2, "{} 帧数不足以构成动画", theme.id());
             for (i, frame) in frames.iter().enumerate() {
-                assert_eq!(frame.width(), frames[0].width(), "{} 第 {i} 帧宽度漂移", theme.id());
-                assert_eq!(frame.height(), frames[0].height(), "{} 第 {i} 帧高度漂移", theme.id());
+                assert_eq!(
+                    frame.width(),
+                    frames[0].width(),
+                    "{} 第 {i} 帧宽度漂移",
+                    theme.id()
+                );
+                assert_eq!(
+                    frame.height(),
+                    frames[0].height(),
+                    "{} 第 {i} 帧高度漂移",
+                    theme.id()
+                );
                 assert!(frame.width() > 0, "{} 第 {i} 帧尺寸为 0", theme.id());
             }
         }
@@ -253,7 +267,12 @@ mod tests {
             let beats = theme.beats();
             assert!(!beats.is_empty(), "{} 播放序列为空", theme.id());
             for &b in beats {
-                assert!(b < frames.len(), "{} 播放序列索引 {b} 越界（共 {} 帧）", theme.id(), frames.len());
+                assert!(
+                    b < frames.len(),
+                    "{} 播放序列索引 {b} 越界（共 {} 帧）",
+                    theme.id(),
+                    frames.len()
+                );
             }
         }
     }

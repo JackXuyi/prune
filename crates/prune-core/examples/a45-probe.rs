@@ -9,21 +9,37 @@ use prune_core::reclaim;
 fn main() {
     let home = std::path::PathBuf::from(std::env::var("HOME").expect("HOME"));
 
-    let (report, _snap) = disk::scan_with(&home, None, Some(&|p: ScanProgress| {
-        if p.done == p.total {
-            println!("[scan] 完成 {} ms · 主数字 {:.2} GB", p.elapsed_ms, p.bytes_so_far as f64 / 1e9);
-        }
-    }));
+    let (report, _snap) = disk::scan_with(
+        &home,
+        None,
+        Some(&|p: ScanProgress| {
+            if p.done == p.total {
+                println!(
+                    "[scan] 完成 {} ms · 主数字 {:.2} GB",
+                    p.elapsed_ms,
+                    p.bytes_so_far as f64 / 1e9
+                );
+            }
+        }),
+    );
 
     let group = |key: &str| report.groups.iter().find(|g| g.key == key);
 
     println!("\n===== A4 node_modules 明细 =====");
     if let Some(nm) = group("node-modules") {
-        println!("共 {} 项 · {:.2} GB", nm.details.len(), nm.total_bytes as f64 / 1e9);
+        println!(
+            "共 {} 项 · {:.2} GB",
+            nm.details.len(),
+            nm.total_bytes as f64 / 1e9
+        );
         for d in nm.details.iter().take(5) {
             print_detail(d);
         }
-        let stale = nm.details.iter().filter(|d| d.age_days > disk::STALE_DAYS).count();
+        let stale = nm
+            .details
+            .iter()
+            .filter(|d| d.age_days > disk::STALE_DAYS)
+            .count();
         println!(">180 天未改动：{stale} 项");
 
         // 逐项 dry-run：护栏不走执行，只验证清单形态
@@ -43,7 +59,11 @@ fn main() {
         println!("\n===== A5 {key} 明细 =====");
         match group(key) {
             Some(g) if !g.details.is_empty() => {
-                println!("共 {} 项 · {:.2} GB", g.details.len(), g.total_bytes as f64 / 1e9);
+                println!(
+                    "共 {} 项 · {:.2} GB",
+                    g.details.len(),
+                    g.total_bytes as f64 / 1e9
+                );
                 for d in g.details.iter().take(6) {
                     print_detail(d);
                 }

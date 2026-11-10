@@ -21,7 +21,10 @@ fn main() {
     let snap = ports::scan_cached(None, &mut cache);
     let warm = t1.elapsed();
 
-    println!("冷扫 {cold:?} · 热扫 {warm:?}（内部计时 {} ms）", snap.scan_ms);
+    println!(
+        "冷扫 {cold:?} · 热扫 {warm:?}（内部计时 {} ms）",
+        snap.scan_ms
+    );
     println!(
         "{} 个端口 · 关注 {} · 折叠 {}",
         snap.entries.len(),

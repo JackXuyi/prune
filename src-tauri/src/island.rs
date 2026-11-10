@@ -131,8 +131,8 @@ fn read_cfg(app: &AppHandle) -> Cfg {
         }
         .clamped(),
         mem: MemThresholds {
-            swap_pct: settings::get_f64(app, K_SWAP_PCT)
-                .unwrap_or(DEFAULT_CFG.mem.swap_pct as f64) as f32,
+            swap_pct: settings::get_f64(app, K_SWAP_PCT).unwrap_or(DEFAULT_CFG.mem.swap_pct as f64)
+                as f32,
             sustain_sec: settings::get_u64(app, K_MEM_SUSTAIN)
                 .unwrap_or(DEFAULT_CFG.mem.sustain_sec),
         }
@@ -449,8 +449,7 @@ fn on_screen_changed(app: &AppHandle) {
             eprintln!("[m15-island] 屏幕变化后找不到 island 窗口，跳过挪位");
             return;
         };
-        if let Err(e) =
-            win.set_position(tauri::LogicalPosition::new(after.place.x, after.place.y))
+        if let Err(e) = win.set_position(tauri::LogicalPosition::new(after.place.x, after.place.y))
         {
             eprintln!("[m15-island] 屏幕变化后挪位失败: {e}");
         }
@@ -680,8 +679,7 @@ async fn sample_loop(app: AppHandle) {
         // ── CPU 通道 ──
         if let Some(alert) = cpu_monitor.observe(now, cpu, &current.cpu) {
             // 冷却只防「降下去又升上来」的横跳，滞回防「持续高位的重复提报」
-            let cooled =
-                last_cpu_fire == 0 || now.saturating_sub(last_cpu_fire) >= CPU_COOLDOWN_MS;
+            let cooled = last_cpu_fire == 0 || now.saturating_sub(last_cpu_fire) >= CPU_COOLDOWN_MS;
             if cooled && gates.would_pass(cpu_gate, now) {
                 gates.record(cpu_gate, now);
                 last_cpu_fire = now;
@@ -700,9 +698,7 @@ async fn sample_loop(app: AppHandle) {
                 Some((total, used, _)) if total > 0 => used as f32 / total as f32 * 100.0,
                 _ => -1.0,
             };
-            if let Some(alert) =
-                mem_monitor.observe(now, level, ratio_pct, &current.mem)
-            {
+            if let Some(alert) = mem_monitor.observe(now, level, ratio_pct, &current.mem) {
                 let cooled =
                     last_mem_fire == 0 || now.saturating_sub(last_mem_fire) >= MEM_COOLDOWN_MS;
                 if cooled && gates.would_pass(mem_gate, now) {

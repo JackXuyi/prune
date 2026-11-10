@@ -16,7 +16,17 @@ pub fn project_dir(pid: i32) -> Option<String> {
     use std::process::Command;
 
     let out = Command::new(super::ports::lsof_path())
-        .args(["-w", "-n", "-P", "-a", "-p", &pid.to_string(), "-d", "cwd", "-Fn"])
+        .args([
+            "-w",
+            "-n",
+            "-P",
+            "-a",
+            "-p",
+            &pid.to_string(),
+            "-d",
+            "cwd",
+            "-Fn",
+        ])
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
@@ -51,7 +61,10 @@ pub fn sanitize(path: &str) -> Option<String> {
         "/dev",
         "/Volumes",
     ];
-    if DENY_PREFIX.iter().any(|d| p == *d || p.starts_with(&format!("{d}/"))) {
+    if DENY_PREFIX
+        .iter()
+        .any(|d| p == *d || p.starts_with(&format!("{d}/")))
+    {
         return None;
     }
     // ~/Library/... （App Sandbox 容器、缓存、日志）
@@ -211,9 +224,7 @@ impl ProjectCache {
         }
         // 查不到 cwd 的进程也记一笔空值，避免每轮反复重试（TTL 到期再试）
         for pid in &missing {
-            self.map
-                .entry(*pid)
-                .or_insert_with(|| (String::new(), now));
+            self.map.entry(*pid).or_insert_with(|| (String::new(), now));
         }
 
         pids.iter()
@@ -237,7 +248,10 @@ mod tests {
         assert_eq!(sanitize("/System/Library/CoreServices"), None);
         assert_eq!(sanitize("/private/var/db"), None);
         assert_eq!(sanitize("relative/path"), None);
-        assert_eq!(sanitize("/Users/xuyi/Library/Containers/com.tencent.xinWeChat"), None);
+        assert_eq!(
+            sanitize("/Users/xuyi/Library/Containers/com.tencent.xinWeChat"),
+            None
+        );
     }
 
     #[test]

@@ -522,10 +522,7 @@ mod tests {
             None
         );
         // 普通 helper 不参与
-        assert_eq!(
-            label_from_title("Cursor Helper: fileWatcher [8:abc]"),
-            None
-        );
+        assert_eq!(label_from_title("Cursor Helper: fileWatcher [8:abc]"), None);
         // 标签里带空格
         assert_eq!(
             label_from_title("Code Helper: extension-host (user) my project [8-1]"),
@@ -605,9 +602,18 @@ mod tests {
     fn noise_paths_are_ignored() {
         let home = "/Users/xuyi";
         assert!(path_is_noise("/Applications/Cursor.app/x", home));
-        assert!(path_is_noise("/Users/xuyi/Desktop/git/AI/node_modules/a.js", home));
-        assert!(path_is_noise("/Users/xuyi/Desktop/git/AI/.git/FETCH_HEAD", home));
-        assert!(!path_is_noise("/Users/xuyi/Desktop/git/AI/src/main.ts", home));
+        assert!(path_is_noise(
+            "/Users/xuyi/Desktop/git/AI/node_modules/a.js",
+            home
+        ));
+        assert!(path_is_noise(
+            "/Users/xuyi/Desktop/git/AI/.git/FETCH_HEAD",
+            home
+        ));
+        assert!(!path_is_noise(
+            "/Users/xuyi/Desktop/git/AI/src/main.ts",
+            home
+        ));
     }
 
     #[test]
@@ -658,10 +664,7 @@ mod tests {
         std::fs::create_dir_all(&ws).unwrap();
         std::fs::write(
             ws.join("workspace.json"),
-            format!(
-                r#"{{"folder":"file://{}"}}"#,
-                proj.to_string_lossy()
-            ),
+            format!(r#"{{"folder":"file://{}"}}"#, proj.to_string_lossy()),
         )
         .unwrap();
 

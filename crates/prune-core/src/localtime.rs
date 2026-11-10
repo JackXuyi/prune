@@ -49,7 +49,8 @@ pub fn hour_string(ts: i64) -> String {
 }
 
 /// 本地时区当日 00:00 的 Unix 秒
-pub fn day_start(now: u64) -> u64 {    let ts = now.min(i64::MAX as u64) as i64;
+pub fn day_start(now: u64) -> u64 {
+    let ts = now.min(i64::MAX as u64) as i64;
     match local_time(ts) {
         Some(t) => (ts - t.secs_of_day()).max(0) as u64,
         None => now.saturating_sub(now % 86_400),

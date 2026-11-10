@@ -8,22 +8,22 @@
 //! 状态机：Uninit → 首次 toggle 时尝试 init（成功 Ready / 失败 Failed 终态），
 //! Failed 恒走 tray.rs 的旧窗口路径，不反复重试。
 
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Mutex;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use objc2::rc::Retained;
 use objc2::runtime::{NSObjectProtocol, ProtocolObject};
-use objc2::{MainThreadMarker, MainThreadOnly, ClassType, define_class, msg_send};
+use objc2::{define_class, msg_send, ClassType, MainThreadMarker, MainThreadOnly};
 use objc2_app_kit::{
     NSAutoresizingMaskOptions, NSBackingStoreType, NSColor, NSPopover, NSPopoverBehavior,
     NSPopoverDelegate, NSView, NSViewController, NSWindow, NSWindowCollectionBehavior,
     NSWindowStyleMask,
 };
-use objc2_foundation::{NSRectEdge, NSNotification, NSObject, NSPoint, NSRect, NSSize};
+use objc2_foundation::{NSNotification, NSObject, NSPoint, NSRect, NSRectEdge, NSSize};
 use tauri::{AppHandle, Manager, Position, WebviewWindow};
 
-use crate::tray::{PANEL_H, PANEL_LABEL, PANEL_W, TRAY_ID, legacy_toggle};
+use crate::tray::{legacy_toggle, PANEL_H, PANEL_LABEL, PANEL_W, TRAY_ID};
 
 /// Transient 收起后多久内忽略「再次打开」请求
 /// （点图标收起的瞬间，Transient 也会因「点击外部」收起一次 → 抑制连点重开）
@@ -143,13 +143,14 @@ impl PopoverUi {
         };
 
         // 1) 取 WKWebView（Tauri 2 macOS 专有 API；它本质是 NSView 子类）
-        let ptr = panel.ns_view().map_err(|e| format!("ns_view() 失败: {e}"))?;
+        let ptr = panel
+            .ns_view()
+            .map_err(|e| format!("ns_view() 失败: {e}"))?;
         if ptr.is_null() {
             return Err("ns_view() 返回空指针".into());
         }
-        let webview: Retained<NSView> = unsafe {
-            Retained::retain(ptr as *mut NSView).ok_or("ns_view retain 失败")?
-        };
+        let webview: Retained<NSView> =
+            unsafe { Retained::retain(ptr as *mut NSView).ok_or("ns_view retain 失败")? };
 
         // 2) 锚点窗口（位置按当前 tray.rect() 一次定位，此后每次 show 前刷新）
         let Some((frame, _scale, _primary_h)) = anchor_metrics(app) else {
@@ -217,10 +218,7 @@ impl PopoverUi {
         ) {
             return; // Transient 收起引发的连点，忽略
         }
-        let anchor_view = self
-            .anchor
-            .contentView()
-            .expect("锚点窗口必有 contentView");
+        let anchor_view = self.anchor.contentView().expect("锚点窗口必有 contentView");
         {
             self.popover.showRelativeToRect_ofView_preferredEdge(
                 anchor_view.bounds(),

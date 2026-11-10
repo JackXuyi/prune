@@ -35,7 +35,14 @@ const RULES: &[(&str, &[&str])] = &[
     ("Figma", &["figma"]),
     (
         "JetBrains",
-        &["intellij", "pycharm", "webstorm", "goland", "clion", "rustrover"],
+        &[
+            "intellij",
+            "pycharm",
+            "webstorm",
+            "goland",
+            "clion",
+            "rustrover",
+        ],
     ),
     ("Zoom", &["zoom.us", "caphost", "aomhost"]),
     ("Spotify", &["spotify"]),
@@ -268,7 +275,10 @@ mod tests {
             "Cursor"
         );
         assert_eq!(
-            classify("Google Chrome Helper", Some("/Applications/Google Chrome.app")),
+            classify(
+                "Google Chrome Helper",
+                Some("/Applications/Google Chrome.app")
+            ),
             "Chrome"
         );
         assert_eq!(classify("node", Some("/opt/homebrew/bin/node")), "Node");
@@ -280,7 +290,10 @@ mod tests {
     fn classify_falls_back_to_app_bundle() {
         // 无内置规则命中 → 从 .app 取应用名
         assert_eq!(
-            classify("helper-tool", Some("/Applications/Acme工具.app/Contents/MacOS/helper-tool")),
+            classify(
+                "helper-tool",
+                Some("/Applications/Acme工具.app/Contents/MacOS/helper-tool")
+            ),
             "Acme工具"
         );
     }
@@ -289,7 +302,10 @@ mod tests {
     fn classify_prefers_specific_rule_over_generic() {
         // "Code Helper" 必须归到 VS Code，而不是被别的规则抢走
         assert_eq!(
-            classify("Code Helper (Plugin)", Some("/Applications/Visual Studio Code.app/x")),
+            classify(
+                "Code Helper (Plugin)",
+                Some("/Applications/Visual Studio Code.app/x")
+            ),
             "VS Code"
         );
     }
@@ -311,7 +327,10 @@ mod tests {
         assert!(s.total_memory() > 0);
         // 当前测试进程应当在列表里
         let me = std::process::id() as i32;
-        assert!(result.procs.iter().any(|p| p.pid == me), "枚举结果应包含自身 pid");
+        assert!(
+            result.procs.iter().any(|p| p.pid == me),
+            "枚举结果应包含自身 pid"
+        );
         // RSS 降序
         assert!(result.procs.windows(2).all(|w| w[0].rss >= w[1].rss));
         // 整机核数
@@ -323,10 +342,16 @@ mod tests {
         // P0 正确性：首轮整机/进程 CPU 必须是 None（差分窗口未建立），第二轮才有值
         let mut s = Scanner::new();
         let first = s.scan();
-        assert_eq!(first.cpu_usage, None, "首轮整机 CPU 是初始化采样，必须标 None");
+        assert_eq!(
+            first.cpu_usage, None,
+            "首轮整机 CPU 是初始化采样，必须标 None"
+        );
         let me = std::process::id() as i32;
         let first_self = first.procs.iter().find(|p| p.pid == me).unwrap();
-        assert_eq!(first_self.cpu, None, "首轮自身进程 CPU 差分无效，必须标 None");
+        assert_eq!(
+            first_self.cpu, None,
+            "首轮自身进程 CPU 差分无效，必须标 None"
+        );
 
         std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
         let second = s.scan();

@@ -23,11 +23,11 @@ use std::time::{Duration, Instant};
 use prune_core::db::{HourlyDelta, HourlyRow, Store};
 use prune_core::leak::{self, LeakReport};
 use prune_core::mem::process::Scanner;
+use prune_core::mem::system::{self, SystemMem};
+use prune_core::mem::workspace;
 use prune_core::mem::{
     self, CpuInfo, CpuLoad, FamilyMem, MemSnapshot, MemSource, ProcMem, WorkspaceRef,
 };
-use prune_core::mem::system::{self, SystemMem};
-use prune_core::mem::workspace;
 use prune_core::swap::{self, SwapInfo};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -268,10 +268,7 @@ impl MemState {
     /// 当前读数仍用 footprint，两套口径在 UI 脚注里分开写。
     pub fn accumulate_app(&self, families: &[FamilyMem], now: i64) {
         let bucket = prune_core::localtime::hour_string(now);
-        let mut agg = self
-            .app_history
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut agg = self.app_history.lock().unwrap_or_else(|e| e.into_inner());
 
         if agg.bucket != bucket {
             // 跨小时：先把上一小时结清再切桶
@@ -303,10 +300,7 @@ impl MemState {
             return;
         }
         let bucket = prune_core::localtime::hour_string(now);
-        let mut agg = self
-            .app_history
-            .lock()
-            .unwrap_or_else(|e| e.into_inner());
+        let mut agg = self.app_history.lock().unwrap_or_else(|e| e.into_inner());
 
         if agg.bucket != bucket {
             flush_app_history(&self.store, &mut agg, now, true);
@@ -398,7 +392,11 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
         eprintln!(
             "[m2-mem] 快照轮 {} ms · {} 进程 · swap {}/{} · 压力 {} · CPU {}",
             elapsed,
-            snapshot.families.iter().map(|f| f.process_count).sum::<usize>(),
+            snapshot
+                .families
+                .iter()
+                .map(|f| f.process_count)
+                .sum::<usize>(),
             snapshot.swap.used / 1024 / 1024,
             snapshot.swap.total / 1024 / 1024,
             snapshot
@@ -420,10 +418,7 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
     // 托盘 tooltip 携带精确 CPU 读数（M6-T2 顺手项；动画关闭时数字仍在）
     crate::tray::update_tooltip(&app, outcome.cpu.as_ref().map(|c| c.usage));
     // 菜单栏数字的内存段（M13）：0 = 口径未知（serde default），显示为空而不是 0G
-    crate::tray::update_title_mem(
-        &app,
-        Some(outcome.physical_used_bytes).filter(|b| *b > 0),
-    );
+    crate::tray::update_title_mem(&app, Some(outcome.physical_used_bytes).filter(|b| *b > 0));
     Ok(())
 }
 
@@ -512,7 +507,10 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
-        let merged = merge_workspace(merge_deep(procs, &probe_state.lock_deep()), &probe_state.lock_ws());
+        let merged = merge_workspace(
+            merge_deep(procs, &probe_state.lock_deep()),
+            &probe_state.lock_ws(),
+        );
 
         // 落库 + 泄漏判定都要在装配快照之前：
         // B5 判定的输入是「刚刚落库的这一批点」，放到后面会让结果永远晚一轮（5 min）。
@@ -558,7 +556,11 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
     eprintln!(
         "[m2-mem] 深探轮 {elapsed} ms · 成功 {success}/{} · 覆盖 {updated} 进程 · 口径 {}",
         target_count,
-        if available { "footprint" } else { "RSS（降级）" }
+        if available {
+            "footprint"
+        } else {
+            "RSS（降级）"
+        }
     );
     eprintln!("[m2-ws] 工作区归属 {ws_count} 进程 · {ws_elapsed} ms");
 
@@ -576,7 +578,9 @@ fn select_deep_targets(procs: &[ProcMem]) -> Vec<i32> {
 
     let mut by_family: HashMap<&str, (u64, Vec<&ProcMem>)> = HashMap::new();
     for p in procs {
-        let entry = by_family.entry(p.family.as_str()).or_insert((0, Vec::new()));
+        let entry = by_family
+            .entry(p.family.as_str())
+            .or_insert((0, Vec::new()));
         entry.0 = entry.0.saturating_add(p.rss);
         entry.1.push(p);
     }
@@ -857,7 +861,12 @@ mod tests {
         let mut procs = Vec::new();
         for f in 0..30 {
             for i in 0..3 {
-                procs.push(fam_proc(f * 10 + i + 1, &format!("F{f}"), mb(100 - f as u64), 0));
+                procs.push(fam_proc(
+                    f * 10 + i + 1,
+                    &format!("F{f}"),
+                    mb(100 - f as u64),
+                    0,
+                ));
             }
         }
         let targets = select_deep_targets(&procs);
@@ -870,7 +879,9 @@ mod tests {
 
     #[test]
     fn deep_targets_fall_back_when_all_small() {
-        let procs: Vec<ProcMem> = (1..=20).map(|i| fam_proc(i, &format!("F{i}"), mb(3), 0)).collect();
+        let procs: Vec<ProcMem> = (1..=20)
+            .map(|i| fam_proc(i, &format!("F{i}"), mb(3), 0))
+            .collect();
         let targets = select_deep_targets(&procs);
         assert_eq!(targets.len(), DEEP_FALLBACK_PROCS);
     }
