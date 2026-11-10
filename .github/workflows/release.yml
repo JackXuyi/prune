@@ -144,6 +144,26 @@ jobs:
       - name: Typecheck & build frontend
         run: pnpm build
 
+      # ---------------------------------------------------------------------------
+      # Rust 单测门禁：prune-core（含全部安全护栏负面测试：白名单外拒绝 / home 本体
+      # 拒绝 / symlink 逃逸 / 伪造 allowed 表拒绝 / 20GB 熔断）+ prune-cli 在 Linux
+      # 上可独立编译（纯逻辑 crate，零 Tauri 依赖，rusqlite bundled 免系统库）。
+      # src-tauri 的 macOS 专属测试不在此跑：Linux 起 webkit2gtk 不划算，
+      # 其编译正确性由 bundle job 三平台覆盖。
+      # fmt / clippy 门禁待一次性 `cargo fmt --all` 统一后再加（当前有 232 处差异，
+      # clippy 有 35 条 warning，直接 -D warnings 会把 CI 全红）。
+      # ---------------------------------------------------------------------------
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            . -> target
+          shared-key: verify-linux-tests
+
+      - name: Rust unit tests (prune-core + prune-cli)
+        run: cargo test -p prune-core -p prune-cli
+
   # ---------------------------------------------------------------------------
   # 三平台打包
   #   macOS arm64 / macOS x64 都在 macos-latest（Apple Silicon）上交叉编译，
