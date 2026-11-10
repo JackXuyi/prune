@@ -16,6 +16,9 @@
 /// 网络诊断（docs/net-diag-plan.md）：DNS / 网关 / 出口三层探测 + 分层判定
 pub mod diag;
 pub mod host;
+/// M18 局域网设备（docs/m18-lan-devices-spec.md）：邻居表 / 网段展开 / 服务类型推断。
+/// C1 只含纯函数；平台 IO 与服务发现在 C2/C4 接入
+pub mod lan;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
 pub mod ports;
