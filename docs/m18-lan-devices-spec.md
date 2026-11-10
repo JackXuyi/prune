@@ -207,7 +207,9 @@ pub fn kind_from_evidence(
     is_gateway: bool,
 ) -> DeviceKind;
 
-/// 三层结果合并成设备列表（按 ip 升序）。纯函数，输入都是上面几个函数的产物
+/// 三层结果合并成设备列表（按 ip 升序）。纯函数，输入都是上面几个函数的产物。
+/// C2 实现时修正两处：`iface` 参数去掉（过滤由 scope 完成，iface 在 merge 内无用）；
+/// 新增 `scope`（过滤「非本次网段的地址」必须有网段信息，原签名做不到）。
 pub fn merge(
     neighbors: &[RawNeighbor],
     mdns: &[MdnsRecord],
@@ -215,7 +217,7 @@ pub fn merge(
     peers: &[(u16, Ipv4Addr)],   // (local_port, remote_ip)
     gateway: Option<Ipv4Addr>,
     me: Option<Ipv4Addr>,
-    iface: Option<&str>,
+    scope: Option<(Ipv4Addr, u8)>,
 ) -> Vec<LanDevice>;
 ```
 

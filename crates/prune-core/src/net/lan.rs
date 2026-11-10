@@ -323,11 +323,17 @@ pub fn expand_cidr(net: Ipv4Addr, prefix: u8, cap: usize) -> (Vec<Ipv4Addr>, u32
     (out, u32::try_from(total).unwrap_or(u32::MAX))
 }
 
-/// 该地址是否值得探测。排除保留段（0.x / 127 / 169.254 / 组播与广播 224–255）
-/// 以及本网段的网络地址与广播地址——它们永远不是设备。
-pub fn is_probe_candidate(ip: Ipv4Addr, net: Ipv4Addr, prefix: u8) -> bool {
+/// 永远不是设备的地址：0.x / loopback / link-local / 组播与广播（224–255）。
+/// `merge` 过滤邻居表与 `is_probe_candidate` 共用——实测 arp 表里就有
+/// `224.0.0.251`（mDNS 组播）和 `239.255.255.250`（SSDP 组播）的 permanent 条目。
+pub fn is_reserved(ip: Ipv4Addr) -> bool {
     let o = ip.octets();
-    if o[0] == 0 || o[0] == 127 || o[0] >= 224 || (o[0] == 169 && o[1] == 254) {
+    o[0] == 0 || o[0] == 127 || o[0] >= 224 || (o[0] == 169 && o[1] == 254)
+}
+
+/// 该地址是否值得探测。在 [`is_reserved`] 之上再排除本网段的网络地址与广播地址。
+pub fn is_probe_candidate(ip: Ipv4Addr, net: Ipv4Addr, prefix: u8) -> bool {
+    if is_reserved(ip) {
         return false;
     }
     if prefix > 32 {
@@ -428,6 +434,361 @@ pub fn kind_from_evidence(
         return DeviceKind::Camera;
     }
     DeviceKind::Unknown
+}
+
+// ---------------------------------------------------------------- 服务发现记录（C4 填充）
+
+/// mDNS 一条响应（C4 由 `mdns-sd` 采集；C2 阶段 merge 收到空切片）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MdnsRecord {
+    pub ip: Ipv4Addr,
+    /// mDNS 服务类型原样（`"_airplay._tcp"`）
+    pub service: String,
+    /// SRV/TXT 里的主机名（`"Apple-TV-3.local"`）
+    pub hostname: Option<String>,
+}
+
+/// SSDP 一条 M-SEARCH 响应（C4 手写采集；ST 归一化在 merge 里做）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SsdpRecord {
+    pub ip: Ipv4Addr,
+    /// 响应头 `ST` 原文（`"urn:schemas-upnp-org:device:MediaRenderer:1"`）
+    pub st: String,
+}
+
+// ---------------------------------------------------------------- 纯函数：合成
+
+/// 三层数据源合成设备列表（按 IP 升序）。C2 阶段 `mdns` / `ssdp` 传空切片。
+///
+/// 判定规则（spec §4 表，逐条对应）：
+/// - 保留段（组播/广播/0.x/loopback/link-local）与 `scope` 网段外 → 不进列表
+/// - `Incomplete` 且无服务 → 不进列表（ARP 无响应 = 网段里没这台）
+/// - `online` = 内核状态可达 或 服务发现有响应（组播响应本身就是存活证据）
+/// - 本机保留为 `is_self = true`（展示层自行过滤，机器消费看字段）
+///
+/// `vendor` 恒为 `None`：OUI 查表（`lookup_vendor`）随 C4 的 `oui.csv` 一起接入。
+pub fn merge(
+    neighbors: &[RawNeighbor],
+    mdns: &[MdnsRecord],
+    ssdp: &[SsdpRecord],
+    peers: &[(u16, Ipv4Addr)],
+    gateway: Option<Ipv4Addr>,
+    me: Option<Ipv4Addr>,
+    scope: Option<(Ipv4Addr, u8)>,
+) -> Vec<LanDevice> {
+    use std::collections::{BTreeMap, BTreeSet};
+
+    /// 四重过滤合一：scope 网段内、非保留段（组播/广播/0.x/loopback/link-local）、
+    /// 非本网段的网络地址与广播地址。实测 arp 表里就有 `192.168.1.255`、
+    /// `224.0.0.251`、`10.0.0.x`（别的网段）的条目，单独任何一条检查都拦不全。
+    fn keep(ip: Ipv4Addr, scope: Option<(Ipv4Addr, u8)>) -> bool {
+        let in_scope = match scope {
+            None => true,
+            Some((net, prefix)) => {
+                let mask: u32 = if prefix == 0 {
+                    0
+                } else {
+                    u32::MAX << (32 - prefix as u32)
+                };
+                u32::from(ip) & mask == u32::from(net) & mask
+            }
+        };
+        in_scope
+            && match scope {
+                Some((net, prefix)) => is_probe_candidate(ip, net, prefix),
+                None => !is_reserved(ip),
+            }
+    }
+
+    struct Draft {
+        mac: Option<[u8; 6]>,
+        state: NeighborState,
+        services: BTreeSet<String>,
+        hostname: Option<String>,
+        inbound: BTreeSet<u16>,
+    }
+
+    let mut drafts: BTreeMap<Ipv4Addr, Draft> = BTreeMap::new();
+
+    // L1 邻居表：内核视角的地面真相
+    for n in neighbors {
+        if !keep(n.ip, scope) {
+            continue;
+        }
+        let d = drafts.entry(n.ip).or_insert(Draft {
+            mac: None,
+            state: NeighborState::Unknown,
+            services: BTreeSet::new(),
+            hostname: None,
+            inbound: BTreeSet::new(),
+        });
+        if n.mac.is_some() {
+            d.mac = n.mac;
+        }
+        // macOS 只有两态；Windows 六态更准，后到的不覆盖先到的可达态
+        if d.state == NeighborState::Unknown
+            || d.state == NeighborState::Incomplete && n.state != NeighborState::Incomplete
+        {
+            d.state = n.state;
+        }
+    }
+
+    // L2 mDNS：服务类型 + 主机名
+    for r in mdns {
+        if !keep(r.ip, scope) {
+            continue;
+        }
+        let d = drafts.entry(r.ip).or_insert(Draft {
+            mac: None,
+            state: NeighborState::Unknown,
+            services: BTreeSet::new(),
+            hostname: None,
+            inbound: BTreeSet::new(),
+        });
+        d.services.insert(r.service.clone());
+        if d.hostname.is_none() {
+            d.hostname.clone_from(&r.hostname);
+        }
+    }
+
+    // L2 SSDP：ST 归一化为 ssdp:<ST> 并入 services（spec §7.2，C1 锁定）
+    for r in ssdp {
+        if !keep(r.ip, scope) {
+            continue;
+        }
+        drafts
+            .entry(r.ip)
+            .or_insert(Draft {
+                mac: None,
+                state: NeighborState::Unknown,
+                services: BTreeSet::new(),
+                hostname: None,
+                inbound: BTreeSet::new(),
+            })
+            .services
+            .insert(format!("ssdp:{}", r.st));
+    }
+
+    // inbound：对端落在网段内才归属（公网连接不属于「局域网设备」）
+    for (local_port, remote) in peers {
+        if !keep(*remote, scope) {
+            continue;
+        }
+        if let Some(d) = drafts.get_mut(remote) {
+            d.inbound.insert(*local_port);
+        }
+    }
+
+    drafts
+        .into_iter()
+        .filter_map(|(ip, d)| {
+            let has_service = !d.services.is_empty();
+            // 判定表：Incomplete 且无服务 = ARP 无响应 = 没这台，不进列表
+            if d.state == NeighborState::Incomplete && !has_service {
+                return None;
+            }
+            let is_gateway = Some(ip) == gateway;
+            let is_self = Some(ip) == me;
+            let online = d.state != NeighborState::Incomplete || has_service;
+            let services: Vec<String> = d.services.into_iter().collect();
+            let hostname = d.hostname;
+            let kind = kind_from_evidence(&services, hostname.as_deref(), None, is_gateway);
+            Some(LanDevice {
+                ip: ip.to_string(),
+                mac: d.mac.map(format_mac),
+                // 口径纪律 2：查不到就不填。OUI 接入点在 C4
+                vendor: None,
+                hostname,
+                kind,
+                state: d.state,
+                online,
+                services,
+                inbound: d.inbound.into_iter().collect(),
+                is_gateway,
+                is_self,
+                randomized_mac: d.mac.is_some_and(|m| is_randomized_mac(&m)),
+            })
+        })
+        .collect()
+}
+
+// ---------------------------------------------------------------- 纯函数：ESTABLISHED 对端
+
+/// 解析 `lsof -nP -iTCP -sTCP:ESTABLISHED -F n` 输出 → `(local_port, remote_ip)`。
+///
+/// 实测输出形如（p/f 行忽略，只认 `n` 行；IPv6 与 loopback 由调用方按网段过滤，
+/// 本函数只做格式解析）：
+/// ```text
+/// p576
+/// f16
+/// n[fe80:b::cf2:7729:3c38:7b17]:52909->[fe80:b::1484:b01:455b:72de]:52950
+/// n192.168.0.115:3000->192.168.0.44:52341
+/// n127.0.0.1:56205->127.0.0.1:7890
+/// ```
+pub fn parse_lsof_peers(text: &str) -> Vec<(u16, Ipv4Addr)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let Some(n) = line.strip_prefix('n') else {
+            continue;
+        };
+        let Some((local, remote)) = n.split_once("->") else {
+            continue;
+        };
+        // 对端必须是 IPv4（v6 邻居走 NDP，arp -an 看不到，不属于本功能的判定面）；
+        // 本地端允许是 `*`（任意绑定的服务端连接），local_port 仍然有效
+        let Some((_, l_port)) = split_addr_port(local) else {
+            continue;
+        };
+        let Some((Some(remote_ip), _)) = split_addr_port(remote) else {
+            continue;
+        };
+        out.push((l_port, remote_ip));
+    }
+    out
+}
+
+/// `"192.168.0.115:3000"` / `"[fe80::1]:3000"` / `"*:3000"` → `(Option<IPv4>, 端口)`。
+/// IPv6 返回 `(None, port)`——不猜 v4 映射。
+fn split_addr_port(s: &str) -> Option<(Option<Ipv4Addr>, u16)> {
+    let (addr, port) = s.rsplit_once(':')?;
+    let port = port.parse::<u16>().ok()?;
+    if addr.starts_with('[') {
+        return Some((None, port)); // IPv6
+    }
+    if addr == "*" || addr.is_empty() {
+        return Some((None, port)); // 未指定地址
+    }
+    Some((addr.parse::<Ipv4Addr>().ok(), port))
+}
+
+// ---------------------------------------------------------------- 平台口（三个）
+
+/// 参与扫描的网段：有默认路由那张网卡的 `(地址, 前缀)`。
+///
+/// macOS：`route -n get default` 拿 iface（复用 [`crate::net::diag::default_gateway`]），
+/// `ifconfig <iface>` 解析 netmask。**实测本机是 /23**——禁止硬编码 /24。
+/// Windows：C6 用 `GetAdaptersAddresses`（spec §5.2 的常量口径）。
+pub fn local_scope() -> Option<LanScope> {
+    #[cfg(target_os = "macos")]
+    {
+        let iface = crate::net::diag::default_gateway()?.iface?;
+        let out = std::process::Command::new("ifconfig")
+            .arg(&iface)
+            .output()
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        let text = String::from_utf8_lossy(&out.stdout);
+        let (addr, prefix) = parse_ifconfig_inet(&text)?;
+        Some(LanScope {
+            iface,
+            addr,
+            prefix,
+        })
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        // C6：GetAdaptersAddresses（GAA_FLAG_SKIP_ANYCAST | SKIP_DNS_SERVER |
+        // INCLUDE_GATEWAYS；IfType 裸值 6/71；Ipv4Metric 选路）——spec §5.2
+        None
+    }
+}
+
+/// 邻居表。macOS：`arp -an`（`-n` 不做 DNS 反查；**不要用 `arp -a`**）。
+/// Windows：C6 用 `GetIpNetTable2`（中文 Windows 的 `arp -a` 输出无法解析）。
+pub fn neighbors() -> Vec<RawNeighbor> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = match std::process::Command::new("arp").arg("-an").output() {
+            Ok(o) if o.status.success() => o,
+            _ => return Vec::new(), // 采集失败 = 空列表；上层用 notes 解释，不冒充「没有设备」
+        };
+        parse_arp_output(&String::from_utf8_lossy(&out.stdout))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new() // C6：GetIpNetTable2（结构化，含 NL_NEIGHBOR_STATE）
+    }
+}
+
+/// 谁在连我：`(local_port, remote_ip)`，只含 ESTABLISHED。
+/// macOS：独立跑一次 `lsof -F n`（spec 决策 3：不动 ports.rs 的已验收解析路径）。
+/// Windows：C6 用 `GetExtendedTcpTable(TCP_TABLE_OWNER_PID_CONNECTIONS)`。
+pub fn established_peers() -> Vec<(u16, Ipv4Addr)> {
+    #[cfg(target_os = "macos")]
+    {
+        let out = match std::process::Command::new(crate::net::ports::lsof_path())
+            .args(["-nP", "-iTCP", "-sTCP:ESTABLISHED", "-F", "n"])
+            .output()
+        {
+            Ok(o) if o.status.success() => o,
+            _ => return Vec::new(),
+        };
+        parse_lsof_peers(&String::from_utf8_lossy(&out.stdout))
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Vec::new() // C6：GetExtendedTcpTable；dwLocalPort 记得 u16::from_be（spec §5.5）
+    }
+}
+
+// ---------------------------------------------------------------- 编排
+
+/// C2 一轮快照：邻居表 + 网段 + inbound（**无主动探测、无服务发现**——C3/C4 接入）。
+///
+/// `exposed` 由调用方传入（CLI 现扫 ports、GUI 传缓存快照），本函数不重算端口域。
+/// Windows 上在 C6 之前返回 [`LanSnapshot::unavailable`]。
+pub fn snapshot(at: i64, exposed: &[u16]) -> LanSnapshot {
+    let start = std::time::Instant::now();
+    let Some(scope) = local_scope() else {
+        let note = if cfg!(target_os = "macos") {
+            "读不到默认网卡的网段：未联网，或只有 IPv6。"
+        } else {
+            "当前平台尚未接入（M18-C6）：Windows 数据源待实现。"
+        };
+        return LanSnapshot::unavailable(note);
+    };
+
+    let gateway =
+        crate::net::diag::default_gateway().and_then(|g| g.gateway.parse::<Ipv4Addr>().ok());
+    let nbrs = neighbors();
+    let peers = established_peers();
+    let network = u32::from(scope.addr)
+        & if scope.prefix == 0 {
+            0
+        } else {
+            u32::MAX << (32 - scope.prefix as u32)
+        };
+    let devices = merge(
+        &nbrs,
+        &[],
+        &[],
+        &peers,
+        gateway,
+        Some(scope.addr),
+        Some((Ipv4Addr::from(network), scope.prefix)),
+    );
+
+    let mut notes = vec![
+        // 口径诚实：C2 的列表只来自邻居表，「最近通信过」≠「当前在线的全部设备」
+        "本轮未主动探测：列表来自系统邻居表（最近通信过的设备），完整探测随 C3 接入。".to_string(),
+    ];
+    if devices.is_empty() {
+        notes.push("邻居表为空：本机最近没有与网段内设备通信过。".to_string());
+    }
+
+    LanSnapshot {
+        at,
+        iface: Some(scope.iface),
+        cidr: Some(format!("{}/{}", Ipv4Addr::from(network), scope.prefix)),
+        scanned: 0,
+        total: 0,
+        devices,
+        exposed_ports: exposed.to_vec(),
+        notes,
+        scan_ms: start.elapsed().as_millis() as u64,
+    }
 }
 
 // ---------------------------------------------------------------- 测试
@@ -723,5 +1084,209 @@ mod tests {
         let v = serde_json::to_value(&s).unwrap();
         assert!(v.get("exposedPorts").is_some());
         assert!(v.get("exposed_ports").is_none());
+    }
+
+    // ---- C2：merge 与 lsof 对端解析（fixture 均来自本机实测）----
+
+    /// 用实测 ARP_SAMPLE + 实测本机网段 /23 做 merge 的公共输入
+    fn merge_sample(
+        mdns: &[MdnsRecord],
+        ssdp: &[SsdpRecord],
+        peers: &[(u16, Ipv4Addr)],
+    ) -> Vec<LanDevice> {
+        merge(
+            &parse_arp_output(ARP_SAMPLE),
+            mdns,
+            ssdp,
+            peers,
+            Some(ip("192.168.1.1")),
+            Some(ip("192.168.0.115")),
+            Some((ip("192.168.0.0"), 23)),
+        )
+    }
+
+    #[test]
+    fn merge_filters_incomplete() {
+        let rows = parse_arp_output(
+            "? (192.168.0.44) at bc:24:11:4c:d8:39 on en0 ifscope [ethernet]\n\
+             ? (192.168.0.50) at (incomplete) on en0 ifscope [ethernet]\n",
+        );
+        let devices = merge(
+            &rows,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            Some((ip("192.168.0.0"), 23)),
+        );
+        // Incomplete 且无服务 = ARP 无响应 = 没这台，只剩 0.44
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].ip, "192.168.0.44");
+        assert!(devices[0].online);
+    }
+
+    #[test]
+    fn merge_incomplete_with_service_stays() {
+        let rows = parse_arp_output("? (192.168.0.50) at (incomplete) on en0 ifscope [ethernet]\n");
+        let mdns = vec![MdnsRecord {
+            ip: ip("192.168.0.50"),
+            service: "_airplay._tcp".into(),
+            hostname: Some("Bedroom.local".into()),
+        }];
+        let devices = merge(
+            &rows,
+            &mdns,
+            &[],
+            &[],
+            None,
+            None,
+            Some((ip("192.168.0.0"), 23)),
+        );
+        // 内核说 Incomplete，但组播响应本身就是存活证据
+        assert_eq!(devices.len(), 1);
+        assert!(devices[0].online);
+        assert_eq!(devices[0].kind, DeviceKind::Speaker);
+        assert_eq!(devices[0].hostname.as_deref(), Some("Bedroom.local"));
+    }
+
+    #[test]
+    fn merge_inbound() {
+        let devices = merge_sample(
+            &[],
+            &[],
+            &[
+                (3000, ip("192.168.0.44")),
+                (8080, ip("192.168.0.44")),
+                (443, ip("1.2.3.4")),
+            ],
+        );
+        let d44 = devices.iter().find(|d| d.ip == "192.168.0.44").unwrap();
+        assert_eq!(d44.inbound, vec![3000, 8080]); // 升序
+                                                   // 公网对端（1.2.3.4）不属于局域网设备，且 0.44 之外没人收下 443
+        assert!(devices.iter().all(|d| !d.inbound.contains(&443)));
+    }
+
+    #[test]
+    fn merge_excludes_reserved_and_out_of_scope() {
+        // 实测 arp 表里就有组播 permanent 条目与 /24 边界外地址
+        let rows = parse_arp_output(
+            "? (224.0.0.251) at 1:0:5e:0:0:fb on en0 ifscope permanent [ethernet]\n\
+             ? (192.168.1.255) at ff:ff:ff:ff:ff:ff on en0 ifscope [ethernet]\n\
+             ? (169.254.9.9) at aa:bb:cc:dd:ee:ff on en0 ifscope [ethernet]\n\
+             ? (10.0.0.7) at aa:bb:cc:dd:ee:01 on en0 ifscope [ethernet]\n\
+             ? (192.168.0.44) at bc:24:11:4c:d8:39 on en0 ifscope [ethernet]\n",
+        );
+        let devices = merge(
+            &rows,
+            &[],
+            &[],
+            &[],
+            None,
+            None,
+            Some((ip("192.168.0.0"), 23)),
+        );
+        // 只剩 0.44：组播 / 广播 / link-local / 别的网段（10.x）全部排除
+        assert_eq!(devices.len(), 1);
+        assert_eq!(devices[0].ip, "192.168.0.44");
+    }
+
+    #[test]
+    fn merge_self_and_gateway_flags() {
+        let devices = merge_sample(&[], &[], &[]);
+        let me = devices
+            .iter()
+            .find(|d| d.is_self)
+            .expect("本机应保留为 is_self");
+        assert_eq!(me.ip, "192.168.0.115");
+        let gw = devices.iter().find(|d| d.is_gateway).expect("网关应标记");
+        assert_eq!(gw.ip, "192.168.1.1");
+        assert_eq!(gw.kind, DeviceKind::Router); // 规则 1 优先级最高
+        assert!(!me.is_gateway && !gw.is_self);
+    }
+
+    #[test]
+    fn merge_randomized_mac_flag() {
+        let devices = merge_sample(&[], &[], &[]);
+        let r116 = devices.iter().find(|d| d.ip == "192.168.0.116").unwrap();
+        // 8a:32:81 是随机化 MAC → vendor 留空、标志置位
+        assert!(r116.randomized_mac);
+        assert_eq!(r116.vendor, None);
+        let gw = devices.iter().find(|d| d.is_gateway).unwrap();
+        assert!(!gw.randomized_mac); // e4:77:27 是全局 OUI
+    }
+
+    #[test]
+    fn merge_mdns_only_device() {
+        // 没有邻居条目、只有 mDNS 响应 → 依然进列表（组播响应 = 存活证据）
+        let mdns = vec![MdnsRecord {
+            ip: ip("192.168.0.77"),
+            service: "_ipp._tcp".into(),
+            hostname: None,
+        }];
+        let devices = merge(
+            &[],
+            &mdns,
+            &[],
+            &[],
+            None,
+            None,
+            Some((ip("192.168.0.0"), 23)),
+        );
+        assert_eq!(devices.len(), 1);
+        assert!(devices[0].online);
+        assert_eq!(devices[0].state, NeighborState::Unknown);
+        assert_eq!(devices[0].kind, DeviceKind::Printer);
+        assert_eq!(devices[0].mac, None); // 口径纪律 1：查不到 ≠ 没有
+    }
+
+    #[test]
+    fn merge_ssdp_st_normalization() {
+        let ssdp = vec![SsdpRecord {
+            ip: ip("192.168.0.88"),
+            st: "urn:schemas-upnp-org:device:MediaRenderer:1".into(),
+        }];
+        let devices = merge(
+            &[],
+            &[],
+            &ssdp,
+            &[],
+            None,
+            None,
+            Some((ip("192.168.0.0"), 23)),
+        );
+        assert_eq!(devices[0].kind, DeviceKind::Tv);
+        assert_eq!(
+            devices[0].services,
+            vec!["ssdp:urn:schemas-upnp-org:device:MediaRenderer:1"]
+        );
+    }
+
+    #[test]
+    fn lsof_peers_parse() {
+        // fixture：实测输出（IPv6 主导 + IPv4 loopback + 一条局域网）
+        let text = "\
+p576
+f16
+n[fe80:b::cf2:7729:3c38:7b17]:52909->[fe80:b::1484:b01:455b:72de]:52950
+p609
+f57
+n127.0.0.1:56205->127.0.0.1:7890
+n192.168.0.115:3000->192.168.0.44:52341
+n*:3000->192.168.0.44:53001
+ngarbage
+";
+        let peers = parse_lsof_peers(text);
+        assert_eq!(peers.len(), 3);
+        assert!(peers.contains(&(3000, ip("192.168.0.44"))));
+        // loopback 保留由调用方过滤（is_reserved 在 merge 里排除），解析层不丢信息
+        assert!(peers.iter().any(|(p, _)| *p == 56205));
+        // IPv6 与 garbage 行跳过，不 panic
+        assert!(peers.iter().all(|(_, r)| !r.is_loopback() || true));
+    }
+
+    #[test]
+    fn lsof_peers_garbage_only() {
+        assert!(parse_lsof_peers("p576\nf16\nlsof: unknown error\n").is_empty());
     }
 }

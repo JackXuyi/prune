@@ -48,6 +48,10 @@ pub enum Command {
         name: String,
         json: bool,
     },
+    /// `prune lan [--json]`：局域网设备与暴露面（M18-C2，只读邻居表，不发包）
+    Lan {
+        json: bool,
+    },
     Mcp,
     Version,
 }
@@ -164,6 +168,16 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             };
             Ok(Command::App { name, json })
         }
+        "lan" => {
+            let mut json = false;
+            for a in it {
+                match a.as_str() {
+                    "--json" => json = true,
+                    other => return Err(format!("lan 不认识参数 {other:?}\n{}", usage())),
+                }
+            }
+            Ok(Command::Lan { json })
+        }
         other => Err(format!("不认识子命令 {other:?}\n{}", usage())),
     }
 }
@@ -184,6 +198,7 @@ fn usage() -> String {
   prune mem --watch [--interval N]    持续采样并输出泄漏嫌疑判定（默认 10s）
   prune port [PORT] [--json] [--all]  谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
   prune app <家族名> [--json]         一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
+  prune lan [--json]                  局域网设备与暴露面（只读邻居表，不发探测包）
   prune mcp                           启动 MCP stdio server（AI Agent 查询入口）
   prune --version | --help"
         .into()
@@ -216,6 +231,7 @@ fn main() {
         },
         Command::Port { port, json, all } => cmd_port(port, json, all),
         Command::App { name, json } => cmd_app(&name, json),
+        Command::Lan { json } => cmd_lan(json),
         Command::Mcp => cmd_mcp(),
     };
     std::process::exit(code);
@@ -747,6 +763,104 @@ pub fn app_resource_report(query: &str) -> Result<AppResource, AppMatchError> {
 
 fn total_bytes(p: &mem::ProcMem) -> u64 {
     p.footprint.unwrap_or(p.rss)
+}
+
+/// `prune lan`（M18-C2）：只读邻居表 + 暴露面，**不发任何探测包**——
+/// 默认行为必须无副作用（与 reclaim 默认 dry-run 同一原则）。`--scan` 随 C3 接入。
+fn cmd_lan(json: bool) -> i32 {
+    // 暴露面：复用 ports::scan 的 BindScope::Any 口径，不重算（spec §10）
+    let port_snap = net::ports::scan(None);
+    let exposed: Vec<u16> = port_snap
+        .entries
+        .iter()
+        .filter(|e| e.exposure == net::BindScope::Any && e.proto == net::Proto::Tcp)
+        .map(|e| e.port)
+        .collect();
+
+    let at = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0);
+    let snap = net::lan::snapshot(at, &exposed);
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&snap).unwrap());
+        return 0;
+    }
+
+    let cidr = snap.cidr.as_deref().unwrap_or("?");
+    let iface = snap.iface.as_deref().unwrap_or("?");
+    println!(
+        "局域网（{iface} · {cidr}）· {} 台设备 · {:.1}s",
+        snap.devices.len(),
+        snap.scan_ms as f64 / 1000.0
+    );
+    if snap.exposed_ports.is_empty() {
+        println!("  我对同网段开放 0 个端口");
+    } else {
+        let ports: Vec<String> = snap.exposed_ports.iter().map(|p| p.to_string()).collect();
+        println!(
+            "  我对同网段开放 {} 个端口：{}",
+            ports.len(),
+            ports.join(" / ")
+        );
+    }
+    for note in &snap.notes {
+        println!("  ⚠️ {note}");
+    }
+    if snap.devices.is_empty() {
+        return 0;
+    }
+    println!();
+    for d in &snap.devices {
+        let mac = d.mac.as_deref().unwrap_or("—");
+        let vendor = if d.randomized_mac {
+            "· 随机 MAC".to_string()
+        } else {
+            d.vendor.clone().unwrap_or_else(|| "—".into())
+        };
+        let role = if d.is_self {
+            "本机".to_string()
+        } else if d.is_gateway {
+            "网关".to_string()
+        } else {
+            kind_label(d.kind).to_string()
+        };
+        let state = if !d.online {
+            "不可达"
+        } else if d.state == net::lan::NeighborState::Stale {
+            "最近在线"
+        } else {
+            "在线"
+        };
+        let inbound = if d.inbound.is_empty() {
+            String::new()
+        } else {
+            let ports: Vec<String> = d.inbound.iter().map(|p| p.to_string()).collect();
+            format!("  ← 连了我 {}", ports.join("/"))
+        };
+        println!(
+            "  {:<15} {:<17} {:<12} {:<6} {}{inbound}",
+            d.ip, mac, vendor, role, state
+        );
+    }
+    0
+}
+
+fn kind_label(kind: net::lan::DeviceKind) -> &'static str {
+    match kind {
+        net::lan::DeviceKind::Router => "路由器",
+        net::lan::DeviceKind::Computer => "电脑",
+        net::lan::DeviceKind::Phone => "手机",
+        net::lan::DeviceKind::Tablet => "平板",
+        net::lan::DeviceKind::Tv => "电视",
+        net::lan::DeviceKind::Speaker => "音箱",
+        net::lan::DeviceKind::Printer => "打印机",
+        net::lan::DeviceKind::Nas => "NAS",
+        net::lan::DeviceKind::Camera => "摄像头",
+        net::lan::DeviceKind::Iot => "IoT",
+        net::lan::DeviceKind::Unknown => "未知",
+    }
 }
 
 fn cmd_app(query: &str, json: bool) -> i32 {
