@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { useI18n } from "../i18n/store";
 import type { PressureLevel } from "../types/mem";
 
 export type Tone = "accent" | "warn" | "danger" | "info" | "neutral";
@@ -68,19 +69,20 @@ export function Meter({
 
 const pressureMeta: Record<
   PressureLevel,
-  { label: string; dot: string; text: string }
+  { labelKey: "common.pressure.normal" | "common.pressure.warning" | "common.pressure.critical"; dot: string; text: string }
 > = {
-  normal: { label: "正常", dot: "bg-accent", text: "text-accent" },
-  warning: { label: "警告", dot: "bg-warn", text: "text-warn" },
-  critical: { label: "紧张", dot: "bg-danger", text: "text-danger" },
+  normal: { labelKey: "common.pressure.normal", dot: "bg-accent", text: "text-accent" },
+  warning: { labelKey: "common.pressure.warning", dot: "bg-warn", text: "text-warn" },
+  critical: { labelKey: "common.pressure.critical", dot: "bg-danger", text: "text-danger" },
 };
 
 export function PressureDot({ level }: { level: PressureLevel }) {
+  const { t } = useI18n();
   const meta = pressureMeta[level];
   return (
     <span className="inline-flex items-center gap-1.5">
       <span className={`size-1.5 rounded-full ${meta.dot}`} />
-      <span className={`text-[11px] font-medium ${meta.text}`}>{meta.label}</span>
+      <span className={`text-[11px] font-medium ${meta.text}`}>{t(meta.labelKey)}</span>
     </span>
   );
 }

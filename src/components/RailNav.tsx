@@ -6,9 +6,14 @@
  * - ⌘1–6 快捷键仍在 MainWindow（rail 只负责呈现），底部固定设置齿轮
  * - 刷新 / 口径 Badge / 返回按钮留在内容列标题栏——它们是「当前页」的属性，
  *   不是「全局导航」的属性
+ *
+ * i18n：`ITEMS` 是模块级常量，所以存的是 **key** 而不是文案 —— 写死文案的话
+ * 切语言不会跟着变（常量不会重新求值）。
  */
 import type { ReactNode } from "react";
 
+import { useI18n } from "../i18n/store";
+import type { NoParamKey } from "../i18n/types";
 import {
   AppsIcon,
   DatabaseIcon,
@@ -24,20 +29,20 @@ export type RailTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports
 
 interface RailItem {
   id: RailTab;
-  label: string;
-  hint: string;
+  labelKey: NoParamKey;
+  hintKey: NoParamKey;
   icon: (props: { size?: number; className?: string }) => ReactNode;
   /** 域色（CSS 颜色，选中态竖条与图标 hover 用） */
   color: string;
 }
 
 const ITEMS: RailItem[] = [
-  { id: "stats", label: "总览", hint: "可回收 + 内存 / CPU / 硬盘 / 端口 / 网速：本机资源总览", icon: OverviewIcon, color: "var(--color-accent)" },
-  { id: "resources", label: "应用", hint: "每个应用一张卡：进程 / CPU / 内存 / 磁盘 / 端口 / 网速", icon: AppsIcon, color: "var(--color-domain-cpu)" },
-  { id: "memory", label: "内存", hint: "内存概况、swap 与换出受害者 · 进程家族与明细", icon: MemoryCloudIcon, color: "var(--color-info)" },
-  { id: "disk", label: "存储", hint: "卷容量、可回收空间与清理", icon: DatabaseIcon, color: "var(--color-accent)" },
-  { id: "net", label: "网络", hint: "本机下载 / 上传速率、走势、网卡分布与今日流量", icon: GlobeIcon, color: "var(--color-domain-net)" },
-  { id: "ports", label: "端口", hint: "谁占着 3000：按端口反查持有进程", icon: PortJackIcon, color: "var(--color-warn)" },
+  { id: "stats", labelKey: "nav.stats", hintKey: "nav.statsHint", icon: OverviewIcon, color: "var(--color-accent)" },
+  { id: "resources", labelKey: "nav.resources", hintKey: "nav.resourcesHint", icon: AppsIcon, color: "var(--color-domain-cpu)" },
+  { id: "memory", labelKey: "nav.memory", hintKey: "nav.memoryHint", icon: MemoryCloudIcon, color: "var(--color-info)" },
+  { id: "disk", labelKey: "nav.disk", hintKey: "nav.diskHint", icon: DatabaseIcon, color: "var(--color-accent)" },
+  { id: "net", labelKey: "nav.net", hintKey: "nav.netHint", icon: GlobeIcon, color: "var(--color-domain-net)" },
+  { id: "ports", labelKey: "nav.ports", hintKey: "nav.portsHint", icon: PortJackIcon, color: "var(--color-warn)" },
 ];
 
 export function RailNav({
@@ -49,10 +54,11 @@ export function RailNav({
   onChange: (t: RailTab) => void;
   onOpenSettings: () => void;
 }) {
+  const { t } = useI18n();
   return (
     <nav
       className="flex w-14 shrink-0 flex-col items-center border-r border-hairline-soft bg-black/[0.18] py-3"
-      aria-label="主导航"
+      aria-label={t("nav.mainAria")}
     >
       {/* Logo：无交互（点击无动作，沿用 UX v3 §5.1） */}
       <span className="mb-3 grid size-10 place-items-center" title="Prune">
@@ -68,7 +74,7 @@ export function RailNav({
             type="button"
             role="tab"
             aria-selected={active}
-            title={`${it.label} · ${it.hint}`}
+            title={`${t(it.labelKey)} · ${t(it.hintKey)}`}
             onClick={() => onChange(it.id)}
             className={`prune-anim relative grid size-11 place-items-center rounded-[10px] transition-colors ${
               active ? "bg-white/[0.06] text-ink" : "text-ink-faint hover:bg-white/[0.04] hover:text-ink-dim"
@@ -92,8 +98,8 @@ export function RailNav({
       <button
         type="button"
         onClick={onOpenSettings}
-        title="设置 · 灵动岛开关与阈值"
-        aria-label="设置"
+        title={t("nav.settingsHint")}
+        aria-label={t("nav.settings")}
         className="grid size-11 place-items-center rounded-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
       >
         <GearIcon size={17} />

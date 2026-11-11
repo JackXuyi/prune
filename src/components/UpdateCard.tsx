@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
+import { useI18n } from "../i18n/store";
 import { isTauri, updateCheck, updateInstall, updatePending, type UpdateStatus } from "../lib/ipc";
 import { DownloadIcon, RefreshIcon } from "./icons";
 
@@ -31,6 +32,7 @@ function formatMB(bytes: number): string {
 }
 
 export function UpdateCard() {
+  const { t } = useI18n();
   const [pending, setPending] = useState<PendingUpdate | null>(null);
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -62,7 +64,7 @@ export function UpdateCard() {
     }).then((u) => unlisteners.push(u));
 
     void listen<UpdateStatus>(EVENTS.checkResult, (e) => {
-      if (e.payload.status === "up-to-date") flashNote("已是最新版本");
+      if (e.payload.status === "up-to-date") flashNote(t("update.upToDate"));
       if (e.payload.status === "error") setError(e.payload.message);
     }).then((u) => unlisteners.push(u));
 
@@ -76,7 +78,8 @@ export function UpdateCard() {
     }).then((u) => unlisteners.push(u));
 
     return () => unlisteners.forEach((u) => u());
-  }, [flashNote]);
+    // t 跟着 locale 变：切语言后事件回调要造新语言的提示
+  }, [flashNote, t]);
 
   const check = useCallback(async () => {
     setChecking(true);
@@ -84,14 +87,14 @@ export function UpdateCard() {
     try {
       const result = await updateCheck();
       if (result.status === "available") setPending(result);
-      if (result.status === "up-to-date") flashNote("已是最新版本");
+      if (result.status === "up-to-date") flashNote(t("update.upToDate"));
       if (result.status === "error") setError(result.message);
     } catch (e) {
       setError(String(e));
     } finally {
       setChecking(false);
     }
-  }, [flashNote]);
+  }, [flashNote, t]);
 
   const install = useCallback(async () => {
     setInstalling(true);
@@ -117,23 +120,26 @@ export function UpdateCard() {
         <div className="flex items-center gap-2">
           <DownloadIcon size={13} className="shrink-0 text-accent" />
           <span className="min-w-0 flex-1 truncate text-[11px] text-ink-dim">
-            发现新版本 <span className="font-medium text-ink">v{pending.version}</span>
-            <span className="text-ink-faint">（当前 v{pending.currentVersion}）</span>
+            {t("update.availablePrefix")}{" "}
+            <span className="font-medium text-ink">v{pending.version}</span>
+            <span className="text-ink-faint">
+              {t("update.currentVersion", { v: pending.currentVersion })}
+            </span>
           </span>
           <button
             type="button"
             onClick={() => void install()}
             className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-white transition-opacity hover:opacity-85"
           >
-            立即更新
+            {t("update.installNow")}
           </button>
           <button
             type="button"
             onClick={() => setPending(null)}
             className="shrink-0 rounded-md px-1 py-1 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
-            title="本次忽略"
+            title={t("update.ignore")}
           >
-            忽略
+            {t("update.ignore")}
           </button>
         </div>
       ) : null}
@@ -141,7 +147,7 @@ export function UpdateCard() {
       {installing ? (
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-[11px] text-ink-dim">
-            <span>正在下载更新…</span>
+            <span>{t("update.downloading")}</span>
             {progress ? (
               <span className="font-mono tabular-nums text-ink-faint">
                 {percent != null ? `${percent}%` : formatMB(progress.downloaded)}
@@ -158,12 +164,12 @@ export function UpdateCard() {
       ) : null}
 
       {done ? (
-        <p className="text-[11px] text-ink-dim">更新完成，正在重启…</p>
+        <p className="text-[11px] text-ink-dim">{t("update.done")}</p>
       ) : null}
 
       {note ? <p className="text-[10px] text-ink-faint">{note}</p> : null}
 
-      {error ? <p className="text-[10px] text-danger">检查更新失败：{error}</p> : null}
+      {error ? <p className="text-[10px] text-danger">{t("update.checkFailed", { err: error })}</p> : null}
 
       {/* 没有待安装、没有过程态时也保留手动检查入口（低调的行内按钮） */}
       {!pending && !installing && !done ? (
@@ -173,7 +179,7 @@ export function UpdateCard() {
           className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
         >
           <RefreshIcon size={11} className={checking ? "animate-spin" : ""} />
-          {checking ? "检查中…" : "检查更新"}
+          {checking ? t("update.checking") : t("update.check")}
         </button>
       ) : null}
     </div>
