@@ -11,11 +11,20 @@ const zh = {
   language: {
     title: "语言",
     auto: "跟随系统",
+    /** auto 且系统语言读得到：把解析结果写进触发器，省得用户猜 */
+    autoWith: "跟随系统（{lang}）",
     zh: "中文",
     en: "English",
-    hint: "当前：{current}（{source}）",
-    sourceAuto: "跟随系统语言",
-    sourceManual: "手动选择",
+    /** 语言名：给「系统语言是哪个」用，跟 UI 语言走（不是可点击的选项） */
+    languageName: {
+      zh: "简体中文",
+      zhHant: "繁體中文",
+      en: "English",
+    },
+    systemLang: "系统语言：{lang}",
+    systemFallback: "系统语言：{lang} · 暂用 {fallback}",
+    systemUnknown: "系统语言无法读取 · 暂用 {fallback}",
+    current: "当前生效：{current}",
     switchFailed: "语言切换失败：{err}",
   },
   island: {
@@ -73,11 +82,18 @@ const en: MessageTree<typeof zh> = {
   language: {
     title: "Language",
     auto: "Follow system",
+    autoWith: "Follow system ({lang})",
     zh: "中文",
     en: "English",
-    hint: "Current: {current} ({source})",
-    sourceAuto: "from system",
-    sourceManual: "manually set",
+    languageName: {
+      zh: "Chinese (Simplified)",
+      zhHant: "Chinese (Traditional)",
+      en: "English",
+    },
+    systemLang: "System language: {lang}",
+    systemFallback: "System language: {lang} · using {fallback}",
+    systemUnknown: "System language unavailable · using {fallback}",
+    current: "Active: {current}",
     switchFailed: "Language switch failed: {err}",
   },
   island: {

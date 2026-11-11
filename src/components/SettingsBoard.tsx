@@ -7,15 +7,15 @@
  * 2. **范围前后端一致**：滑杆的 min/max 就是后端的钳制范围，所以不需要
  *    「保存后回写钳制值」这一步 —— 用户根本拖不出越界值；
  * 3. **语言不防抖**：点一下就切，切失败要立刻回滚并报错（spec §1.5），
- *    防抖只会让用户以为没点上。
+ *    防抖只会让用户以为没点上。这段逻辑连同整张语言卡片一起搬到了
+ *    `LanguageSection`（下拉菜单 + 系统语言解释），本文件只负责摆位置。
  */
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { LanguageSection } from "./LanguageSection";
 import { Badge } from "../components/primitives";
-import { localeName } from "../i18n";
-import { useI18n, useLocaleStore } from "../i18n/store";
-import type { LocalePref } from "../i18n/types";
+import { useI18n } from "../i18n/store";
 import { isTauri } from "../lib/ipc";
 
 interface IslandSettings {
@@ -52,16 +52,8 @@ const DEFAULTS: IslandSettings = {
   maxPerHour: 6,
 };
 
-/** 语言三胶囊：顺序固定（跟随系统在最左，符合「默认项优先」的阅读顺序） */
-const LOCALE_OPTIONS: LocalePref[] = ["auto", "zh", "en"];
-
 export function SettingsBoard() {
   const { t } = useI18n();
-  const locale = useLocaleStore((s) => s.locale);
-  const source = useLocaleStore((s) => s.source);
-  const setLocale = useLocaleStore((s) => s.setLocale);
-  const [localeError, setLocaleError] = useState<string | null>(null);
-  const [switching, setSwitching] = useState(false);
 
   const [cfg, setCfg] = useState<IslandSettings | null>(null);
   const [status, setStatus] = useState<IslandStatus | null>(null);
@@ -116,67 +108,16 @@ export function SettingsBoard() {
     setCfg((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
-  const pickLocale = async (next: LocalePref) => {
-    setSwitching(true);
-    setLocaleError(null);
-    try {
-      await setLocale(next);
-    } catch (e) {
-      // store 里的 locale 没被动过，界面天然停在旧语言；这里只负责说出来
-      setLocaleError(t("settings.language.switchFailed", { err: String(e) }));
-    } finally {
-      setSwitching(false);
-    }
-  };
-
   if (!cfg) {
     return <div className="px-5 py-6 text-[12px] text-ink-faint">{t("settings.loading")}</div>;
   }
 
   const disabled = !cfg.enabled;
-  // 「跟随系统」被选中时 settings.json 里存的是 auto；界面该高亮哪颗胶囊只能看
-  // 解析结果来自哪里（source），不能看 locale 值本身
-  const activePref: LocalePref = source === "manual" ? locale : "auto";
-  const sourceLabel =
-    source === "manual" ? t("settings.language.sourceManual") : t("settings.language.sourceAuto");
 
   return (
     <div className="flex-1 overflow-y-auto px-5 py-5">
       <div className="mx-auto flex max-w-[560px] flex-col gap-4">
-        <section className="rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5">
-          <div className="flex items-center justify-between gap-4">
-            <span className="text-[13px] font-medium">{t("settings.language.title")}</span>
-            <div className="inline-flex items-center gap-0.5 rounded-lg bg-white/[0.05] p-0.5">
-              {LOCALE_OPTIONS.map((opt) => {
-                const active = activePref === opt;
-                const label =
-                  opt === "auto"
-                    ? t("settings.language.auto")
-                    : opt === "zh"
-                      ? t("settings.language.zh")
-                      : t("settings.language.en");
-                return (
-                  <button
-                    key={opt}
-                    type="button"
-                    disabled={switching}
-                    aria-pressed={active}
-                    onClick={() => void pickLocale(opt)}
-                    className={`rounded-md px-2.5 py-1 text-[11px] font-medium transition-colors disabled:opacity-50 ${
-                      active ? "bg-white/[0.1] text-ink" : "text-ink-faint hover:text-ink-dim"
-                    }`}
-                  >
-                    {label}
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-          <p className="mt-1.5 text-[10px] leading-4 text-ink-faint">
-            {t("settings.language.hint", { current: localeName(locale), source: sourceLabel })}
-          </p>
-          {localeError ? <p className="mt-1 text-[10px] text-danger">{localeError}</p> : null}
-        </section>
+        <LanguageSection />
 
         <section className="rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5">
           <div className="flex items-start justify-between gap-4">

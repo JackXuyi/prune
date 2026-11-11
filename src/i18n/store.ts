@@ -12,13 +12,17 @@ import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
 import { isTauri } from "../lib/ipc";
-import { fetchLocale, LOCAL_PREF_KEY, fromTag } from "./detect";
+import { fetchLocale, LOCAL_PREF_KEY, fromTag, type LocaleState } from "./detect";
 import { i18nFor, type I18n } from "./index";
 import type { Locale, LocalePref, LocaleSource } from "./types";
 
 interface LocaleStore {
   locale: Locale;
   source: LocaleSource;
+  /** 系统首选语言原始 tag；浏览器 dev / 后端读不到时为 null（设置页据此写「无法读取」） */
+  system: string | null;
+  /** 此刻选「跟随系统」会落到哪个（manual 时与 locale 无关，但仍有意义） */
+  autoResolved: Locale;
   ready: boolean;
   /** 最近一次切换失败的原因（设置页 toast 用） */
   error: string | null;
@@ -34,6 +38,8 @@ export const useLocaleStore = create<LocaleStore>((set, get) => ({
   // 真正的语言在 boot() 里 resolve 完才 render，所以这个初值几乎不会被看到
   locale: "zh",
   source: "auto",
+  system: null,
+  autoResolved: "zh",
   ready: false,
   error: null,
 
@@ -42,12 +48,25 @@ export const useLocaleStore = create<LocaleStore>((set, get) => ({
     if (!bootPromise) {
       bootPromise = (async () => {
         const st = await fetchLocale();
-        set({ ...st, ready: true });
+        // 显式映射而不是 `...st`：`current` 是后端字段名，前端不读它，
+        // 展开进来只会让 store 里多一个没人知道该不该用的键
+        set({
+          locale: st.current,
+          source: st.source,
+          system: st.system ?? null,
+          autoResolved: st.autoResolved ?? st.current,
+          ready: true,
+        });
         if (isTauri()) {
-          // 事件：切语言后所有窗口同步。失败（无监听者）不算错误
-          await listen<{ current: Locale; source: LocaleSource }>(
-            "locale://changed",
-            (e) => set({ locale: e.payload.current, source: e.payload.source }),
+          // 事件：切语言后所有窗口同步。失败（无监听者）不算错误。
+          // 新字段必须一并写入：漏了 system 的话，切完语言副标题会停在旧值
+          await listen<LocaleState>("locale://changed", (e) =>
+            set({
+              locale: e.payload.current,
+              source: e.payload.source,
+              system: e.payload.system ?? null,
+              autoResolved: e.payload.autoResolved ?? e.payload.current,
+            }),
           ).catch(() => undefined);
         }
       })();
@@ -58,18 +77,29 @@ export const useLocaleStore = create<LocaleStore>((set, get) => ({
   setLocale: async (next) => {
     set({ error: null });
     if (!isTauri()) {
-      // 浏览器 dev：localStorage 兜底，auto 按 navigator 解析
+      // 浏览器 dev：localStorage 兜底，auto 按 navigator 解析。
+      // 没有真实系统语言可读 → system 恒 null，autoResolved 用 navigator 的结果
       if (next === "auto") localStorage.removeItem(LOCAL_PREF_KEY);
       else localStorage.setItem(LOCAL_PREF_KEY, next);
-      const locale = next === "auto" ? fromTag(navigator.language || "en") : next;
-      set({ locale, source: next === "auto" ? "auto" : "manual" });
+      const resolved = fromTag(navigator.language || "en");
+      set({
+        locale: next === "auto" ? resolved : next,
+        source: next === "auto" ? "auto" : "manual",
+        system: null,
+        autoResolved: resolved,
+      });
       return;
     }
     try {
-      const st = await invoke<{ current: Locale; source: LocaleSource }>("locale_set", {
+      const st = await invoke<LocaleState>("locale_set", {
         locale: next,
       });
-      set({ locale: st.current, source: st.source });
+      set({
+        locale: st.current,
+        source: st.source,
+        system: st.system ?? null,
+        autoResolved: st.autoResolved ?? st.current,
+      });
     } catch (e) {
       // spec §1.5：写盘失败 → 界面回滚（store 没被改过，天然是旧值）+ 报错给 UI
       set({ error: String(e) });

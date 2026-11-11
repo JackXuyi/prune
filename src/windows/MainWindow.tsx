@@ -156,6 +156,21 @@ export function MainWindow() {
   }, []);
 
   /**
+   * 面板齿轮 → 打开设置弹层。
+   *
+   * 单独一条通道而不是复用 `ui://tab`：后者的职责是「页面 id → tab」，
+   * 还背着 `mapExternalTab` 里 port/apps/overview 三个旧 id 的兼容映射；
+   * 把「弹层」塞进这张表，等于让一份兼容逻辑承担两种语义。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    const un = listen("ui://settings", () => setSettingsOpen(true));
+    return () => {
+      void un.then((fn) => fn());
+    };
+  }, []);
+
+  /**
    * 端口 tab 的可见性门控（方案 §5.2）：只要用户不在这个 tab 上，
    * 定时器就完全不扫——常驻开销 0 是验收项。
    */
@@ -291,7 +306,7 @@ export function MainWindow() {
             ? t("memory.refresh.sampling")
             : t("memory.refresh.refresh");
 
-  // 快捷键（UX v3 §5.5）：⌘1–6 切 tab · ⌘R 刷新 · ⌘F 聚焦搜索 · Escape 关弹层/取消选中。
+  // 快捷键（UX v3 §5.5）：⌘1–6 切 tab · ⌘R 刷新 · ⌘F 聚焦搜索 · ⌘, 设置 · Escape 关弹层/取消选中。
   // onRefresh 每次渲染都是新函数，用 ref 持有避免反复解绑。
   const refreshRef = useRef(onRefresh);
   refreshRef.current = onRefresh;
@@ -311,6 +326,10 @@ export function MainWindow() {
       } else if (meta && (e.key === "f" || e.key === "F")) {
         e.preventDefault();
         window.dispatchEvent(new CustomEvent("prune:focus-search"));
+      } else if (meta && e.key === ",") {
+        // 设置入口的键盘通道：语言切错时的「逃生门」——界面看不懂也记得 ⌘,
+        e.preventDefault();
+        setSettingsOpen(true);
       } else if (e.key === "Escape") {
         if (settingsOpen) setSettingsOpen(false);
         else if (tab === "memory" && selectedPid != null) select(null);

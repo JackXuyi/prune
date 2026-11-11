@@ -5,7 +5,8 @@
 //!
 //! **只有两个变体**，没有「自动」：`auto` 是设置层的概念，解析完就落到 Zh / En。
 //! 第三个语言真要来时，先想清楚 `from_tag` 的前缀匹配怎么扩展 —— 现在
-//! `zh-Hant` 也会落到 Zh（繁体用户看到简体），这是已知取舍。
+//! 繁体标签落到 **En**（catalog 没有繁体，与其给简体不如给英文，
+//! 见 `docs/i18n-language-switch-spec.md` §4.5）。
 
 use serde::{Deserialize, Serialize};
 
@@ -17,17 +18,35 @@ pub enum Locale {
     En,
 }
 
+/// 繁体标签：`hant` / `-TW` / `-HK` / `-MO`。
+///
+/// `hans` 优先：`zh-Hans-HK` 这种罕见混写是「简体 + 香港地区」，不能被
+/// 地区码误判成繁体。
+///
+/// **改这条规则必须同步改 `src/i18n/detect.ts::isTraditionalTag`** —— 浏览器
+/// dev 走 TS、Tauri 走这里，两边不一致会让 dev 与真机的 auto 结果打架。
+fn is_traditional(low: &str) -> bool {
+    if low.contains("hans") {
+        return false;
+    }
+    low.contains("hant") || low.contains("-tw") || low.contains("-hk") || low.contains("-mo")
+}
+
 impl Locale {
     /// BCP-47 标签 → Locale。只做前缀匹配，不引入 ICU。
     ///
-    /// - `zh` / `zh-Hans` / `zh-CN` / `zh-Hant` → [`Locale::Zh`]（繁体看到简体，已知取舍）
+    /// - `zh` / `zh-Hans` / `zh-CN` / `zh-SG` → [`Locale::Zh`]
+    /// - `zh-Hant*` / `zh-TW` / `zh-HK` / `zh-MO` → [`Locale::En`]（繁体无 catalog）
     /// - 其余一律 [`Locale::En`]（含 `ja` / `de` / 空串 / 无法识别）
     pub fn from_tag(tag: &str) -> Self {
-        if tag.trim().to_ascii_lowercase().starts_with("zh") {
-            Self::Zh
-        } else {
-            Self::En
+        let low = tag.trim().to_ascii_lowercase();
+        if !low.starts_with("zh") {
+            return Self::En;
         }
+        if is_traditional(&low) {
+            return Self::En;
+        }
+        Self::Zh
     }
 
     pub fn tag(self) -> &'static str {
@@ -74,14 +93,29 @@ impl LocalePref {
 mod tests {
     use super::{Locale, LocalePref};
 
+    /// 用例表与 `docs/i18n-language-switch-spec.md` §4.5 同一份；
+    /// TS 侧 `detect.ts::isTraditionalTag` 必须一字不差，否则 dev 与真机结果不同。
     #[test]
     fn tag_prefix_matching() {
+        // 明确简体
         assert_eq!(Locale::from_tag("zh"), Locale::Zh);
         assert_eq!(Locale::from_tag("zh-Hans"), Locale::Zh);
-        assert_eq!(Locale::from_tag("zh-Hant-TW"), Locale::Zh);
+        assert_eq!(Locale::from_tag("zh-Hans-CN"), Locale::Zh);
+        assert_eq!(Locale::from_tag("zh-CN"), Locale::Zh);
+        assert_eq!(Locale::from_tag("zh-SG"), Locale::Zh);
         assert_eq!(Locale::from_tag("ZH"), Locale::Zh);
         assert_eq!(Locale::from_tag(" zh-CN "), Locale::Zh);
+        // hans 优先：简体 + 香港地区仍是简体
+        assert_eq!(Locale::from_tag("zh-Hans-HK"), Locale::Zh);
 
+        // 繁体 → 英文（catalog 无繁体）
+        assert_eq!(Locale::from_tag("zh-Hant"), Locale::En);
+        assert_eq!(Locale::from_tag("zh-Hant-TW"), Locale::En);
+        assert_eq!(Locale::from_tag("zh-TW"), Locale::En);
+        assert_eq!(Locale::from_tag("zh-HK"), Locale::En);
+        assert_eq!(Locale::from_tag("zh-MO"), Locale::En);
+
+        // 非中文
         assert_eq!(Locale::from_tag("en-US"), Locale::En);
         assert_eq!(Locale::from_tag("ja"), Locale::En);
         assert_eq!(Locale::from_tag(""), Locale::En);

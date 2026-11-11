@@ -43,18 +43,18 @@ pub enum Locale {
 
 impl Locale {
     /// BCP-47 标签 → Locale。只做前缀匹配，不引入 ICU。
-    /// zh-Hans / zh-CN / zh-Hant → Zh（繁体用户看到简体文案，已知取舍）
+    /// zh / zh-Hans* / zh-CN / zh-SG → Zh
+    /// zh-Hant* / zh-TW / zh-HK / zh-MO → En（繁体无 catalog，落英文；
+    ///   2026-11-11 修订，见 docs/i18n-language-switch-spec.md §4.5）
     /// 其余一律 En（含 ja / de / 无法识别）
-    pub fn from_tag(tag: &str) -> Self {
-        if tag.to_ascii_lowercase().starts_with("zh") { Self::Zh } else { Self::En }
-    }
+    pub fn from_tag(tag: &str) -> Self { /* 见 locale.rs::is_traditional */ }
     pub fn tag(self) -> &'static str {
         match self { Self::Zh => "zh", Self::En => "en" }
     }
 }
 ```
 
-**约束**：Rust 侧不得出现第三个变体；前端不得接受 `"auto"` 作为 `Locale` 值（`auto` 只存在于设置层，见 1.2）。
+**约束**：Rust 侧不得出现第三个变体；前端不得接受 `"auto"` 作为 `Locale` 值（`auto` 只存在于设置层，见 1.2）。繁体判定规则（`hant` / `-TW` / `-HK` / `-MO`，`hans` 优先）在 `locale.rs::is_traditional` 与 `src/i18n/detect.ts::isTraditionalTag` 两处必须逐字一致。
 
 ### 1.2 settings.json
 
@@ -1095,7 +1095,7 @@ pub fn err_text(l: Locale) -> &'static ErrText;
 |---|---|---|---|
 | S1 | `sys-locale` 能否拉取 | 先试 `cargo add sys-locale`；失败走 objc2 兜底 | P0 第 1 天 |
 | S2 | L2 类型档位的 `tsc` 增量耗时 | 实测 > 300 ms 则降 L1 | P0 |
-| S3 | 繁体用户显示简体是否可接受 | 可接受（已知取舍，写进 README） | 无 |
+| S3 | 繁体用户显示简体是否可接受 | **已推翻（2026-11-11）：繁体落英文**，不再显示简体；判定规则与用例见 `docs/i18n-language-switch-spec.md` §4.5 | 已实现 |
 | S4 | `en-GB` vs `en-US` 时间格式 | 用 `en-GB`（稳定 24h） | P1 |
-| S5 | 是否给面板加「语言」快捷入口 | 不加，只在设置里 | — |
+| S5 | 是否给面板加「语言」快捷入口 | 不加语言切换；面板只加「打开设置」的齿轮（2026-11-11，跳板到设置页，不在面板内切语言） | 已实现 |
 | S6 | 缓存名 70 条英文由谁定稿 | 我出初稿，你在 P2-4 PR 里逐条核 | P2-4 |

@@ -14,6 +14,7 @@ import type {
   PluralKey,
   WithParamKey,
 } from "./types";
+import { isTraditionalTag } from "./detect";
 import { en } from "./messages/en-US";
 import { zh } from "./messages/zh-CN";
 
@@ -103,6 +104,27 @@ export function i18nFor(locale: Locale): I18n {
 /** 语言名的展示词（「跟随系统」提示里用） */
 export function localeName(l: Locale): string {
   return l === "zh" ? "中文" : "English";
+}
+
+/**
+ * 系统语言原始 tag → 可读名。未收录的语言原样返回 tag（够用户判断）。
+ *
+ * 名字跟 UI 语言走：这是对「系统设置里那个语言」的解释，不是可点击的选项；
+ * 可点击的选项名（中文 / English）恒为原文，理由见 localeName。
+ *
+ * 繁简必须复用 `isTraditionalTag`，不能在这里另写一套正则 —— 否则
+ * `zh-Hans-HK` 会被显示成「繁體中文」、解析却是 zh，名与实相反。
+ */
+export function systemLangName(tag: string | null | undefined, t: I18n["t"]): string | null {
+  if (!tag) return null;
+  const low = tag.toLowerCase();
+  if (low.startsWith("zh")) {
+    return isTraditionalTag(low)
+      ? t("settings.language.languageName.zhHant")
+      : t("settings.language.languageName.zh");
+  }
+  if (low.startsWith("en")) return t("settings.language.languageName.en");
+  return tag;
 }
 
 /**

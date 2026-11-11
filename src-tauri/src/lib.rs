@@ -107,10 +107,15 @@ pub fn run() {
 
             // 语言必须在建托盘之前解析好：托盘菜单文案活在 Rust 进程里，
             // 建完再改就得重建整份菜单（见 tray::rebuild_menu）
-            let (locale, source) = i18n::resolve(app.handle());
+            let resolved = i18n::resolve(app.handle());
             let app_locale = i18n::AppLocale::new();
-            app_locale.set(locale);
-            eprintln!("[i18n] 启动语言: {locale:?}（{}）", source.as_str());
+            app_locale.set(resolved.locale);
+            eprintln!(
+                "[i18n] 启动语言: {:?}（{}，系统 {:?}）",
+                resolved.locale,
+                resolved.source.as_str(),
+                resolved.system
+            );
             app.manage(app_locale);
 
             tray::create(app.handle())?;

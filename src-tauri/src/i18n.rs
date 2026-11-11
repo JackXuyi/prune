@@ -7,7 +7,6 @@
 //! 解析优先级：settings 里的手动选择 > 系统首选语言 > En。
 
 use std::sync::atomic::{AtomicU8, Ordering};
-use std::sync::OnceLock;
 
 use prune_core::i18n::err::err_text;
 use prune_core::i18n::fill;
@@ -71,18 +70,51 @@ impl Default for AppLocale {
     }
 }
 
+/// 一次解析的完整结论。
+///
+/// `locale` 是最终生效值（进 [`AppLocale`]，所有后端文案按它渲染）；
+/// `system` 只用于设置页的解释性文案（「系统语言：简体中文」），**不参与判定**。
+#[derive(Debug, Clone)]
+pub struct Resolved {
+    pub locale: Locale,
+    pub source: Source,
+    /// 系统首选语言原始串（如 `zh-Hans-CN`）；读不到为 None
+    pub system: Option<String>,
+}
+
+impl Resolved {
+    /// 若此刻选「跟随系统」会解析成哪个（与 [`resolve`] 的 auto 分支同一规则）。
+    ///
+    /// 设置页拿它来解释回落：系统是日语时界面是英文，副标题要写「暂用 English」。
+    pub fn auto_resolved(&self) -> Locale {
+        self.system
+            .as_deref()
+            .map(Locale::from_tag)
+            .unwrap_or(Locale::En)
+    }
+}
+
 /// 返回给前端的语言状态（`locale_get` / `locale_set` / `locale://changed` 共用）
 #[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct LocalePayload {
     pub current: Locale,
     pub source: &'static str,
+    /// 系统语言原始 tag：设置页显示「系统语言：…」用，浏览器 dev 为 null
+    pub system: Option<String>,
+    /// 选「跟随系统」会落到哪个（`current` 在 manual 时与它无关）
+    pub auto_resolved: Locale,
 }
 
 impl LocalePayload {
-    fn new(l: Locale, s: Source) -> Self {
+    fn from_resolved(r: Resolved) -> Self {
+        // 先算再 move：auto_resolved 借用了 r.system
+        let auto = r.auto_resolved();
         Self {
-            current: l,
-            source: s.as_str(),
+            current: r.locale,
+            source: r.source.as_str(),
+            system: r.system,
+            auto_resolved: auto,
         }
     }
 }
@@ -90,19 +122,27 @@ impl LocalePayload {
 /// settings 覆盖 > 系统首选语言 > En。
 ///
 /// 每次调用都重读 settings（文件很小），只把解析结果缓到 [`AppLocale`]。
-pub fn resolve(app: &AppHandle) -> (Locale, Source) {
+/// **manual 分支也读系统语言** —— 设置页的「跟随系统」副标题要解释系统认到了什么。
+pub fn resolve(app: &AppHandle) -> Resolved {
     let pref = crate::settings::get_str(app, SETTING_LOCALE)
         .map(|raw| Locale::pref_from_str(&raw))
         .unwrap_or(LocalePref::Auto);
-    match pref {
+    let system = system_tag();
+    let (locale, source) = match pref {
         LocalePref::Zh => (Locale::Zh, Source::Manual),
         LocalePref::En => (Locale::En, Source::Manual),
         LocalePref::Auto => (
-            system_locale()
-                .map(|tag| Locale::from_tag(&tag))
+            system
+                .as_deref()
+                .map(Locale::from_tag)
                 .unwrap_or(Locale::En),
             Source::Auto,
         ),
+    };
+    Resolved {
+        locale,
+        source,
+        system,
     }
 }
 
@@ -110,23 +150,22 @@ pub fn resolve(app: &AppHandle) -> (Locale, Source) {
 pub fn current(app: &AppHandle) -> Locale {
     app.try_state::<AppLocale>()
         .and_then(|st| st.get())
-        .unwrap_or_else(|| resolve(app).0)
+        .unwrap_or_else(|| resolve(app).locale)
 }
 
 /// 系统首选语言（BCP-47 原始串）。失败返回 None —— 调用方兜底 En。
 ///
-/// 实现说明：本机离线环境拉不到 `sys-locale`，因此 macOS 走 `defaults read`
-/// （一次子进程，结果进 OnceLock，之后零成本），Windows 直接调
-/// `GetUserDefaultUILanguage`（零依赖 FFI）。**接口与语义与 spec 一致**，
-/// 换成 sys-locale 只需替换本函数体。
-fn system_locale() -> Option<String> {
+/// 实现说明：本机离线环境拉不到 `sys-locale`，因此 macOS 走 `defaults read`，
+/// Windows 直接调 `GetUserDefaultUILanguage`（零依赖 FFI）。**接口与语义与
+/// spec 一致**，换成 sys-locale 只需替换本函数体。
+fn system_tag() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
-        macos_locale()
+        macos_tag()
     }
     #[cfg(windows)]
     {
-        windows_locale()
+        windows_tag()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -139,31 +178,29 @@ fn system_locale() -> Option<String> {
 /// macOS：`defaults read -g AppleLanguages` 输出形如
 /// `( "zh-Hans-CN", "en-US" )`，取第一项（系统首选语言）。
 ///
-/// 缓存进 OnceLock：语言变更本身要重启才全局生效，进程内不需要反复读。
+/// **故意不缓存**：用户可能在系统设置里刚换了语言，回来点「跟随系统」必须立刻
+/// 拿到新值（`locale_set` 的注释早就这么承诺，但旧实现的 `OnceLock` 让它做不到）。
+/// `defaults read` 一次约 8–15 ms，只在启动 / 切语言 / 读设置时发生，
+/// 不在任何采样循环或渲染热路径上；`AppLocale` 的原子缓存挡住其余调用。
 #[cfg(target_os = "macos")]
-fn macos_locale() -> Option<String> {
-    static CACHE: OnceLock<Option<String>> = OnceLock::new();
-    CACHE
-        .get_or_init(|| {
-            let out = std::process::Command::new("/usr/bin/defaults")
-                .args(["read", "-g", "AppleLanguages"])
-                .output()
-                .ok()?;
-            if !out.status.success() {
-                return None;
-            }
-            let text = String::from_utf8_lossy(&out.stdout);
-            text.split('"')
-                .nth(1)
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .clone()
+fn macos_tag() -> Option<String> {
+    let out = std::process::Command::new("/usr/bin/defaults")
+        .args(["read", "-g", "AppleLanguages"])
+        .output()
+        .ok()?;
+    if !out.status.success() {
+        return None;
+    }
+    let text = String::from_utf8_lossy(&out.stdout);
+    text.split('"')
+        .nth(1)
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
 }
 
 /// Windows：`GetUserDefaultUILanguage` 的低 10 位是主语言 ID，0x04 = 中文。
 #[cfg(windows)]
-fn windows_locale() -> Option<String> {
+fn windows_tag() -> Option<String> {
     #[link(name = "kernel32")]
     extern "system" {
         fn GetUserDefaultUILanguage() -> u16;
@@ -180,8 +217,7 @@ fn windows_locale() -> Option<String> {
 /// 读当前语言（幂等，不失败）。
 #[tauri::command]
 pub fn locale_get(app: AppHandle) -> LocalePayload {
-    let (l, s) = resolve(&app);
-    LocalePayload::new(l, s)
+    LocalePayload::from_resolved(resolve(&app))
 }
 
 /// 切换语言：写盘 → 更新缓存 → 重建托盘 → 广播事件。
@@ -205,11 +241,11 @@ pub fn locale_set(app: AppHandle, locale: String) -> Result<LocalePayload, Strin
             .map_err(|e| fill(err_t.locale_write_failed, &[("err", &e.to_string())]))?;
     }
 
-    let (resolved, source) = resolve(&app);
+    let r = resolve(&app);
     if let Some(st) = app.try_state::<AppLocale>() {
-        st.set(resolved);
+        st.set(r.locale);
     }
-    let payload = LocalePayload::new(resolved, source);
+    let payload = LocalePayload::from_resolved(r);
 
     // 托盘文案活在 Rust 进程里：不重建就是「主窗口英文、托盘中文」。
     // 菜单必须在主线程建，且 emit 必须排在重建之后 —— 因此放进同一个闭包
@@ -241,5 +277,44 @@ mod tests {
         assert_eq!(state.get(), Some(Locale::Zh));
         state.set(Locale::En);
         assert_eq!(state.get(), Some(Locale::En));
+    }
+
+    /// 「跟随系统会落到哪」的解释不能与 `resolve` 的 auto 分支漂移。
+    /// 直接构造 `Resolved`，不依赖跑测试的机器上真的装了什么语言。
+    #[test]
+    fn auto_resolved_falls_back_for_unsupported_tags() {
+        let mk = |tag: Option<&str>| Resolved {
+            locale: Locale::En,
+            source: Source::Auto,
+            system: tag.map(str::to_string),
+        };
+
+        assert_eq!(mk(Some("zh-Hans-CN")).auto_resolved(), Locale::Zh);
+        assert_eq!(mk(Some("zh-CN")).auto_resolved(), Locale::Zh);
+        // hans 优先：简体 + 香港地区仍是简体
+        assert_eq!(mk(Some("zh-Hans-HK")).auto_resolved(), Locale::Zh);
+        // 繁体无 catalog → 英文（docs/i18n-language-switch-spec.md §4.5）
+        assert_eq!(mk(Some("zh-Hant")).auto_resolved(), Locale::En);
+        assert_eq!(mk(Some("zh-Hant-TW")).auto_resolved(), Locale::En);
+        assert_eq!(mk(Some("zh-TW")).auto_resolved(), Locale::En);
+        assert_eq!(mk(Some("en-GB")).auto_resolved(), Locale::En);
+        // 不认识的语言静默回落英文，副标题会解释这件事
+        assert_eq!(mk(Some("ja-JP")).auto_resolved(), Locale::En);
+        assert_eq!(mk(None).auto_resolved(), Locale::En);
+    }
+
+    /// 载荷形状即前后端契约：字段名写错前端就读不到副标题（只是不显示，不会报错）
+    #[test]
+    fn payload_wire_shape_is_camel_case() {
+        let p = LocalePayload::from_resolved(Resolved {
+            locale: Locale::En,
+            source: Source::Auto,
+            system: Some("zh-Hans-CN".into()),
+        });
+        let v = serde_json::to_value(&p).unwrap();
+        assert_eq!(v["current"], "en");
+        assert_eq!(v["source"], "auto");
+        assert_eq!(v["system"], "zh-Hans-CN");
+        assert_eq!(v["autoResolved"], "zh");
     }
 }

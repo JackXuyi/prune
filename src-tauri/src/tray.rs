@@ -172,7 +172,10 @@ pub fn tray_text(l: Locale) -> &'static TrayText {
 fn build_menu(
     app: &AppHandle,
     locale: Locale,
-) -> tauri::Result<(Menu<tauri::Wry>, Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>)> {
+) -> tauri::Result<(
+    Menu<tauri::Wry>,
+    Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>,
+)> {
     let text = tray_text(locale);
     // 勾选态从当前原子量读，不从 settings 重读 —— 本次会话可能改过但还没落盘
     let anim_on = CPU_ANIM_ENABLED.load(Ordering::Relaxed);
@@ -180,8 +183,13 @@ fn build_menu(
     let theme = current_theme();
 
     let open_main = MenuItem::with_id(app, "open-main", text.open_main, true, None::<&str>)?;
-    let check_update =
-        MenuItem::with_id(app, MENU_CHECK_UPDATE, text.check_update, true, None::<&str>)?;
+    let check_update = MenuItem::with_id(
+        app,
+        MENU_CHECK_UPDATE,
+        text.check_update,
+        true,
+        None::<&str>,
+    )?;
     let cpu_anim = CheckMenuItem::with_id(
         app,
         MENU_TOGGLE_CPU_ANIM,
