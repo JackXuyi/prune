@@ -115,8 +115,39 @@ fn table(l: Locale) -> &'static T {
 }
 
 /// 渲染一份完整报告。`speed` 为 None 时不输出测速段（没跑过 ≠ 0 Mbps）。
+///
+/// 结论文案在这里按**当前语言**重算，而不是直接用 `diag.verdict` 里存的那份：
+/// 诊断要跑几秒，用户完全可能跑完中文诊断、切到英文再来复制报告 —— 存下来的
+/// label/advice/rule 是中文，报告就成了中英混排。判定与语言无关
+/// （[`crate::net::diag::verdict`] 的纯函数契约），同一份探测数据重算只换文案、
+/// 不换结论，所以这样做不引入第二种判定。
+///
+/// `kind` 缺失（旧版本数据 / 手工构造）时无法重算，退回存储值 —— 宁可中英混排，
+/// 也不要把整段结论删掉。
 pub fn render(diag: &NetDiag, speed: Option<&SpeedResult>, locale: Locale) -> String {
-    render_with(diag, speed, table(locale))
+    let d = with_localized_verdict(diag, locale);
+    render_with(&d, speed, table(locale))
+}
+
+/// 用当前语言重算结论；算不出（无 verdict 或无 kind）时原样返回
+fn with_localized_verdict(diag: &NetDiag, locale: Locale) -> NetDiag {
+    if diag.verdict.as_ref().is_none_or(|v| v.kind.is_none()) {
+        return diag.clone();
+    }
+    match crate::net::diag::verdict(
+        diag.lan.as_ref(),
+        diag.dns.as_ref(),
+        diag.wan.as_ref(),
+        diag.jitter_ms,
+        diag.captive.unwrap_or(CaptiveState::None),
+        locale,
+    ) {
+        Some(v) => NetDiag {
+            verdict: Some(v),
+            ..diag.clone()
+        },
+        None => diag.clone(),
+    }
 }
 
 fn render_with(diag: &NetDiag, speed: Option<&SpeedResult>, t: &T) -> String {
@@ -275,7 +306,11 @@ mod tests {
     }
 
     /// 英文报告里不允许出现一个汉字 —— 这份文本会被复制到别处，
-    /// 漏一个词就是「界面英文、报告中文」的穿帮
+    /// 漏一个词就是「界面英文、报告中文」的穿帮。
+    ///
+    /// fixture 里的 verdict 故意存**中文**：这模拟「中文下跑诊断、切英文后复制
+    /// 报告」的真实路径。渲染时按当前语言重算结论，所以这条既验文案表，也验
+    /// 重算这条链路本身。
     #[test]
     fn english_report_has_no_cjk() {
         let r = render(&sample_diag(), None, Locale::En);
@@ -283,6 +318,20 @@ mod tests {
         assert!(r.contains("# Prune network diagnostic report"));
         assert!(r.contains("## Layer probes"));
         assert!(r.contains("## Verdict"));
+        assert!(r.contains("All layers normal"), "结论没跟着报告语言走");
+    }
+
+    /// 结论跟着**报告语言**走，而不是 diag 里存的那份：同一份数据，两种渲染
+    #[test]
+    fn verdict_follows_report_language() {
+        let d = sample_diag(); // verdict 存的是中文（见上面 fixture 注释）
+        assert!(render(&d, None, Locale::Zh).contains("各层正常"));
+        assert!(render(&d, None, Locale::En).contains("All layers normal"));
+        // 原始数据不被污染：重算只发生在渲染时，不改调用方的 diag
+        assert_eq!(
+            d.verdict.as_ref().map(|v| v.label.as_str()),
+            Some("各层正常")
+        );
     }
 
     /// 失败整轮的英文报告同样不能漏中文（这条分支容易忘，它提前 return）
