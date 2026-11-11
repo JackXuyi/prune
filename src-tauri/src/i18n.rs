@@ -9,6 +9,8 @@
 use std::sync::atomic::{AtomicU8, Ordering};
 use std::sync::OnceLock;
 
+use prune_core::i18n::err::err_text;
+use prune_core::i18n::fill;
 use prune_core::locale::{Locale, LocalePref};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager};
@@ -190,6 +192,8 @@ pub fn locale_get(app: AppHandle) -> LocalePayload {
 /// - 最后 emit：三个窗口各自更新 store
 #[tauri::command]
 pub fn locale_set(app: AppHandle, locale: String) -> Result<LocalePayload, String> {
+    // 报错用**切换前**的语言：用户点了 English 但没切成功，提示仍应是他看得懂的那句
+    let err_t = err_text(current(&app));
     let pref = Locale::pref_from_str(&locale);
     let next_raw = pref.as_str();
     let prev_raw = crate::settings::get_str(&app, SETTING_LOCALE).unwrap_or_else(|| "auto".into());
@@ -198,7 +202,7 @@ pub fn locale_set(app: AppHandle, locale: String) -> Result<LocalePayload, Strin
     // 重复点一次应当刷新；但不必再写盘
     if next_raw != prev_raw {
         crate::settings::set(&app, SETTING_LOCALE, serde_json::json!(next_raw))
-            .map_err(|e| format!("保存语言设置失败: {e}"))?;
+            .map_err(|e| fill(err_t.locale_write_failed, &[("err", &e.to_string())]))?;
     }
 
     let (resolved, source) = resolve(&app);
@@ -219,7 +223,7 @@ pub fn locale_set(app: AppHandle, locale: String) -> Result<LocalePayload, Strin
             eprintln!("[i18n] 语言变更事件广播失败（不影响已切换的界面）: {e}");
         }
     })
-    .map_err(|e| format!("调度主线程失败: {e}"))?;
+    .map_err(|e| fill(err_t.main_thread_dispatch, &[("err", &e.to_string())]))?;
 
     Ok(payload)
 }

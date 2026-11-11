@@ -15,6 +15,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::disk::whitelist::{self, Level};
 use crate::disk::{tree_size, DiskReport};
+use crate::i18n::err::err_text;
+use crate::i18n::fill;
+use crate::locale::Locale;
 use std::ffi::OsStr;
 
 /// 默认熔断阈值：20 GB
@@ -142,6 +145,27 @@ fn is_report_detail_path(path: &Path, home: &Path, allowed: &[String]) -> bool {
             .map(|ac| ac == c)
             .unwrap_or(false)
     })
+}
+
+impl ReclaimError {
+    /// 用户可见文案。
+    ///
+    /// `Display` 保留中文不动：它是 CLI 与 `eprintln!` 的输出通道，
+    /// 翻译它会让日志检索变难，而 CLI 是冻结为中文的机器接口。
+    pub fn text(&self, locale: Locale) -> String {
+        let t = err_text(locale);
+        match self {
+            Self::NotWhitelisted(p) => fill(t.reclaim_not_whitelisted, &[("path", p)]),
+            Self::NotCleanable(p) => fill(t.reclaim_not_cleanable, &[("path", p)]),
+            Self::NeedsExplicitConfirm(n) => {
+                fill(t.reclaim_needs_confirm, &[("n", &n.to_string())])
+            }
+            Self::NothingToDo => t.reclaim_nothing.to_string(),
+            Self::AllFailed(items) => {
+                fill(t.reclaim_all_failed, &[("n", &items.len().to_string())])
+            }
+        }
+    }
 }
 
 impl std::fmt::Display for ReclaimError {

@@ -21,6 +21,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use prune_core::i18n::err::err_text;
+use prune_core::i18n::fill;
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_updater::UpdaterExt;
 
@@ -64,9 +66,10 @@ fn pending_payload(update: &tauri_plugin_updater::Update) -> serde_json::Value {
 ///
 /// 返回值与 `update://available` / `update://check-result` 的负载一致。
 pub async fn check_and_notify(app: &AppHandle, manual: bool) -> Result<serde_json::Value, String> {
+    let err_t = err_text(crate::i18n::current(app));
     let updater = app
         .updater()
-        .map_err(|e| format!("updater 不可用（未配置 plugins.updater?）: {e}"))?;
+        .map_err(|e| fill(err_t.updater_unavailable, &[("err", &e.to_string())]))?;
 
     match updater.check().await {
         Ok(Some(update)) => {
@@ -138,7 +141,8 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
         let mut guard = state.0.lock().unwrap_or_else(|e| e.into_inner());
         guard.take()
     };
-    let update = taken.ok_or_else(|| "没有待安装的更新，请先检查更新".to_string())?;
+    let err_t = err_text(crate::i18n::current(&app));
+    let update = taken.ok_or_else(|| err_t.update_none_pending.to_string())?;
 
     eprintln!("[updater] 开始下载 {}", update.version);
     let app_for_progress = app.clone();
@@ -153,7 +157,7 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
             || {},
         )
         .await
-        .map_err(|e| format!("下载安装失败: {e}"))?;
+        .map_err(|e| fill(err_t.update_install_failed, &[("err", &e.to_string())]))?;
 
     let _ = app.emit(EVENT_INSTALLED, ());
     eprintln!("[updater] 安装完成，重启应用");

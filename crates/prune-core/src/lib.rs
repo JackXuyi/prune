@@ -24,6 +24,9 @@ pub mod base64;
 pub mod classify;
 pub mod db;
 pub mod disk;
+/// Rust 侧用户可见文案表（诊断结论 / 报告 / 错误串）。逻辑与文案分家：
+/// `net::diag` 只管判阈值，翻译在 `i18n::diag_text`，两边用结构体对齐。
+pub mod i18n;
 pub mod island;
 pub mod leak;
 pub mod localtime;

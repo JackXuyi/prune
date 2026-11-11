@@ -22,6 +22,10 @@ use std::time::{Duration, Instant};
 
 use serde::{Deserialize, Serialize};
 
+use crate::i18n::diag_text::{self, Line, ParamLine};
+use crate::i18n::fill;
+use crate::locale::Locale;
+
 // ---------------------------------------------------------------- 阈值（§4.3）
 
 /// 路由器连接耗时超过它 → 「路由器响应慢」
@@ -110,6 +114,38 @@ impl LayerProbe {
     }
 }
 
+/// 命中的规则类型。
+///
+/// 加它的直接原因：原来的单测断言中文整句（`assert_eq!(v.label, "各层正常")`），
+/// 改一个字的文案就挂一片测试，而这些测试真正想验证的是**优先级短路顺序**。
+/// 有了 `kind`，测试断言「命中了哪条规则」，文案怎么改都不影响。
+///
+/// 顺序即 §3.3 的短路顺序，前端不消费（`skip_serializing_if`）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum VerdictKind {
+    LanDown,
+    DnsFail,
+    Captive,
+    LanSlow,
+    WanGap,
+    Jitter,
+    DnsSlow,
+    AllGood,
+}
+
+/// 渲染所需的数字。缺项按 0 处理（不 panic）
+#[derive(Debug, Clone, Copy, Default)]
+pub struct VerdictParams {
+    /// 实测值（LanSlow / Jitter / DnsSlow 用它，WanGap 用 gap）
+    pub ms: f64,
+    /// WanGap 的差值（WAN − LAN）
+    pub gap_ms: f64,
+    /// 该条规则的阈值，由调用方从常量传入 —— 文案里不写死数字，避免
+    /// 「界面说 50 ms、代码按 80 ms 判」这种漂移
+    pub threshold: f64,
+}
+
 /// 分层结论。规则与阈值一并给 UI，不搞黑盒（§3.3）
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -120,6 +156,9 @@ pub struct Verdict {
     pub advice: String,
     /// 命中的规则（含阈值原文），UI 逐行展示阈值时引用
     pub rule: String,
+    /// 命中的规则类型。只用于测试与日志排查，前端不读
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kind: Option<VerdictKind>,
 }
 
 /// 一轮诊断的完整产出。serde camelCase ↔ `src/types/net.ts`。
@@ -293,102 +332,102 @@ pub fn parse_netsh_ssid(output: &str) -> Option<String> {
     None
 }
 
+/// 无占位文案 → `Verdict`
+fn simple(kind: VerdictKind, t: &Line) -> Verdict {
+    Verdict {
+        label: t.label.into(),
+        advice: t.advice.into(),
+        rule: t.rule.into(),
+        kind: Some(kind),
+    }
+}
+
+/// 带实测值 + 阈值的文案 → `Verdict`。数字一律 0 位小数（UI 与报告同口径）
+fn measured(kind: VerdictKind, t: &ParamLine, v: f64, threshold: f64) -> Verdict {
+    let v = format!("{v:.0}");
+    let thr = format!("{threshold:.0}");
+    let pairs = [("v", v.as_str()), ("t", thr.as_str())];
+    Verdict {
+        label: fill(t.label, &pairs),
+        advice: fill(t.advice, &pairs),
+        rule: fill(t.rule, &pairs),
+        kind: Some(kind),
+    }
+}
+
 /// 分层判定（§3.3 优先级短路，纯函数）。全分支由单测覆盖。
+///
+/// `locale` 只影响文案，不影响判定 —— 判定顺序与阈值对所有语言完全一致，
+/// 否则「中文说正常、英文说抖动」这种事故只是时间问题。
 pub fn verdict(
     lan: Option<&LayerProbe>,
     dns: Option<&LayerProbe>,
     wan: Option<&LayerProbe>,
     jitter_ms: Option<f64>,
     captive: CaptiveState,
+    locale: Locale,
 ) -> Option<Verdict> {
+    let t = diag_text::verdict_text(locale);
     // 1. 网关探测全失败 → 连不上路由器
     if lan.is_some_and(LayerProbe::is_failed) {
-        return Some(Verdict {
-            label: "连不上路由器".into(),
-            advice: "检查 Wi-Fi / 网线是否连接".into(),
-            rule: "网关连接探测全部失败".into(),
-        });
+        return Some(simple(VerdictKind::LanDown, &t.lan_down));
     }
     // 2. DNS 全失败 → 解析故障
     if dns.is_some_and(LayerProbe::is_failed) {
-        return Some(Verdict {
-            label: "DNS 解析失败".into(),
-            advice: "网关通但域名解析不了，多为 DNS 配置或运营商 DNS 故障".into(),
-            rule: "DNS 探测全部失败".into(),
-        });
+        return Some(simple(VerdictKind::DnsFail, &t.dns_fail));
     }
     // 3. portal
     if captive == CaptiveState::Suspected {
-        return Some(Verdict {
-            label: "需要网页登录（酒店/机场 Wi-Fi）".into(),
-            advice: "打开浏览器完成认证".into(),
-            rule: "portal 探测未返回 Success".into(),
-        });
+        return Some(simple(VerdictKind::Captive, &t.captive));
     }
     let lan_ms = lan.and_then(|p| p.median_ms);
     let dns_ms = dns.and_then(|p| p.median_ms);
     let wan_ms = wan.and_then(|p| p.median_ms);
     // 4. 路由器慢
     if let Some(v) = lan_ms.filter(|v| *v > LAN_SLOW_MS) {
-        return Some(Verdict {
-            label: format!("路由器响应慢（{v:.0} ms）"),
-            advice: "重启路由器试试".into(),
-            rule: format!("连接耗时 > {LAN_SLOW_MS:.0} ms"),
-        });
+        return Some(measured(VerdictKind::LanSlow, &t.lan_slow, v, LAN_SLOW_MS));
     }
     // 5. 出口慢（WAN − LAN）
     if let (Some(w), Some(l)) = (wan_ms, lan_ms) {
         let gap = w - l;
         if gap > WAN_LAN_GAP_MS {
-            return Some(Verdict {
-                label: format!("出口/运营商延迟高（差值 {gap:.0} ms）"),
-                advice: "你的宽带问题，Prune 无能为力，找 ISP".into(),
-                rule: format!("WAN − LAN > {WAN_LAN_GAP_MS:.0} ms"),
-            });
+            return Some(measured(
+                VerdictKind::WanGap,
+                &t.wan_gap,
+                gap,
+                WAN_LAN_GAP_MS,
+            ));
         }
     }
     // 6. 抖动
     if let Some(j) = jitter_ms.filter(|j| *j > JITTER_HIGH_MS) {
-        return Some(Verdict {
-            label: format!("链路抖动大（±{j:.0} ms）"),
-            advice: "信号弱 / 拥挤信道 / 运营商波动，多为 Wi-Fi 环境问题".into(),
-            rule: format!("抖动（MAD）> {JITTER_HIGH_MS:.0} ms"),
-        });
+        return Some(measured(VerdictKind::Jitter, &t.jitter, j, JITTER_HIGH_MS));
     }
     // 7. DNS 慢
     if let Some(v) = dns_ms.filter(|v| *v > DNS_SLOW_MS) {
-        return Some(Verdict {
-            label: format!("DNS 偏慢（{v:.0} ms）"),
-            advice: "可在系统设置换 DNS 试试".into(),
-            rule: format!("解析耗时 > {DNS_SLOW_MS:.0} ms"),
-        });
+        return Some(measured(VerdictKind::DnsSlow, &t.dns_slow, v, DNS_SLOW_MS));
     }
     // 8. 正常
-    Some(Verdict {
-        label: "各层正常".into(),
-        advice: "慢感可能来自对端服务本身".into(),
-        rule: "所有层都在阈值内".into(),
-    })
+    Some(simple(VerdictKind::AllGood, &t.all_good))
 }
 
 // ---------------------------------------------------------------- 探测器（薄壳）
 
 /// TCP connect 耗时（ms）。连接建立即停表——我们量的是「握上手」，不是「传完数据」
-fn probe_tcp(addr: &str, timeout: Duration) -> Result<f64, String> {
+fn probe_tcp(addr: &str, timeout: Duration, locale: Locale) -> Result<f64, String> {
+    let t = diag_text::note_text(locale);
+    let sock = addr.parse().map_err(|e: std::net::AddrParseError| {
+        fill(t.addr_parse, &[("addr", addr), ("err", &e.to_string())])
+    })?;
     let start = Instant::now();
-    TcpStream::connect_timeout(
-        &addr
-            .parse()
-            .map_err(|e| format!("地址解析失败 {addr}: {e}"))?,
-        timeout,
-    )
-    .map(|_| start.elapsed().as_secs_f64() * 1000.0)
-    .map_err(|e| format!("{addr}: {e}"))
+    TcpStream::connect_timeout(&sock, timeout)
+        .map(|_| start.elapsed().as_secs_f64() * 1000.0)
+        .map_err(|e| format!("{addr}: {e}"))
 }
 
 /// DNS 解析耗时（ms）。getaddrinfo 不可中断，套旁路线程实现总超时；
 /// 超时后线程在后台自行结束（一次性泄漏 ≤ 系统解析器超时上限，可接受）
-fn probe_dns(host_port: &str, timeout: Duration) -> Result<f64, String> {
+fn probe_dns(host_port: &str, timeout: Duration, locale: Locale) -> Result<f64, String> {
     let (tx, rx) = mpsc::channel();
     let target = host_port.to_string();
     std::thread::spawn(move || {
@@ -402,7 +441,10 @@ fn probe_dns(host_port: &str, timeout: Duration) -> Result<f64, String> {
     match rx.recv_timeout(timeout) {
         Ok((Ok(()), ms)) => Ok(ms),
         Ok((Err(e), _)) => Err(e),
-        Err(_) => Err(format!("{host_port}: DNS 探测超时（{timeout:?}）")),
+        Err(_) => Err(fill(
+            diag_text::note_text(locale).dns_timeout,
+            &[("host", host_port), ("dur", &format!("{timeout:?}"))],
+        )),
     }
 }
 
@@ -410,6 +452,10 @@ fn probe_dns(host_port: &str, timeout: Duration) -> Result<f64, String> {
 /// 明文一个请求足够，不为它引 reqwest/ureq）。
 /// 口径：**不读系统代理**——浏览器走代理而探测不走，Windows 企业网下结果
 /// 可能与浏览器体验不一致（脚注必须写明）。
+///
+/// 这里的 Err 一律是内部诊断信息：调用方只用 `Ok` 或落到
+/// `CaptiveState::Unknown`，错误串永不显示给用户 —— 所以保持英文原样，
+/// 不进文案表（翻译一句没人看的话只是多一份要维护的东西）。
 fn probe_portal(timeout: Duration) -> Result<CaptiveState, String> {
     let addr = format!("{PORTAL_HOST}:80");
     let mut stream = TcpStream::connect_timeout(
@@ -417,7 +463,7 @@ fn probe_portal(timeout: Duration) -> Result<CaptiveState, String> {
             .to_socket_addrs()
             .map_err(|e| format!("portal DNS: {e}"))?
             .next()
-            .ok_or("portal DNS: 无地址")?,
+            .ok_or("portal DNS: no address")?,
         timeout,
     )
     .map_err(|e| format!("{addr}: {e}"))?;
@@ -429,12 +475,12 @@ fn probe_portal(timeout: Duration) -> Result<CaptiveState, String> {
     );
     stream
         .write_all(req.as_bytes())
-        .map_err(|e| format!("portal 写请求: {e}"))?;
+        .map_err(|e| format!("portal request write: {e}"))?;
     let mut buf = Vec::new();
     stream
         .take(64 * 1024)
         .read_to_end(&mut buf)
-        .map_err(|e| format!("portal 读响应: {e}"))?;
+        .map_err(|e| format!("portal response read: {e}"))?;
     let text = String::from_utf8_lossy(&buf);
     let mut lines = text.split("\r\n");
     let status_line = lines.next().unwrap_or("");
@@ -509,12 +555,16 @@ pub fn wifi_ssid(iface: Option<&str>) -> Option<String> {
 /// 跑一轮诊断（串行，预算 ≤ 5 s：DNS 3 + LAN 3 + WAN 5 + portal 1，各 2 s 超时）。
 /// 全部探测失败不等于整轮 failed——那是「连不上路由器」的 Done；
 /// failed 只留给「探测机制本身失败」（拿不到网关）。
-pub fn run_diag(at: i64) -> NetDiag {
+///
+/// `locale` 决定 note 与结论的语言。诊断本身要跑几秒，用户在等待期间切语言
+/// 不会中断这一轮 —— 语言在开跑那一刻定下，结果自洽即可。
+pub fn run_diag(at: i64, locale: Locale) -> NetDiag {
+    let nt = diag_text::note_text(locale);
     let Some(gw) = default_gateway() else {
         return NetDiag {
             at,
             status: DiagStatus::Failed,
-            note: Some("找不到默认网关，无法做分层探测".into()),
+            note: Some(nt.no_gateway.into()),
             dns: None,
             lan: None,
             wan: None,
@@ -530,7 +580,7 @@ pub fn run_diag(at: i64) -> NetDiag {
     let lan_addr = format!("{}:80", gw.gateway);
     let mut lan_err: Option<String> = None;
     let lan_samples: Vec<f64> = (0..3)
-        .filter_map(|_| match probe_tcp(&lan_addr, PROBE_TIMEOUT) {
+        .filter_map(|_| match probe_tcp(&lan_addr, PROBE_TIMEOUT, locale) {
             Ok(ms) => Some(ms),
             Err(e) => {
                 lan_err = Some(e);
@@ -540,9 +590,12 @@ pub fn run_diag(at: i64) -> NetDiag {
         .collect();
     let mut lan = LayerProbe::from_samples(lan_samples);
     if lan.is_failed() {
-        lan.note = Some(format!(
-            "{lan_addr} 连接失败：{}",
-            lan_err.as_deref().unwrap_or("未知错误")
+        lan.note = Some(fill(
+            nt.lan_failed,
+            &[
+                ("addr", &lan_addr),
+                ("err", lan_err.as_deref().unwrap_or(nt.unknown_err)),
+            ],
         ));
     }
 
@@ -551,7 +604,7 @@ pub fn run_diag(at: i64) -> NetDiag {
     // 实际用了哪个目标写进 note——目标本身就是事实，不能静默换。
     let mut wan_err: Option<String> = None;
     let mut wan_samples: Vec<f64> = (0..5)
-        .filter_map(|_| match probe_tcp(WAN_PROBE_ADDR, PROBE_TIMEOUT) {
+        .filter_map(|_| match probe_tcp(WAN_PROBE_ADDR, PROBE_TIMEOUT, locale) {
             Ok(ms) => Some(ms),
             Err(e) => {
                 wan_err = Some(e);
@@ -561,17 +614,25 @@ pub fn run_diag(at: i64) -> NetDiag {
         .collect();
     let mut wan_note: Option<String> = None;
     if wan_samples.is_empty() {
-        wan_note = Some(format!(
-            "{WAN_PROBE_ADDR} 5 次全部失败（{}），疑似直连被网络拦截，回退 {WAN_FALLBACK_ADDR}",
-            wan_err.as_deref().unwrap_or("连接超时"),
+        wan_note = Some(fill(
+            nt.wan_all_failed,
+            &[
+                ("addr", WAN_PROBE_ADDR),
+                ("err", wan_err.as_deref().unwrap_or(nt.timeout_err)),
+                ("fallback", WAN_FALLBACK_ADDR),
+            ],
         ));
         wan_samples = (0..5)
-            .filter_map(|_| probe_tcp(WAN_FALLBACK_ADDR, PROBE_TIMEOUT).ok())
+            .filter_map(|_| probe_tcp(WAN_FALLBACK_ADDR, PROBE_TIMEOUT, locale).ok())
             .collect();
         if wan_samples.is_empty() {
-            wan_note = Some(format!(
-                "{WAN_PROBE_ADDR} 与回退 {WAN_FALLBACK_ADDR} 均 5 次全部失败：{}（出口不通或被强拦，对照 LAN/DNS 读数定位）",
-                wan_err.as_deref().unwrap_or("连接超时"),
+            wan_note = Some(fill(
+                nt.wan_both_failed,
+                &[
+                    ("addr", WAN_PROBE_ADDR),
+                    ("fallback", WAN_FALLBACK_ADDR),
+                    ("err", wan_err.as_deref().unwrap_or(nt.timeout_err)),
+                ],
             ));
         }
     }
@@ -583,7 +644,7 @@ pub fn run_diag(at: i64) -> NetDiag {
     let mut dns_samples: Vec<f64> = Vec::new();
     let mut dns_err: Option<String> = None;
     for i in 0..3 {
-        match probe_dns(DNS_PROBE_HOST, DNS_TIMEOUT) {
+        match probe_dns(DNS_PROBE_HOST, DNS_TIMEOUT, locale) {
             Ok(ms) if i > 0 => dns_samples.push(ms),
             Ok(_) => {}
             Err(e) => {
@@ -592,9 +653,12 @@ pub fn run_diag(at: i64) -> NetDiag {
         }
     }
     let dns = if dns_samples.is_empty() {
-        LayerProbe::failed(format!(
-            "解析 {DNS_PROBE_HOST} 全部失败：{}",
-            dns_err.as_deref().unwrap_or("未知错误")
+        LayerProbe::failed(fill(
+            nt.dns_failed,
+            &[
+                ("host", DNS_PROBE_HOST),
+                ("err", dns_err.as_deref().unwrap_or(nt.unknown_err)),
+            ],
         ))
     } else {
         LayerProbe::from_samples(dns_samples)
@@ -602,7 +666,14 @@ pub fn run_diag(at: i64) -> NetDiag {
 
     let captive = probe_portal(PROBE_TIMEOUT).unwrap_or(CaptiveState::Unknown);
     let ssid = wifi_ssid(gw.iface.as_deref());
-    let v = verdict(Some(&lan), Some(&dns), Some(&wan), jitter_ms, captive);
+    let v = verdict(
+        Some(&lan),
+        Some(&dns),
+        Some(&wan),
+        jitter_ms,
+        captive,
+        locale,
+    );
 
     NetDiag {
         at,
@@ -623,102 +694,11 @@ pub fn run_diag(at: i64) -> NetDiag {
 
 /// Markdown 诊断报告（白名单内容：时间 / SSID / 三层 / 结论 / 测速 / 口径）。
 /// 粘贴给 AI 可独立读懂；不含进程列表与流量明细。
-pub fn report_markdown(diag: &NetDiag, speed: Option<&SpeedResult>) -> String {
-    let mut r = String::from("# Prune 网络诊断报告\n\n");
-    r.push_str(&format!("- 时间：<t:{}>（Unix 秒）\n", diag.at));
-    if let Some(ssid) = &diag.ssid {
-        r.push_str(&format!("- Wi-Fi：{ssid}\n"));
-    }
-    r.push_str(&format!(
-        "- 平台：{}\n",
-        if cfg!(target_os = "macos") {
-            "macOS"
-        } else if cfg!(windows) {
-            "Windows"
-        } else {
-            "其他"
-        }
-    ));
-    r.push_str("\n## 分层探测\n\n");
-    if diag.status == DiagStatus::Failed {
-        r.push_str(&format!(
-            "整轮失败：{}\n（探测机制本身失败，与「连不上路由器」不同）\n",
-            diag.note.as_deref().unwrap_or("未知原因")
-        ));
-        return r;
-    }
-    let row = |name: &str, p: &Option<LayerProbe>, extra: &str| -> String {
-        match p {
-            Some(p) => match p.median_ms {
-                Some(ms) => format!(
-                    "| {name} | {ms:.1} ms | {} | {} |\n",
-                    match p.note.as_deref() {
-                        Some(n) => format!("{extra}；{n}"),
-                        None => extra.to_string(),
-                    },
-                    p.samples
-                        .iter()
-                        .map(|v| format!("{v:.0}"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                ),
-                None => format!(
-                    "| {name} | 探测失败 | {} | — |\n",
-                    p.note.as_deref().unwrap_or("")
-                ),
-            },
-            None => format!("| {name} | 未探测 | {} | — |\n", extra),
-        }
-    };
-    r.push_str("| 层 | 连接耗时 | 说明 | 原始样本 |\n|---|---|---|---|\n");
-    r.push_str(&row(
-        "DNS（解析 www.apple.com）",
-        &diag.dns,
-        "走系统解析器，含缓存",
-    ));
-    r.push_str(&row(
-        &format!("网关 LAN（{}:80）", diag.gateway.as_deref().unwrap_or("?")),
-        &diag.lan,
-        "TCP connect",
-    ));
-    r.push_str(&row(
-        "出口 WAN（首选 1.1.1.1:443，被拦回退 223.5.5.5:443）",
-        &diag.wan,
-        &format!(
-            "抖动 {}",
-            diag.jitter_ms
-                .map(|j| format!("±{j:.1} ms"))
-                .unwrap_or_else(|| "—".into())
-        ),
-    ));
-    if let Some(c) = diag.captive {
-        r.push_str(&format!(
-            "\n- captive portal：{}\n",
-            match c {
-                CaptiveState::None => "正常公网",
-                CaptiveState::Suspected => "疑似需要网页登录（酒店/机场 Wi-Fi）",
-                CaptiveState::Unknown => "探测失败，不下结论",
-            }
-        ));
-    }
-    if let Some(v) = &diag.verdict {
-        r.push_str(&format!(
-            "\n## 结论\n\n**{}**\n\n- 建议：{}\n- 规则：{}\n- 注：未含 Wi-Fi 信号层（v2 提供）\n",
-            v.label, v.advice, v.rule
-        ));
-    }
-    if let Some(s) = speed {
-        r.push_str(&format!(
-            "\n## 测速（macOS networkQuality）\n\n- 下行 {:.1} Mbps / 上行 {:.1} Mbps\n- 负载下响应度 RPM {:.0}（{}）\n- base_rtt {:.0} ms\n",
-            s.down_bps / 1_000_000.0,
-            s.up_bps / 1_000_000.0,
-            s.rpm,
-            s.rpm_level,
-            s.base_rtt_ms,
-        ));
-    }
-    r.push_str("\n> 口径：连接耗时（TCP connect）不是 ICMP ping；DNS 走系统解析器含缓存，低值不代表无 DNS 问题；portal 探测不经系统代理，结果可能与浏览器体验不一致。\n");
-    r
+///
+/// 渲染在 [`crate::i18n::report`]：那里按语言给整套静态片段，布局只写一次
+/// —— 两种语言各写一遍表格拼装，迟早有一边多一个空行。
+pub fn report_markdown(diag: &NetDiag, speed: Option<&SpeedResult>, locale: Locale) -> String {
+    crate::i18n::report::render(diag, speed, locale)
 }
 
 // ---------------------------------------------------------------- 单测
@@ -758,6 +738,9 @@ mod tests {
     }
 
     // ---- 纯函数：判定表全分支（§3.3 8 条，按优先级短路）
+    //
+    // 断言 `kind` 而不是中文整句：这些用例验的是「谁优先命中」，不是文案。
+    // 加一个 `Locale::En` 的用例足以证明文案真的换了一整套。
 
     #[test]
     fn verdict_all_layers_ok() {
@@ -770,32 +753,58 @@ mod tests {
             Some(&wan),
             Some(8.0),
             CaptiveState::None,
+            Locale::Zh,
         )
         .unwrap();
+        assert_eq!(v.kind, Some(VerdictKind::AllGood));
         assert_eq!(v.label, "各层正常");
     }
 
     #[test]
     fn verdict_gateway_down_wins() {
         let lan = LayerProbe::failed("连不上");
-        let v = verdict(Some(&lan), None, None, None, CaptiveState::Unknown).unwrap();
-        assert_eq!(v.label, "连不上路由器");
+        let v = verdict(
+            Some(&lan),
+            None,
+            None,
+            None,
+            CaptiveState::Unknown,
+            Locale::Zh,
+        )
+        .unwrap();
+        assert_eq!(v.kind, Some(VerdictKind::LanDown));
     }
 
     #[test]
     fn verdict_dns_failure_wins_over_slow_lan() {
         let lan = probe(Some(80.0), vec![80.0]); // 也超阈值，但 DNS 全失败优先级更高
         let dns = LayerProbe::failed("解析不了");
-        let v = verdict(Some(&lan), Some(&dns), None, None, CaptiveState::None).unwrap();
-        assert_eq!(v.label, "DNS 解析失败");
+        let v = verdict(
+            Some(&lan),
+            Some(&dns),
+            None,
+            None,
+            CaptiveState::None,
+            Locale::Zh,
+        )
+        .unwrap();
+        assert_eq!(v.kind, Some(VerdictKind::DnsFail));
     }
 
     #[test]
     fn verdict_portal_after_dns_ok() {
         let lan = probe(Some(3.0), vec![3.0]);
         let dns = probe(Some(28.0), vec![28.0]);
-        let v = verdict(Some(&lan), Some(&dns), None, None, CaptiveState::Suspected).unwrap();
-        assert!(v.label.contains("网页登录"));
+        let v = verdict(
+            Some(&lan),
+            Some(&dns),
+            None,
+            None,
+            CaptiveState::Suspected,
+            Locale::Zh,
+        )
+        .unwrap();
+        assert_eq!(v.kind, Some(VerdictKind::Captive));
     }
 
     #[test]
@@ -803,8 +812,16 @@ mod tests {
         let lan = probe(Some(90.0), vec![90.0]);
         let dns = probe(Some(28.0), vec![28.0]);
         let wan = probe(Some(500.0), vec![500.0]); // 差值 410 也超，但 LAN 慢优先
-        let v = verdict(Some(&lan), Some(&dns), Some(&wan), None, CaptiveState::None).unwrap();
-        assert!(v.label.contains("路由器响应慢"));
+        let v = verdict(
+            Some(&lan),
+            Some(&dns),
+            Some(&wan),
+            None,
+            CaptiveState::None,
+            Locale::Zh,
+        )
+        .unwrap();
+        assert_eq!(v.kind, Some(VerdictKind::LanSlow));
     }
 
     #[test]
@@ -818,25 +835,27 @@ mod tests {
             Some(&wan),
             Some(8.0),
             CaptiveState::None,
+            Locale::Zh,
         )
         .unwrap();
-        assert!(v.label.contains("出口/运营商"), "got {}", v.label);
+        assert_eq!(v.kind, Some(VerdictKind::WanGap));
     }
 
     #[test]
     fn verdict_jitter_reported() {
         let lan = probe(Some(5.0), vec![5.0]);
         let dns = probe(Some(28.0), vec![28.0]);
-        let wan = probe(Some(60.0), vec![60.0]); // 差值 55 也超 100？不超。抖动 35 > 30
+        let wan = probe(Some(60.0), vec![60.0]); // 差值 55 不超 100；抖动 35 超 30
         let v = verdict(
             Some(&lan),
             Some(&dns),
             Some(&wan),
             Some(35.0),
             CaptiveState::None,
+            Locale::Zh,
         )
         .unwrap();
-        assert!(v.label.contains("抖动"), "got {}", v.label);
+        assert_eq!(v.kind, Some(VerdictKind::Jitter));
     }
 
     #[test]
@@ -850,9 +869,44 @@ mod tests {
             Some(&wan),
             Some(8.0),
             CaptiveState::None,
+            Locale::Zh,
         )
         .unwrap();
-        assert!(v.label.contains("DNS 偏慢"), "got {}", v.label);
+        assert_eq!(v.kind, Some(VerdictKind::DnsSlow));
+    }
+
+    /// 同一组读数在两种语言下必须命中同一条规则：判定与语言无关，只有文案变
+    #[test]
+    fn verdict_kind_is_locale_independent() {
+        let lan = probe(Some(90.0), vec![90.0]);
+        let zh = verdict(Some(&lan), None, None, None, CaptiveState::None, Locale::Zh).unwrap();
+        let en = verdict(Some(&lan), None, None, None, CaptiveState::None, Locale::En).unwrap();
+        assert_eq!(zh.kind, en.kind);
+        assert!(zh.label.contains("路由器响应慢"), "{}", zh.label);
+        assert!(en.label.contains("Router responds slowly"), "{}", en.label);
+        // 阈值来自常量，不是文案里写死的数字
+        let thr = format!("{LAN_SLOW_MS:.0}");
+        assert!(zh.rule.contains(&thr), "{}", zh.rule);
+        assert!(en.rule.contains(&thr), "{}", en.rule);
+    }
+
+    /// 英文结论不能漏中文（文案表改了但忘了译这一条，会在这里挂）
+    #[test]
+    fn english_verdict_has_no_cjk() {
+        let lan = LayerProbe::failed("x");
+        let v = verdict(
+            Some(&lan),
+            None,
+            None,
+            None,
+            CaptiveState::Unknown,
+            Locale::En,
+        )
+        .unwrap();
+        assert!(!v
+            .label
+            .chars()
+            .any(|c| ('\u{4e00}'..='\u{9fa5}').contains(&c)));
     }
 
     // ---- 纯函数：portal 解析

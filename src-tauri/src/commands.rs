@@ -20,6 +20,8 @@ use prune_core::appdisk::{AppDisk, AppDiskCache, BundleQuery, BundleSize};
 use prune_core::db::Store;
 use prune_core::db::{CutSummary, CutTop, HourlyRow, Point};
 use prune_core::disk::{DiskReport, VolumeInfo};
+use prune_core::i18n::err::err_text;
+use prune_core::i18n::fill;
 use prune_core::mem::{MemSnapshot, ProcMem};
 use prune_core::net::PortSnapshot;
 use prune_core::reclaim::{self, Limits, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport};
@@ -87,12 +89,13 @@ pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>) {
 /// Windows 没有 SIGTERM 语义，两者都走 TerminateProcess（见 `prune_core::mem::process::kill`）。
 /// 护栏：不杀 1 号进程（launchd）与 Prune 自身——误杀任一都会破坏宿主环境。
 #[tauri::command]
-pub fn kill_process(pid: i32, force: bool) -> Result<(), String> {
+pub fn kill_process(app: AppHandle, pid: i32, force: bool) -> Result<(), String> {
+    let t = err_text(crate::i18n::current(&app));
     if pid <= 1 {
-        return Err(format!("pid {pid} 是系统关键进程，不允许结束"));
+        return Err(fill(t.pid_critical, &[("pid", &pid.to_string())]));
     }
     if pid == std::process::id() as i32 {
-        return Err("不能结束 Prune 自身".into());
+        return Err(t.self_kill.into());
     }
     prune_core::mem::process::kill(pid, force)?;
     eprintln!("[ipc] kill pid={pid} force={force}");
@@ -106,12 +109,13 @@ pub fn kill_process(pid: i32, force: bool) -> Result<(), String> {
 /// 只做「展示」不做修改，因此不做白名单校验；但要求路径真实存在，
 /// 免得弹一个空窗口。
 #[tauri::command]
-pub fn reveal_path(path: String) -> Result<(), String> {
+pub fn reveal_path(app: AppHandle, path: String) -> Result<(), String> {
+    let t = err_text(crate::i18n::current(&app));
     let p = std::path::Path::new(&path);
     if !p.exists() {
-        return Err(format!("路径不存在：{path}"));
+        return Err(fill(t.path_missing, &[("path", &path)]));
     }
-    reveal_impl(p).map_err(|e| format!("打开文件管理器失败：{e}"))
+    reveal_impl(p).map_err(|e| fill(t.reveal_failed, &[("err", &e.to_string())]))
 }
 
 #[cfg(target_os = "macos")]
@@ -219,11 +223,13 @@ impl Default for AppDiskState {
 /// - `exe` 由前端给（它本来就有进程明细），避免后端再枚举一次进程
 #[tauri::command]
 pub async fn app_disk(
+    app: AppHandle,
     state: State<'_, Arc<AppDiskState>>,
     family: String,
     exe: Option<String>,
     force: Option<bool>,
 ) -> Result<AppDisk, String> {
+    let t = err_text(crate::i18n::current(&app));
     let cache = state.inner().clone();
     let home = prune_core::paths::home_dir_or_root();
     // du 是阻塞 IO（实测 Chrome 的 profile 目录可跑到 4 s 预算上限），
@@ -236,7 +242,7 @@ pub async fn app_disk(
         guard.get_or_measure(&family, exe.as_deref(), &home)
     })
     .await
-    .map_err(|e| format!("磁盘测量失败：{e}"))
+    .map_err(|e| fill(t.disk_measure_failed, &[("err", &e.to_string())]))
 }
 
 // ---------------------------------------------------------------- 批量本体测量（M10）
@@ -249,10 +255,12 @@ pub async fn app_disk(
 ///   「缓存里没有」就一直空着
 #[tauri::command]
 pub async fn app_bundles(
+    app: AppHandle,
     state: State<'_, Arc<AppDiskState>>,
     items: Vec<BundleQuery>,
     force: Option<bool>,
 ) -> Result<std::collections::HashMap<String, BundleSize>, String> {
+    let t = err_text(crate::i18n::current(&app));
     let state = state.inner().clone();
     tauri::async_runtime::spawn_blocking(move || {
         let mut guard = state.bundles.lock().unwrap_or_else(|e| e.into_inner());
@@ -283,7 +291,7 @@ pub async fn app_bundles(
         cached
     })
     .await
-    .map_err(|e| format!("批量磁盘测量失败：{e}"))
+    .map_err(|e| fill(t.disk_measure_batch_failed, &[("err", &e.to_string())]))
 }
 
 // ---------------------------------------------------------------- 磁盘（M1）
@@ -329,14 +337,18 @@ pub async fn disk_scan(app: AppHandle) -> Result<(), String> {
 
 /// dry-run：只生成清单，不动任何文件。
 #[tauri::command]
-pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> ReclaimPreview {
+pub fn reclaim_preview(
+    app: AppHandle,
+    state: State<'_, Arc<DiskState>>,
+    keys: Vec<String>,
+) -> ReclaimPreview {
     match state.report() {
         Some(report) => reclaim::preview(&keys, &report),
         None => ReclaimPreview {
             items: Vec::new(),
             total_bytes: 0,
             needs_confirm: false,
-            notes: vec!["尚未完成扫描，请稍候或手动刷新".into()],
+            notes: vec![err_text(crate::i18n::current(&app)).no_scan_yet.into()],
         },
     }
 }
@@ -344,14 +356,15 @@ pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> R
 /// 一级子项体积明细（按体积降序）：du 较慢，独立命令让预览弹层先出、内容后到。
 /// du 放到阻塞线程池，不卡主线程。
 #[tauri::command]
-pub async fn reclaim_children(path: String) -> Result<Vec<ReclaimChild>, String> {
+pub async fn reclaim_children(app: AppHandle, path: String) -> Result<Vec<ReclaimChild>, String> {
+    let t = err_text(crate::i18n::current(&app));
     let p = PathBuf::from(&path);
     if !p.is_dir() {
-        return Err(format!("不是目录：{path}"));
+        return Err(fill(t.not_a_dir, &[("path", &path)]));
     }
     tauri::async_runtime::spawn_blocking(move || Ok(reclaim::first_level_children(&p)))
         .await
-        .map_err(|e| format!("明细线程失败: {e}"))?
+        .map_err(|e| fill(t.detail_thread, &[("err", &e.to_string())]))?
 }
 
 /// 执行清理：路径校验 / 级别闸门 / 熔断都在 prune-core，这里只转发。
@@ -365,6 +378,7 @@ pub async fn reclaim_execute(
     items: Vec<ReclaimItem>,
     confirmed: bool,
 ) -> Result<ReclaimReport, String> {
+    let locale = crate::i18n::current(&app);
     let home = scan::home_dir();
     // 报告派生白名单：只有当前报告里出现过的明细路径会被放行
     let allowed: Vec<String> = state
@@ -390,8 +404,8 @@ pub async fn reclaim_execute(
         reclaim::execute(&items, &home, confirmed, Limits::default(), &allowed)
     })
     .await
-    .map_err(|e| format!("清理线程失败: {e}"))?
-    .map_err(|e| e.to_string())?;
+    .map_err(|e| fill(err_text(locale).reclaim_thread, &[("err", &e.to_string())]))?
+    .map_err(|e| e.text(locale))?;
 
     eprintln!(
         "[m1-disk] 已移入废纸篓 {} 项 · {:.2} GB · 失败 {} 项",
@@ -431,7 +445,11 @@ pub async fn reclaim_execute(
 /// 剪除成绩单（M21）：累计字节 / 次数 / 首条时间 / 受害者 Top 5。
 /// store 不可用时返回全 0 + 空 Top（前端空态，不是报错——与 net「今日不可用」同纪律）。
 #[tauri::command]
-pub fn cut_report(store: State<'_, Option<Arc<Store>>>) -> Result<CutReportDto, String> {
+pub fn cut_report(
+    app: AppHandle,
+    store: State<'_, Option<Arc<Store>>>,
+) -> Result<CutReportDto, String> {
+    let t = err_text(crate::i18n::current(&app));
     let Some(store) = store.as_deref() else {
         return Ok(CutReportDto {
             total_bytes: 0,
@@ -442,10 +460,10 @@ pub fn cut_report(store: State<'_, Option<Arc<Store>>>) -> Result<CutReportDto, 
     };
     let summary = store
         .cut_summary()
-        .map_err(|e| format!("读取剪除记录失败：{e}"))?;
+        .map_err(|e| fill(t.cuts_read, &[("err", &e.to_string())]))?;
     let top = store
         .cut_top(5)
-        .map_err(|e| format!("读取剪除 Top 榜失败：{e}"))?;
+        .map_err(|e| fill(t.cuts_top_read, &[("err", &e.to_string())]))?;
     let CutSummary {
         total_bytes,
         total_items,
@@ -511,7 +529,11 @@ fn icon_cache_root() -> PathBuf {
 /// 失败语义：单个家族失败（系统进程、无 icns、超预算）**不放进 map**，也不报错；
 /// 只有整批线程起不来才返回 `Err`。前端对缺失项统一落字母徽标。
 #[tauri::command]
-pub async fn app_icons(items: Vec<IconQuery>) -> Result<HashMap<String, String>, String> {
+pub async fn app_icons(
+    app: AppHandle,
+    items: Vec<IconQuery>,
+) -> Result<HashMap<String, String>, String> {
+    let t = err_text(crate::i18n::current(&app));
     let items: Vec<IconQuery> = items.into_iter().take(ICON_BATCH_MAX).collect();
     if items.is_empty() {
         return Ok(HashMap::new());
@@ -574,7 +596,7 @@ pub async fn app_icons(items: Vec<IconQuery>) -> Result<HashMap<String, String>,
         Ok(map)
     })
     .await
-    .map_err(|e| format!("图标线程失败: {e}"))?
+    .map_err(|e| fill(t.icon_thread, &[("err", &e.to_string())]))?
 }
 
 // ---------------------------------------------------------------- 应用历史（D3）
@@ -585,16 +607,18 @@ pub async fn app_icons(items: Vec<IconQuery>) -> Result<HashMap<String, String>,
 /// （补 0 等于把「Prune 没运行」说成「那一小时 CPU 为 0」）。
 #[tauri::command]
 pub fn app_history(
+    app: AppHandle,
     state: State<'_, Arc<MemState>>,
     family: String,
     hours: u32,
 ) -> Result<Vec<HourlyRow>, String> {
+    let t = err_text(crate::i18n::current(&app));
     // M25：保留期扩到 30 天，查询窗口同步放开到 30 天
     let from =
         prune_core::localtime::hour_string(now_secs() - (hours.clamp(1, 24 * 30) as i64) * 3600);
     state
         .app_history(&family, &from)
-        .map_err(|e| format!("读取应用历史失败：{e}"))
+        .map_err(|e| fill(t.app_history_read, &[("err", &e.to_string())]))
 }
 
 /// 应用近 N 天的历史聚合（天粒度，M25）。
@@ -603,15 +627,16 @@ pub fn app_history(
 /// 缺失由前端画灰柱，不在这里补 0（与小时桶同纪律）。
 #[tauri::command]
 pub fn app_history_daily(
+    app: AppHandle,
     state: State<'_, Arc<MemState>>,
     family: String,
     days: u32,
 ) -> Result<Vec<prune_core::db::DailyRow>, String> {
-    let from =
-        prune_core::localtime::day_string(now_secs() - (days.clamp(1, 30) as i64) * 86_400);
+    let t = err_text(crate::i18n::current(&app));
+    let from = prune_core::localtime::day_string(now_secs() - (days.clamp(1, 30) as i64) * 86_400);
     state
         .app_history_daily(&family, &from)
-        .map_err(|e| format!("读取应用天历史失败：{e}"))
+        .map_err(|e| fill(t.app_day_history_read, &[("err", &e.to_string())]))
 }
 
 #[cfg(test)]

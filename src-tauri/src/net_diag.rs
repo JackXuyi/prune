@@ -12,8 +12,11 @@ use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use prune_core::i18n::err::err_text;
+use prune_core::i18n::fill;
+use prune_core::locale::Locale;
 use prune_core::net::diag::{self, NetDiag, SpeedResult};
-use tauri::State;
+use tauri::{AppHandle, State};
 
 /// 测速总超时：networkQuality 实测 ~30 s，90 s 是两倍余量
 const SPEED_TIMEOUT: Duration = Duration::from_secs(90);
@@ -41,14 +44,25 @@ fn now_secs() -> i64 {
 }
 
 /// 跑一轮分层诊断（DNS / 网关 / 出口 + portal + 结论）
+///
+/// 语言在命令入口读一次：诊断要跑几秒，中途切语言不打断这一轮，
+/// 落地的结果自洽（结论、note、报告用同一语言）。
 #[tauri::command]
-pub async fn net_diag_run(state: State<'_, Arc<NetDiagState>>) -> Result<NetDiag, String> {
-    let d = tauri::async_runtime::spawn_blocking(move || diag::run_diag(now_secs()))
+pub async fn net_diag_run(
+    app: AppHandle,
+    state: State<'_, Arc<NetDiagState>>,
+) -> Result<NetDiag, String> {
+    let locale = crate::i18n::current(&app);
+    let d = tauri::async_runtime::spawn_blocking(move || diag::run_diag(now_secs(), locale))
         .await
         .unwrap_or_else(|e| NetDiag {
             at: now_secs(),
             status: diag::DiagStatus::Failed,
-            note: Some(format!("诊断任务调度失败: {e}")),
+            // 用开跑时定下的 locale，不重读：一轮诊断的语言应当自洽
+            note: Some(fill(
+                err_text(locale).diag_dispatch,
+                &[("err", &e.to_string())],
+            )),
             dns: None,
             lan: None,
             wan: None,
@@ -68,13 +82,16 @@ pub async fn net_diag_run(state: State<'_, Arc<NetDiagState>>) -> Result<NetDiag
 /// Windows 无系统等价物 → capability 门控，前端不渲染该卡；误调返回 Err。
 #[tauri::command]
 pub async fn net_diag_speed_run(
+    app: AppHandle,
     state: State<'_, Arc<NetDiagState>>,
 ) -> Result<SpeedResult, String> {
+    let locale = crate::i18n::current(&app);
+    let t = err_text(locale);
     #[cfg(target_os = "macos")]
     {
-        let res = tauri::async_runtime::spawn_blocking(run_network_quality)
+        let res = tauri::async_runtime::spawn_blocking(move || run_network_quality(locale))
             .await
-            .map_err(|e| format!("测速任务调度失败: {e}"))?;
+            .map_err(|e| fill(t.speed_dispatch, &[("err", &e.to_string())]))?;
         if let (Ok(s), Ok(mut slot)) = (&res, state.speed.lock()) {
             *slot = Some(s.clone());
         }
@@ -82,8 +99,8 @@ pub async fn net_diag_speed_run(
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = &state;
-        Err("测速仅 macOS 提供（系统 networkQuality）".into())
+        let _ = (&state, locale);
+        Err(t.speed_macos_only.into())
     }
 }
 
@@ -106,33 +123,38 @@ pub fn net_diag_capability() -> serde_json::Value {
 /// `navigator.clipboard` 常被拒，而 `execCommand` 要求同步用户手势——
 /// 文本要先经 IPC 拼装，手势已失效。
 #[tauri::command]
-pub fn clipboard_write(text: String) -> Result<usize, String> {
-    write_clipboard(&text)?;
+pub fn clipboard_write(app: AppHandle, text: String) -> Result<usize, String> {
+    write_clipboard(&text, crate::i18n::current(&app))?;
     Ok(text.chars().count())
 }
 
 #[tauri::command]
-pub fn net_diag_copy_report(state: State<'_, Arc<NetDiagState>>) -> Result<usize, String> {
-    let text = report_text(&state)?;
-    write_clipboard(&text)?;
+pub fn net_diag_copy_report(
+    app: AppHandle,
+    state: State<'_, Arc<NetDiagState>>,
+) -> Result<usize, String> {
+    let locale = crate::i18n::current(&app);
+    let text = report_text(&state, locale)?;
+    write_clipboard(&text, locale)?;
     Ok(text.chars().count())
 }
 
 /// 拼报告文本（copy 与旧 report 命令共用同一口径）
-fn report_text(state: &State<'_, Arc<NetDiagState>>) -> Result<String, String> {
+fn report_text(state: &State<'_, Arc<NetDiagState>>, locale: Locale) -> Result<String, String> {
+    let t = err_text(locale);
     let last = state
         .last
         .lock()
-        .map_err(|_| "诊断状态被占用".to_string())?
+        .map_err(|_| t.diag_busy.to_string())?
         .clone();
     let speed = state
         .speed
         .lock()
-        .map_err(|_| "诊断状态被占用".to_string())?
+        .map_err(|_| t.diag_busy.to_string())?
         .clone();
     match last {
-        Some(d) => Ok(diag::report_markdown(&d, speed.as_ref())),
-        None => Err("还没有诊断结果，请先运行诊断".into()),
+        Some(d) => Ok(diag::report_markdown(&d, speed.as_ref(), locale)),
+        None => Err(t.diag_none.into()),
     }
 }
 
@@ -144,13 +166,13 @@ fn report_text(state: &State<'_, Arc<NetDiagState>>) -> Result<String, String> {
 /// - Windows：PowerShell `Set-Clipboard`，先显式设 UTF-8 输入编码，
 ///   否则中文报告会按 OEM 代码页乱码（`clip.exe` 同理，不可用）
 #[cfg(target_os = "macos")]
-pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
+pub(crate) fn write_clipboard(text: &str, locale: Locale) -> Result<(), String> {
     let mut cmd = Command::new("pbcopy");
-    run_pipe(&mut cmd, text)
+    run_pipe(&mut cmd, text, locale)
 }
 
 #[cfg(windows)]
-pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
+pub(crate) fn write_clipboard(text: &str, locale: Locale) -> Result<(), String> {
     let mut cmd = Command::new("powershell");
     cmd.args([
         "-NoProfile",
@@ -158,38 +180,41 @@ pub(crate) fn write_clipboard(text: &str) -> Result<(), String> {
         "-Command",
         "[Console]::InputEncoding=[Text.Encoding]::UTF8; $input | Set-Clipboard",
     ]);
-    run_pipe(&mut cmd, text)
+    run_pipe(&mut cmd, text, locale)
 }
 
 #[cfg(not(any(target_os = "macos", windows)))]
-pub(crate) fn write_clipboard(_text: &str) -> Result<(), String> {
-    Err("当前平台未实现剪贴板写入（仅 macOS / Windows）".into())
+pub(crate) fn write_clipboard(_text: &str, locale: Locale) -> Result<(), String> {
+    Err(err_text(locale).clip_unsupported.into())
 }
 
 /// 启动子进程 → 全量写 stdin → 等退出。stdin 必须显式 drop，否则子进程等不到 EOF
-fn run_pipe(cmd: &mut Command, text: &str) -> Result<(), String> {
+fn run_pipe(cmd: &mut Command, text: &str, locale: Locale) -> Result<(), String> {
+    let t = err_text(locale);
     let mut child = cmd
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
         .spawn()
-        .map_err(|e| format!("剪贴板进程启动失败: {e}"))?;
+        .map_err(|e| fill(t.clip_spawn, &[("err", &e.to_string())]))?;
     {
-        let mut stdin = child.stdin.take().ok_or("剪贴板进程无 stdin")?;
+        let mut stdin = child.stdin.take().ok_or(t.clip_no_stdin)?;
         stdin
             .write_all(text.as_bytes())
-            .map_err(|e| format!("写入剪贴板失败: {e}"))?;
+            .map_err(|e| fill(t.clip_write, &[("err", &e.to_string())]))?;
     }
     let out = child
         .wait_with_output()
-        .map_err(|e| format!("剪贴板进程等待失败: {e}"))?;
+        .map_err(|e| fill(t.clip_wait, &[("err", &e.to_string())]))?;
     if out.status.success() {
         Ok(())
     } else {
-        Err(format!(
-            "剪贴板写入被拒绝（{:?}）：{}",
-            out.status.code(),
-            String::from_utf8_lossy(&out.stderr).trim()
+        Err(fill(
+            t.clip_denied,
+            &[
+                ("code", &format!("{:?}", out.status.code())),
+                ("err", String::from_utf8_lossy(&out.stderr).trim()),
+            ],
         ))
     }
 }
@@ -197,15 +222,16 @@ fn run_pipe(cmd: &mut Command, text: &str) -> Result<(), String> {
 // ---------------------------------------------------------------- networkQuality
 
 #[cfg(target_os = "macos")]
-fn run_network_quality() -> Result<SpeedResult, String> {
+fn run_network_quality(locale: Locale) -> Result<SpeedResult, String> {
+    let t = err_text(locale);
     let mut child = Command::new("networkQuality")
         .arg("-c")
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
         .spawn()
-        .map_err(|e| format!("networkQuality 启动失败: {e}"))?;
+        .map_err(|e| fill(t.nq_spawn, &[("err", &e.to_string())]))?;
 
-    let mut stdout = child.stdout.take().ok_or("networkQuality 无 stdout")?;
+    let mut stdout = child.stdout.take().ok_or(t.nq_no_stdout)?;
     let deadline = Instant::now() + SPEED_TIMEOUT;
     let status = loop {
         match child
@@ -217,7 +243,7 @@ fn run_network_quality() -> Result<SpeedResult, String> {
                 if Instant::now() >= deadline {
                     let _ = child.kill();
                     let _ = child.wait();
-                    return Err("networkQuality 超时（90 s），已终止".into());
+                    return Err(t.nq_timeout.into());
                 }
                 std::thread::sleep(Duration::from_millis(250));
             }
@@ -226,24 +252,28 @@ fn run_network_quality() -> Result<SpeedResult, String> {
     let mut buf = Vec::new();
     stdout
         .read_to_end(&mut buf)
-        .map_err(|e| format!("读取 networkQuality 输出: {e}"))?;
+        .map_err(|e| fill(t.nq_read, &[("err", &e.to_string())]))?;
     if !status.success() {
-        return Err(format!("networkQuality 异常退出（{:?}）", status.code()));
+        return Err(fill(
+            t.nq_exit,
+            &[("code", &format!("{:?}", status.code()))],
+        ));
     }
-    parse_speed_json(&String::from_utf8_lossy(&buf), now_secs())
+    parse_speed_json(&String::from_utf8_lossy(&buf), now_secs(), locale)
 }
 
 /// 容错解析 `-c` JSON：缺字段一律 failed + note，不显示部分数字（§7）。
 /// 字段以 macOS 15.7 实跑为准；吞吐单位 bps，直接透传给前端格式化。
 #[cfg(target_os = "macos")]
-fn parse_speed_json(text: &str, at: i64) -> Result<SpeedResult, String> {
-    let json_start = text.find('{').ok_or("networkQuality 没有输出 JSON")?;
+fn parse_speed_json(text: &str, at: i64, locale: Locale) -> Result<SpeedResult, String> {
+    let t = err_text(locale);
+    let json_start = text.find('{').ok_or(t.nq_no_json)?;
     let v: serde_json::Value = serde_json::from_str(&text[json_start..])
-        .map_err(|e| format!("networkQuality JSON 解析失败: {e}"))?;
+        .map_err(|e| fill(t.nq_json_parse, &[("err", &e.to_string())]))?;
     let num = |k: &str| {
         v.get(k)
             .and_then(|x| x.as_f64())
-            .ok_or(format!("networkQuality 缺字段 {k}"))
+            .ok_or_else(|| fill(t.nq_missing_field, &[("k", k)]))
     };
     Ok(SpeedResult {
         at,
@@ -274,17 +304,17 @@ mod tests {
           "responsiveness" : 320.0,
           "responsiveness_level" : "Medium"
         }"#;
-        let s = parse_speed_json(full, 42).unwrap();
+        let s = parse_speed_json(full, 42, Locale::Zh).unwrap();
         assert_eq!(s.down_bps, 86_400_000.0);
         assert_eq!(s.rpm, 320.0);
         assert_eq!(s.rpm_level, "Medium");
         assert_eq!(s.at, 42);
 
         // 前导杂音（networkQuality 有时会先打日志）也能解析
-        assert!(parse_speed_json(&format!("noise\n{full}"), 42).is_ok());
+        assert!(parse_speed_json(&format!("noise\n{full}"), 42, Locale::Zh).is_ok());
 
         // 缺字段 → Err（绝不出现 0 冒充）
-        assert!(parse_speed_json(r#"{"base_rtt": 1.0}"#, 42).is_err());
-        assert!(parse_speed_json("", 42).is_err());
+        assert!(parse_speed_json(r#"{"base_rtt": 1.0}"#, 42, Locale::Zh).is_err());
+        assert!(parse_speed_json("", 42, Locale::Zh).is_err());
     }
 }
