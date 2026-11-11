@@ -31,26 +31,12 @@ const ALLOW = [
 ];
 
 /**
- * 尚未迁移的文件：每完成一批就从这里删掉，最终必须清空（spec §8 commit 9）。
+ * **没有待迁清单**（spec §8 commit 9）。
  *
- * 这个清单不是「白名单」，是**待办**：它只会变短。想加文件进来先问自己
- * 「这真是新的待迁文件，还是我又写了一句中文」。
+ * 迁移期曾有一份 `PENDING` 数组按文件豁免；它已经清空并删除，因为留着一个
+ * 「可以往里加文件」的入口，等于给下一句硬编码中文开了后门。现在 `src/**
+ * 里除了 `ALLOW` 三个前缀，任何中文都会让构建失败。
  */
-const PENDING = [
-  "src/components/Sparkline.tsx",
-  "src/components/charts/BarSeries.tsx",
-  "src/components/charts/MeterBar.tsx",
-  "src/components/charts/StackBar.tsx",
-  "src/lib/ipc.ts",
-  "src/lib/uiText.ts",
-  "src/panels/Island.tsx",
-  "src/panels/MenuBarPanel.tsx",
-  "src/stores/diskStore.ts",
-  "src/stores/memStore.ts",
-  "src/stores/netTotalStore.ts",
-  "src/stores/portStore.ts",
-  "src/types/appdisk.ts",
-];
 
 const CJK = /[\u4e00-\u9fff]/;
 
@@ -197,8 +183,6 @@ const DISK_CATALOG = join(ROOT, "src/i18n/messages/namespaces/disk.ts");
 for (const abs of walk(SRC)) {
   const rel = relative(ROOT, abs);
   if (ALLOW.some((p) => rel === p || rel.startsWith(p))) continue;
-  if (PENDING.includes(rel)) continue;
-
   const code = readFileSync(abs, "utf8");
   for (const h of scan(code)) violations.push(`${rel}:${h.line}  ${h.text}`);
 

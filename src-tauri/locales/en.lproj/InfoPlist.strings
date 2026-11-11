@@ -1,0 +1,4 @@
+/* Local Network permission prompt (macOS 15+).
+   Wording mirrors the LanBoard empty state: probe reachability only,
+   never touch any service on the other devices. */
+"NSLocalNetworkUsageDescription" = "Prune needs local network access to list the devices on your subnet and to show which ports this machine exposes to them. It only probes whether they are reachable and never accesses any service running on them.";

@@ -46,6 +46,10 @@
     "createUpdaterArtifacts": true,
     "targets": "all",
     "category": "DeveloperTool",
+    "resources": {
+      "locales/en.lproj/InfoPlist.strings": "en.lproj/InfoPlist.strings",
+      "locales/zh-Hans.lproj/InfoPlist.strings": "zh-Hans.lproj/InfoPlist.strings"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

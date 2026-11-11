@@ -2,9 +2,18 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+  <!-- i18n：声明本 App 支持的本地化。macOS 据此挑选 InfoPlist.strings 的
+       .lproj（见 locales/），也让系统插入的菜单项 / 权限弹窗走对应语言。
+       中文是 source of truth，英文在 en.lproj 覆盖。 -->
+  <key>CFBundleLocalizations</key>
+  <array>
+    <string>en</string>
+    <string>zh-Hans</string>
+  </array>
   <!-- M18 局域网设备（docs/m18-lan-devices-spec.md §13）：macOS 15 起桌面 App
        访问本地网络需要授权。描述文案与 LanBoard 空态口径一致：
-       只探测存活状态，不访问设备上的任何服务。 -->
+       只探测存活状态，不访问设备上的任何服务。
+       这里的字符串是**兜底**：语言匹配时会用 locales/<lang>.lproj/InfoPlist.strings。 -->
   <key>NSLocalNetworkUsageDescription</key>
   <string>Prune 需要访问本地网络来列出同一网段内的设备，并显示本机对这些设备开放的端口。只探测存活状态，不访问设备上的任何服务。</string>
   <!-- Bonjour 服务白名单：mDNS 浏览的服务类型（与 net/lan.rs 的 14 类一致，
