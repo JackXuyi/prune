@@ -13,6 +13,9 @@ import type { ReactNode } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 
+import { dynamicText, i18nFor } from "../i18n";
+import { useI18n } from "../i18n/store";
+import type { Locale } from "../i18n/types";
 import { fireAndForget, openMain } from "../lib/ipc";
 
 type Phase = "idle" | "collapsed" | "expanded";
@@ -120,6 +123,7 @@ const EASE = "cubic-bezier(0.32, 0.72, 0, 1)";
 const mibToG = (mb: number) => `${(mb / 1024).toFixed(1)}G`;
 
 export function Island() {
+  const { t } = useI18n();
   const [phase, setPhase] = useState<Phase>("idle");
   const [data, setData] = useState<AlertPayload | null>(null);
   const [notchH, setNotchH] = useState(DEFAULT_NOTCH_H);
@@ -275,7 +279,7 @@ export function Island() {
           <CollapsedRow
             notchH={notchH}
             icon={<MemChip color={memColor(data.pressure)} />}
-            label="换出"
+            label={t("island.tag.swap")}
             accent={memColor(data.pressure)}
             fill={data.swapRatioPct / 100}
           >
@@ -285,7 +289,7 @@ export function Island() {
           <CollapsedRow
             notchH={notchH}
             icon={<WifiIcon color={GREEN} />}
-            label="新面孔"
+            label={t("island.tag.newFace")}
             accent={GREEN}
           >
             {data.label || data.ip}
@@ -294,7 +298,7 @@ export function Island() {
           <CollapsedRow
             notchH={notchH}
             icon={<PlugIcon color={BLUE} />}
-            label={data.conflict ? "冲突" : "端口"}
+            label={data.conflict ? t("island.tag.conflict") : t("island.tag.ports")}
             accent={BLUE}
           >
             {`:${data.port}`}
@@ -337,6 +341,7 @@ function CollapsedRow({
   fill?: number | null;
   children: ReactNode;
 }) {
+  const { t } = useI18n();
   const clamped = fill != null && Number.isFinite(fill) ? Math.max(0, Math.min(1, fill)) : null;
   return (
     <div
@@ -369,7 +374,7 @@ function CollapsedRow({
       {clamped != null ? (
         <span
           aria-hidden
-          title={`占比 ${Math.round(clamped * 100)}%`}
+          title={t("chart.meter.ratio", { pct: Math.round(clamped * 100) })}
           style={{
             width: 30,
             height: 4,
@@ -395,6 +400,7 @@ function CollapsedRow({
 }
 
 function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
+  const { t } = useI18n();
   return (
     <div
       style={{
@@ -423,7 +429,7 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
           {Math.round(data.avg)}%
         </span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-          CPU 持续偏高
+          {t("island.cpu.subtitle")}
         </span>
       </div>
 
@@ -435,14 +441,17 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {data.samples} 个采样里 {Math.round(data.ratio)}% 超过阈值 · 峰值{" "}
-        {Math.round(data.peak)}%
+        {t("island.cpu.stats", {
+          samples: data.samples,
+          ratio: Math.round(data.ratio),
+          peak: Math.round(data.peak),
+        })}
       </div>
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
         {data.top.length === 0 ? (
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-            明细稍后就绪
+            {t("island.cpu.detailSoon")}
           </span>
         ) : (
           data.top.map((p) => (
@@ -477,19 +486,22 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
   );
 }
 
-/** 触发通道的展开态副标题（§12.5） */
-function memSubtitle(data: MemPayload): string {
-  const level = data.pressure === "critical" ? "严重" : data.pressure === "warning" ? "警告" : null;
-  if (data.trigger === "both") {
-    return `换出破阈值 · 内核压力：${level ?? "未知"}`;
-  }
-  if (data.trigger === "pressure") {
-    return `内核内存压力：${level ?? "未知"}`;
-  }
-  return "换出破阈值";
+/** 触发通道的展开态副标题（§12.5）。`locale` 显式传：它是纯函数，不该读全局 */
+function memSubtitle(data: MemPayload, locale: Locale): string {
+  const { t } = i18nFor(locale);
+  const level =
+    data.pressure === "critical"
+      ? t("island.level.critical")
+      : data.pressure === "warning"
+        ? t("island.level.warning")
+        : t("island.level.unknown");
+  if (data.trigger === "both") return t("island.mem.subtitleBoth", { level });
+  if (data.trigger === "pressure") return t("island.mem.subtitlePressure", { level });
+  return t("island.mem.subtitleSwap");
 }
 
 function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
+  const { t, locale } = useI18n();
   const accent = memColor(data.pressure);
   const dim = "rgba(255,255,255,0.5)";
   return (
@@ -520,7 +532,7 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
           {data.swapUsedGb != null ? `${data.swapUsedGb.toFixed(1)}G` : `${Math.round(data.swapRatioPct)}%`}
         </span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
-          {memSubtitle(data)}
+          {memSubtitle(data, locale)}
         </span>
       </div>
 
@@ -532,15 +544,19 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        占用 {Math.round(data.swapRatioPct)}%
-        {data.swapoutsPerSec != null && <> · 换出速率 {data.swapoutsPerSec.toFixed(1)}/s</>}
-        {data.compressorMb != null && <> · 压缩器 {mibToG(data.compressorMb)}</>}
+        {t("island.mem.usage", { pct: Math.round(data.swapRatioPct) })}
+        {data.swapoutsPerSec != null && (
+          <>{t("island.mem.swapRate", { rate: data.swapoutsPerSec.toFixed(1) })}</>
+        )}
+        {data.compressorMb != null && (
+          <>{t("island.mem.compressor", { size: mibToG(data.compressorMb) })}</>
+        )}
       </div>
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
         {data.top.length === 0 ? (
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-            换出明细稍后就绪
+            {t("island.mem.detailSoon")}
           </span>
         ) : (
           data.top.map((p) => (
@@ -565,7 +581,9 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
                 {p.name}
               </span>
               <span style={{ fontVariantNumeric: "tabular-nums", color: accent }}>
-                {p.swappedMb != null ? `换出 ${mibToG(p.swappedMb)}` : "—"}
+                {p.swappedMb != null
+                  ? t("island.mem.procSwap", { size: mibToG(p.swappedMb) })
+                  : "—"}
                 {p.totalMb != null ? ` / ${mibToG(p.totalMb)}` : ""}
               </span>
             </div>
@@ -578,6 +596,7 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
 
 /** 端口事件展开态（M19）：端口大字 + 谁占的 + 项目归属 / 暴露面 / 持有者数 */
 function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
+  const { t } = useI18n();
   const dim = "rgba(255,255,255,0.5)";
   const exposureWarn = data.exposure === "any";
   return (
@@ -609,8 +628,10 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
         </span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
           {data.conflict
-            ? "同端口多个持有者"
-            : `被 ${data.comm || "未知进程"} 占用`}
+            ? t("island.ports.conflict")
+            : t("island.ports.ownedBy", {
+                comm: data.comm || t("island.ports.unknownProc"),
+              })}
         </span>
       </div>
 
@@ -622,9 +643,9 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {data.conflict && <>持有者 {data.owners} 个 · </>}
-        {exposureWarn && <span style={{ color: ORANGE }}>对外可达 · </span>}
-        点击打开端口页
+        {data.conflict && <>{t("island.ports.owners", { n: data.owners })}</>}
+        {exposureWarn && <span style={{ color: ORANGE }}>{t("island.ports.exposed")}</span>}
+        {t("island.ports.open")}
       </div>
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
@@ -649,12 +670,12 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
               {data.projectLabel}
             </span>
             <span style={{ fontVariantNumeric: "tabular-nums", color: BLUE }}>
-              项目
+              {t("island.ports.project")}
             </span>
           </div>
         ) : (
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-            无项目线索（GUI 应用或系统进程）
+            {t("island.ports.noProject")}
           </span>
         )}
       </div>
@@ -685,6 +706,7 @@ function MemChip({ color }: { color: string }) {
 
 /** 局域网新面孔展开态（M23）：设备名 + 类型词 + 厂商线索，语气保持中性（不是「入侵」） */
 function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
+  const { t, locale } = useI18n();
   const dim = "rgba(255,255,255,0.5)";
   const name = data.label || data.ip;
   return (
@@ -718,7 +740,7 @@ function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
           {name}
         </span>
         <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>
-          加入了局域网
+          {t("island.lan.joined")}
         </span>
       </div>
 
@@ -730,8 +752,8 @@ function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
           fontVariantNumeric: "tabular-nums",
         }}
       >
-        {data.extra > 0 && <>{`还有 ${data.extra} 台新设备 · `}</>}
-        点击查看局域网设备
+        {data.extra > 0 && <>{t("island.lan.more", { n: data.extra })}</>}
+        {t("island.lan.open")}
       </div>
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
@@ -745,32 +767,19 @@ function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
           }}
         >
           <span>{data.ip}</span>
-          <span style={{ color: GREEN }}>{KIND_LABEL[data.devKind] || "设备"}</span>
+          <span style={{ color: GREEN }}>
+            {dynamicText(locale, `lan.kind.${data.devKind}`) ?? t("island.lan.device")}
+          </span>
         </div>
         {data.randomizedMac && (
           <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
-            随机化 MAC，厂商不可识别（手机私密地址是常态）
+            {t("island.lan.randomMac")}
           </span>
         )}
       </div>
     </div>
   );
 }
-
-/** 设备类型 → 中文词（与 Rust kind_str 的 serde lowercase 口径一一对应） */
-const KIND_LABEL: Record<string, string> = {
-  router: "路由器",
-  computer: "电脑",
-  phone: "手机",
-  tablet: "平板",
-  tv: "电视",
-  speaker: "音箱",
-  printer: "打印机",
-  nas: "NAS",
-  camera: "摄像头",
-  iot: "IoT 设备",
-  unknown: "未知设备",
-};
 
 /** 新面孔事件图标（M23）：Wi-Fi 弧线 + 实心圆点 */
 function WifiIcon({ color }: { color: string }) {

@@ -1,6 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { tGlobal } from "../i18n/store";
+
 import { devDiskPreview, devDiskReport } from "../lib/devFixture";
 import { diskReport, diskScan, isTauri, reclaimExecute, reclaimPreview } from "../lib/ipc";
 import type { DiskReport, ReclaimPreview, ReclaimReport, ScanProgress } from "../types/disk";
@@ -48,7 +50,7 @@ export const useDiskStore = create<DiskStore>((set, get) => ({
       if (import.meta.env.DEV) {
         set({ report: devDiskReport(), scanning: false });
       } else {
-        set({ error: "需要在 Prune 桌面端内运行（pnpm tauri dev）" });
+        set({ error: tGlobal("common.err.needsDesktop") });
       }
       return;
     }

@@ -137,10 +137,3 @@ export function currentTotalSample(): NetTotalSample | null {
 export function refreshNetTotal(): Promise<void> {
   return useNetTotalStore.getState().refresh();
 }
-
-/** 判断是否需要展示「按应用」区块的降级文案 */
-export function perAppUnavailableReason(sample: NetTotalSample | null): string | null {
-  if (!sample) return "采样中…";
-  if (sample.status === "unavailable") return sample.note ?? "系统口径不可读";
-  return null;
-}

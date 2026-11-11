@@ -29,7 +29,8 @@ export function isTauri(): boolean {
  * 有结果反馈的调用仍应 await + catch 落到 store error。
  */
 export function fireAndForget(task: Promise<unknown>, label: string): void {
-  task.catch((e) => console.warn(`[prune] ${label} 失败:`, e));
+  // dev 日志用英文：它不是 UI 文案（真正的错误提示走 store → t()）
+  task.catch((e) => console.warn(`[prune] ${label} failed:`, e));
 }
 
 export function memSnapshot(): Promise<MemSnapshot | null> {

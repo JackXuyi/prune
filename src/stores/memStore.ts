@@ -3,6 +3,8 @@ import { useEffect, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { tGlobal } from "../i18n/store";
+
 import { isTauri, memHistory, memProcesses, memRefresh, memSnapshot } from "../lib/ipc";
 import { devProcesses, devSnapshot } from "../lib/devFixture";
 import type { MemSnapshot, Point, ProcMem } from "../types/mem";
@@ -44,7 +46,7 @@ export const useMemStore = create<MemStore>((set, get) => ({
       } else {
         set({
           loading: false,
-          error: "需要在 Prune 桌面端内运行（pnpm tauri dev）",
+          error: tGlobal("common.err.needsDesktop"),
         });
       }
       return;

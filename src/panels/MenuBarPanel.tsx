@@ -2,6 +2,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { LeakBanner } from "../components/LeakCard";
 import { NetDirectionRow, StatsRow } from "../components/stats/StatsRow";
 import { formatBytes, formatRelative } from "../lib/format";
+import { useI18n } from "../i18n/store";
 import { fireAndForget, openMain } from "../lib/ipc";
 import {
   cpuReadout,
@@ -32,6 +33,7 @@ import { UpdateCard } from "../components/UpdateCard";
  * 不重算口径。
  */
 export function MenuBarPanel() {
+  const { t, locale } = useI18n();
   const [refreshNonce, setRefreshNonce] = useState(0);
   const snapshot = useMemStore((s) => s.snapshot);
   const loading = useMemStore((s) => s.loading);
@@ -57,20 +59,23 @@ export function MenuBarPanel() {
           <span className="text-[13px] font-semibold tracking-tight text-ink">Prune</span>
           {snapshot ? (
             snapshot.deepAvailable ? (
-              <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
+              <Badge tone="accent" title={t("panel.badge.footprintTitle")}>
                 footprint
               </Badge>
             ) : (
-              <Badge tone="warn" title="footprint 不可用，当前全部为 RSS 口径，不含换出量">
-                RSS 口径
+              <Badge tone="warn" title={t("panel.badge.rssTitle")}>
+                {t("panel.badge.rss")}
               </Badge>
             )
           ) : null}
           <div className="flex-1" />
-          <IconButton label="立即刷新" onClick={onRefresh}>
+          <IconButton label={t("panel.action.refresh")} onClick={onRefresh}>
             <RefreshIcon size={13} className={refreshing ? "animate-spin" : ""} />
           </IconButton>
-          <IconButton label="打开主窗口" onClick={() => fireAndForget(openMain(), "open_main")}>
+          <IconButton
+            label={t("panel.action.openMain")}
+            onClick={() => fireAndForget(openMain(), "open_main")}
+          >
             <ExpandIcon size={13} />
           </IconButton>
         </header>
@@ -92,8 +97,12 @@ export function MenuBarPanel() {
         <UpdateCard />
 
         <footer className="flex shrink-0 items-center justify-between px-3.5 pb-2.5 pt-1 text-[10px] text-ink-faint/80">
-          <span>上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}</span>
-          <span>内存 10 s · 网速 2 s</span>
+          <span>
+            {t("panel.footer.lastDeep", {
+              when: formatRelative(snapshot?.deepUpdatedAt ?? null, locale),
+            })}
+          </span>
+          <span>{t("panel.footer.cadence")}</span>
         </footer>
       </div>
     </div>
@@ -109,6 +118,7 @@ export function MenuBarPanel() {
  * 轮询，所有数字都来自已有的常采 / 常驻采样。
  */
 function StatsSection({ refreshNonce }: { refreshNonce: number }) {
+  const { t } = useI18n();
   const snapshot = useMemStore((s) => s.snapshot);
   const report = useDiskStore((s) => s.report);
   const scanning = useDiskStore((s) => s.scanning);
@@ -147,12 +157,15 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
   const reclaim = report?.totals.reclaimable ?? null;
   const hasReclaim = reclaim != null && reclaim > 0;
   const cta = scanning
-    ? { label: "正在深探…", action: "看进度" }
+    ? { label: t("panel.cta.scanning"), action: t("panel.cta.viewProgress") }
     : reclaim == null
-      ? { label: "尚未深探", action: "去扫描" }
+      ? { label: t("panel.cta.notScanned"), action: t("panel.cta.goScan") }
       : !hasReclaim
-        ? { label: "暂无可回收", action: "看明细" }
-        : { label: `可回收 ${formatBytes(reclaim)}`, action: "去清理" };
+        ? { label: t("panel.cta.nothing"), action: t("panel.cta.details") }
+        : {
+            label: t("panel.cta.reclaim", { size: formatBytes(reclaim) }),
+            action: t("panel.cta.goClean"),
+          };
 
   return (
     <section>
@@ -164,17 +177,17 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
       ) : null}
 
       <div className="divide-y divide-hairline-soft">
-        <StatsRow title="内存" readout={mem} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
+        <StatsRow title={t("nav.memory")} readout={mem} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
         <StatsRow
           icon={<span className="text-accent">⚡</span>}
-          title="存储"
+          title={t("nav.disk")}
           readout={disk}
           onOpen={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
         />
         <StatsRow title="CPU" readout={cpu} />
         <NetDirectionRow readout={netDown} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
         <NetDirectionRow readout={netUp} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
-        <StatsRow title="端口" readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
+        <StatsRow title={t("nav.ports")} readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
       </div>
 
       {/* 底部一条：主 CTA（可回收 → 去清理）+ 应用入口。
@@ -184,7 +197,7 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
         <button
           type="button"
           onClick={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
-          title={`${cta.label} · 打开存储页`}
+          title={t("panel.cta.title", { label: cta.label })}
           className={`group flex h-7 min-w-0 flex-1 items-center gap-1 rounded-lg border pl-2 pr-1.5 text-left transition-colors ${
             hasReclaim
               ? "border-accent/25 bg-accent/[0.10] hover:border-accent/45 hover:bg-accent/[0.16]"
@@ -227,10 +240,10 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
         <button
           type="button"
           onClick={() => fireAndForget(openMain(undefined, "resources"), "open_main")}
-          title="应用资源：按应用看进程 / CPU / 内存 / 磁盘 / 端口 / 网速"
+          title={t("panel.apps.title")}
           className="group flex h-7 shrink-0 items-center gap-0.5 rounded-lg px-1.5 text-[10px] text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink-dim"
         >
-          <span className="leading-none">应用 {families}</span>
+          <span className="leading-none">{t("panel.apps.label", { n: families })}</span>
           <ChevronRightIcon
             size={10}
             className="shrink-0 transition-transform group-hover:translate-x-0.5"
@@ -242,13 +255,16 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
 }
 
 function Skeleton({ loading }: { loading: boolean }) {
+  const { t } = useI18n();
   return (
     <div className="space-y-3">
       <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
       <div className="h-20 animate-pulse rounded-lg bg-white/[0.04]" />
       <div className="h-3 w-20 animate-pulse rounded bg-white/[0.06]" />
       <div className="h-24 animate-pulse rounded-lg bg-white/[0.04]" />
-      <p className="text-[10px] text-ink-faint">{loading ? "正在采样…" : "无数据"}</p>
+      <p className="text-[10px] text-ink-faint">
+        {loading ? t("panel.skeleton.sampling") : t("panel.skeleton.none")}
+      </p>
     </div>
   );
 }

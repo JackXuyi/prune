@@ -6,6 +6,7 @@
  * 「读不到」与「为 0」是两件事（M14 口径红线在图表层的落点）。
  * 数字永远由调用方放在条上方的文本位，本组件不重复渲染数值。
  */
+import { useI18n } from "../../i18n/store";
 import type { Tone } from "../../lib/statsReadout";
 import { TONE_FILL } from "./tone";
 
@@ -29,6 +30,7 @@ export function MeterBar({
   label?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   const ratio =
     value != null && max > 0 && Number.isFinite(value)
       ? Math.max(0, Math.min(1, value / max))
@@ -36,7 +38,12 @@ export function MeterBar({
   return (
     <div
       role="img"
-      aria-label={label ?? (ratio != null ? `占比 ${Math.round(ratio * 100)}%` : "读数不可用")}
+      aria-label={
+        label ??
+        (ratio != null
+          ? t("chart.meter.ratio", { pct: Math.round(ratio * 100) })
+          : t("chart.meter.unavailable"))
+      }
       className={`relative w-full rounded-full bg-white/[0.05] ${className}`}
       style={{ height }}
     >

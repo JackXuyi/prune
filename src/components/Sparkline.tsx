@@ -1,5 +1,7 @@
 import { useId } from "react";
 
+import { useI18n } from "../i18n/store";
+
 /**
  * 自绘 SVG sparkline（不引图表库，符合方案 §9 的自耗预算）。
  * 只负责画线，不带坐标轴——数值由外层以文字给出。
@@ -26,6 +28,7 @@ export function Sparkline({
    */
   baselineZero?: boolean;
 }) {
+  const { t } = useI18n();
   const gradientId = useId().replace(/:/g, "");
 
   if (values.length < 2) {
@@ -34,7 +37,7 @@ export function Sparkline({
         className="flex items-center justify-center rounded-lg border border-dashed border-hairline-soft text-[11px] text-ink-faint"
         style={{ height: 48 }}
       >
-        {values.length === 0 ? "暂无序列 · 深探轮次开始后每 5 分钟一个点" : "序列积累中"}
+        {values.length === 0 ? t("chart.sparkline.emptySeries") : t("chart.sparkline.accumulating")}
       </div>
     );
   }
@@ -66,7 +69,7 @@ export function Sparkline({
       style={{ height }}
       className="w-full"
       role="img"
-      aria-label="走势"
+      aria-label={t("chart.sparkline.aria")}
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">

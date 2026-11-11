@@ -7,6 +7,7 @@
  * 表示「不计入主数字」（如 L4 Docker）。
  * 总量为 0 / 不可读时整体不渲染——不画一条空轨道冒充数据。
  */
+import { useI18n } from "../../i18n/store";
 import type { Tone } from "../../lib/statsReadout";
 import { TONE_FILL } from "./tone";
 
@@ -34,12 +35,15 @@ export function StackBar({
   ariaLabel?: string;
   className?: string;
 }) {
+  const { t } = useI18n();
   const sum = total ?? segments.reduce((s, x) => s + (x.value > 0 ? x.value : 0), 0);
   if (!(sum > 0) || !Number.isFinite(sum)) return null;
   const legend = segments
     .filter((s) => s.value > 0)
-    .map((s) => `${s.label} ${Math.round((s.value / sum) * 100)}%${s.muted ? "（不计入）" : ""}`)
-    .join("，");
+    .map((s) =>
+      `${s.label} ${Math.round((s.value / sum) * 100)}%${s.muted ? t("chart.stack.mutedSuffix") : ""}`,
+    )
+    .join(t("chart.stack.join"));
   return (
     <div
       role="img"
@@ -55,7 +59,7 @@ export function StackBar({
         return (
           <div
             key={seg.key}
-            title={seg.muted ? `${seg.label}（不计入）` : seg.label}
+            title={seg.muted ? `${seg.label}${t("chart.stack.mutedSuffix")}` : seg.label}
             className={seg.muted ? "" : TONE_FILL[seg.tone ?? "neutral"]}
             style={{
               width: `${pct}%`,

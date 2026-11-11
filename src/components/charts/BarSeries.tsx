@@ -1,3 +1,5 @@
+import { useI18n } from "../../i18n/store";
+
 /**
  * 柱形序列（D5）：应用详情的「近 7 天 / 24 h」三轨历史用。
  *
@@ -29,6 +31,7 @@ export function BarSeries({
   ariaLabel: string;
   formatValue?: (v: number) => string;
 }) {
+  const { t } = useI18n();
   const max = bars.reduce((m, b) => (b.hasData ? Math.max(m, b.value) : m), 0);
   const peak = bars.reduce((idx, b, i) => {
     if (!b.hasData) return idx;
@@ -50,7 +53,11 @@ export function BarSeries({
           <div
             key={`${b.label}-${i}`}
             className="flex min-w-0 flex-1 flex-col justify-end"
-            title={b.hasData ? `${b.label} · ${formatValue(b.value)}` : `${b.label} · 无记录（Prune 未运行）`}
+            title={
+              b.hasData
+                ? `${b.label} · ${formatValue(b.value)}`
+                : t("chart.bars.noRecord", { label: b.label })
+            }
           >
             {b.hasData && b.value > 0 ? (
               <i

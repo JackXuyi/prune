@@ -1,6 +1,8 @@
 import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
+import { tGlobal } from "../i18n/store";
+
 import { devPortSnapshot } from "../lib/devFixture";
 import { isTauri, portRefresh, portSetActive, portSnapshot } from "../lib/ipc";
 import type { PortSnapshot } from "../types/net";
@@ -52,7 +54,7 @@ export const usePortStore = create<PortStore>((set, get) => ({
       if (import.meta.env.DEV) {
         set({ snapshot: devPortSnapshot(), loading: false });
       } else {
-        set({ loading: false, error: "需要在 Prune 桌面端内运行（pnpm tauri dev）" });
+        set({ loading: false, error: tGlobal("common.err.needsDesktop") });
       }
       return;
     }
