@@ -609,8 +609,8 @@ impl LanWatchMonitor {
 
     /// 投入一轮邻居表合成结果（`cidr` = 本轮网段指纹，`None` = 读不到网段）。
     ///
-    /// 只看 `online` 设备，跳过本机与网关；网关首轮进基线、之后永远是旧面孔，
-    /// 无需特判（is_gateway 设备同样入已知集）。
+    /// 只看 `online` 设备，跳过本机与网关——网关地址变了（换路由器 / 首轮基线时
+    /// 网关不在邻居表里）同样会以「新 IP」出现，但它从来不是「新面孔」。
     pub fn observe(&mut self, cidr: Option<&str>, devices: &[LanDevice]) -> Vec<LanWatchAlert> {
         // 网段变了（或首次见到网段）：重建基线，本拍不报
         if cidr != self.scope_seen.as_deref() {
@@ -629,7 +629,9 @@ impl LanWatchMonitor {
 
         let mut alerts = Vec::new();
         for d in devices {
-            if !d.online || d.is_self || self.known.contains(&d.ip) {
+            // 网关不是「新面孔」：路由器重启换了地址、或首轮基线时网关恰好不在
+            // 邻居表里，都不该弹「路由器加入了局域网」（方案 §2.2）
+            if !d.online || d.is_self || d.is_gateway || self.known.contains(&d.ip) {
                 continue;
             }
             self.known.insert(d.ip.clone());
@@ -725,6 +727,19 @@ mod tests {
         m.observe(Some(CIDR), &[gw.clone()]);
         // 网关一直在场：不报
         assert!(m.observe(Some(CIDR), &[gw]).is_empty());
+    }
+
+    #[test]
+    fn lan_gateway_arriving_after_baseline_is_not_a_new_face() {
+        let mut m = LanWatchMonitor::new();
+        m.observe(Some(CIDR), &[device("192.168.0.44")]);
+        // 路由器重启换了地址 / 首轮基线时网关不在邻居表：新 IP 也不是「新面孔」
+        let mut gw = device("192.168.0.1");
+        gw.is_gateway = true;
+        assert!(
+            m.observe(Some(CIDR), &[gw]).is_empty(),
+            "网关从不作为新面孔提报"
+        );
     }
 
     #[test]

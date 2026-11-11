@@ -153,7 +153,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M21** 剪除成绩单（Wrapped 式年度浪费报告 MVP）：每次清理成功后按分组落库 `cut_log`（append-only，本地 SQLite，留存两年）；总览页成绩单卡——累计剪掉 X GB · N 次清理 · 相当于 M 部高清电影 · 受害者 Top 3；失败项不计入（以废纸篓为准）；分享卡片图后置（[方案](./docs/f2-annual-report-plan.md)）
 - [x] **M22** 泄漏侦探档案（悬案卷宗）：泄漏嫌疑从警告条重塑为有状态的案件簿——立案（CASE-MMDD-NN）→ 侦查（嫌疑人档案照 + 证物生长曲线 + 证据数字）→ 结案（嫌疑人离场后未复现自动归档；同应用另立新案判「疑似复发」）；措辞红线不变（只说嫌疑不说结论）；案件簿在 prune-core 纯逻辑可单测（[方案](./docs/f3-detective-file-plan.md)）
 - [x] **M23** 局域网新面孔提醒：灵动岛第四类事件——邻居表出现从未见过的在线设备（60 s 一拍，**零主动探测、零 lsof**，只是 arp/GetIpNetTable2 观察者）→「新面孔 · 192.168.0.77 加入了局域网」，点击直达 ports tab 局域网设备区；终身制已知集（同 IP 只报一次）+ 网段变化重建基线（换 Wi-Fi 不刷屏）+ 单轮 3 条上限余量合并 + 独立 4/h 频控（[方案](./docs/f5-lan-watch-plan.md)）
-- [x] **M24** 项目健康卡（项目体检）：把「N 个 node_modules 共 X GB」拆成按项目的依赖账本——依赖体积 / 依赖上次安装（node_modules mtime）/ 项目最后活动（package.json · 锁文件 · .git/index）/ 多锁文件并存；结论只陈述事实（僵尸依赖 = 依赖与项目双双 ≥60 天没动 · 偏胖 ≥1.5 GB · 久未重装），不代删；**零新增扫描**（复用 node_modules 聚合表，每项目仅 4 次 stat）（[方案](./docs/f9-project-health-plan.md)）
+- [x] **M24** 项目健康卡（项目体检）：把「N 个 node_modules 共 X GB」拆成按项目的依赖账本——依赖体积 / 依赖上次安装（node_modules mtime）/ 项目最后活动（package.json · 锁文件 · .git/index）/ 多锁文件并存；结论只陈述事实（僵尸依赖 = 依赖与项目双双 ≥60 天没动 · 偏胖 ≥1.5 GB · 久未重装），不代删；**零新增扫描**（复用 node_modules 聚合表，每项目仅 6 次 stat：4 个锁文件 + package.json + .git/index）（[方案](./docs/f9-project-health-plan.md)）
 
 ## 相关文档
 

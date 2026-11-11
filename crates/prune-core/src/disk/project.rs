@@ -4,7 +4,7 @@
 //! 「依赖多久没重装 / 项目多久没动」的事实，怎么处理由用户决定。
 //!
 //! 数据来源是扫描已产出的 node_modules 表（路径 + mtime + 体积），
-//! 每个项目额外 4 次 `stat`（package.json / 三种锁文件 / .git/index）。
+//! 每个项目额外 6 次 `stat`（4 个锁文件 + package.json + `.git/index`）。
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

@@ -784,8 +784,22 @@ pub fn spawn_loops(app: &AppHandle) {
 /// 信息，~百毫秒级，**零主动探测、零 lsof**（M18 §1 的「不是扫描器」定位）。
 /// 60 s × ~100 ms ≈ 0.17% 占空比，电池无感。
 const LAN_WATCH_TICK_SECS: u64 = 60;
-/// 新面孔事件独立预算：一天几条的量级，4/h 足够；不与其他事件共闸。
+/// 新面孔事件独立预算上限：一天几条的量级，4/h 足够。
+/// 实际预算取 `min(用户设置的每小时上限, 本值)` —— 设置项文案承诺的是
+/// 「所有灵动岛事件的总量闸门」，独立预算不能反过来突破它。
 const LAN_MAX_PER_HOUR: u32 = 4;
+
+/// 端口事件的独立预算上限（6/h）；与 [`LAN_MAX_PER_HOUR`] 同样受用户上限收口。
+const PORT_MAX_PER_HOUR: u32 = 6;
+
+/// 独立预算 = min(用户上限, 事件自身的合理上限)。
+///
+/// 两道闸的语义：用户上限是**总量**闸门（跨越所有事件类型），事件自身的上限
+/// 是**单类**闸门（防止一种事件占满总量）。取小值保证「用户说每小时最多 N 条」
+/// 永远是硬上界，同时不会因为用户放宽到 30 就让端口事件泛滥。
+fn event_budget(max_per_hour: u32, kind_cap: u32) -> u32 {
+    max_per_hour.clamp(1, kind_cap)
+}
 
 /// 新面孔守望循环。判定在核心层（`LanWatchMonitor`：终身制已知集 +
 /// 网段指纹重置），这里只管节拍、数据源与频控。
@@ -795,8 +809,8 @@ async fn lan_watch_loop(app: AppHandle) {
     // 第一拍立即跑：尽快建基线（基线轮不弹，与端口保镖同纪律）
 
     let mut monitor = LanWatchMonitor::new();
-    let mut limiter = RateLimiter::new(LAN_MAX_PER_HOUR);
     let mut last_cfg = cfg();
+    let mut limiter = RateLimiter::new(event_budget(last_cfg.max_per_hour, LAN_MAX_PER_HOUR));
     loop {
         tick.tick().await;
 
@@ -804,7 +818,7 @@ async fn lan_watch_loop(app: AppHandle) {
         if current != last_cfg {
             // 配置变化重建基线：重开开关的第一轮当作新起点，不补报中途错过的变化
             monitor.reset();
-            limiter.reconfigure(LAN_MAX_PER_HOUR);
+            limiter.reconfigure(event_budget(current.max_per_hour, LAN_MAX_PER_HOUR));
             last_cfg = current;
         }
         if !current.enabled || !current.lan_watch {
@@ -865,9 +879,6 @@ const PORT_GUARD_TICK_SECS: u64 = 30;
 /// 端口 tab 的快照比这新鲜就直接复用（PORT_INTERVAL_SECS=30 的定时轮保证它最多旧 30 s，
 /// 20 s 是保守线：拿到的快照肯定不比守望轮自己扫的旧）
 const PORT_SNAPSHOT_FRESH_MS: u64 = 20_000;
-/// 端口事件独立预算：这类事件天然稀疏（一天几条），6/h 绰绰有余。
-/// 不并进 sample_loop 的全局 Gates——跨循环共享闸需要静态重构，收益不值。
-const PORT_MAX_PER_HOUR: u32 = 6;
 
 /// 端口守望循环：关注端口空闲→被占、同端口多持有者 → 灵动岛提报。
 ///
@@ -879,12 +890,12 @@ const PORT_MAX_PER_HOUR: u32 = 6;
 async fn port_guard_loop(app: AppHandle) {
     let mut tick = tokio::time::interval(Duration::from_secs(PORT_GUARD_TICK_SECS));
     tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    // 第一拍立即跑：尽快建基线（基线轮不弹，S3）
-    tick.tick().await;
+    // 第一拍立即跑：尽快建基线（基线轮不弹，S3）。tokio 的首拍本身就是
+    // 立刻到期的，所以循环外不要再 tick 一次——那会把首拍吃掉，基线推迟 30 s。
 
     let mut monitor = PortGuardMonitor::new();
-    let mut limiter = RateLimiter::new(PORT_MAX_PER_HOUR);
     let mut last_cfg = cfg();
+    let mut limiter = RateLimiter::new(event_budget(last_cfg.max_per_hour, PORT_MAX_PER_HOUR));
 
     loop {
         tick.tick().await;
@@ -893,7 +904,7 @@ async fn port_guard_loop(app: AppHandle) {
         if current != last_cfg {
             // 配置变化重建基线：重开开关的第一轮当作新起点，不补报中途错过的变化
             monitor.reset();
-            limiter.reconfigure(PORT_MAX_PER_HOUR);
+            limiter.reconfigure(event_budget(current.max_per_hour, PORT_MAX_PER_HOUR));
             last_cfg = current;
         }
         if !current.enabled || !current.port_guard {

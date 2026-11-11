@@ -29,6 +29,10 @@ use crate::port_sampler::PortState;
 use crate::sampler::{self, MemState};
 use crate::scan::{self, DiskState};
 
+/// 剪除成绩单的记录保留期（天）。与卡片上「本地留存两年」、changelog 的
+/// 「留存 800 天」同一口径——只有写入路径会剪旧行，读路径保持纯查询。
+const CUT_RETAIN_DAYS: i64 = 800;
+
 #[tauri::command]
 pub fn mem_snapshot(state: State<'_, Arc<MemState>>) -> Option<MemSnapshot> {
     state
@@ -299,6 +303,23 @@ pub fn disk_volume() -> Option<VolumeInfo> {
     prune_core::disk::volume_info(&prune_core::paths::home_dir_or_root())
 }
 
+/// 成绩单落库口径（M21）：只认「执行前还在磁盘上、执行后没进失败名单」的条目。
+///
+/// 之所以要 `preexisting`：`reclaim::execute` 对报告过期（上轮已清理 / 用户手动删）
+/// 的条目记 `skipped` 而不是 `failed`，它们**没被移进废纸篓**。只排除 `failed`
+/// 会把它们算成「剪掉了」，成绩单的累计数字就虚高了。
+fn cut_entries<'a>(
+    items: &'a [ReclaimItem],
+    preexisting: &HashSet<String>,
+    failed: &HashSet<String>,
+) -> Vec<(&'a str, u64)> {
+    items
+        .iter()
+        .filter(|i| preexisting.contains(&i.path) && !failed.contains(i.path.as_str()))
+        .map(|i| (i.label.as_str(), i.bytes))
+        .collect()
+}
+
 /// 手动触发扫描（A7 D-A7-2：手动 = 全量，用户盯着数字求证，准确性优先）。
 /// 已有扫描在跑时直接返回 Ok（幂等），前端靠 `disk://done` 更新。
 #[tauri::command]
@@ -358,6 +379,13 @@ pub async fn reclaim_execute(
 
     // 闭包要拿走 items（跨线程）；落库在 await 之后用另一份
     let items_for_cut = items.clone();
+    // 执行前快照「这一刻还在磁盘上的条目」：成绩单只认真正被移走的，
+    // 报告过期导致的 skipped（路径已消失）必须排除，否则数字虚高
+    let preexisting: HashSet<String> = items
+        .iter()
+        .filter(|i| std::path::Path::new(&i.path).exists())
+        .map(|i| i.path.clone())
+        .collect();
     let result = tauri::async_runtime::spawn_blocking(move || {
         reclaim::execute(&items, &home, confirmed, Limits::default(), &allowed)
     })
@@ -372,17 +400,21 @@ pub async fn reclaim_execute(
         result.failed.len()
     );
 
-    // M21 剪除成绩单：成功项落库（append-only）。失败项不计——
-    // 「剪掉了」必须以废纸篓里的东西为准，报告数字才经得起对账。
+    // M21 剪除成绩单：成功项落库（append-only）。失败项与「执行时已不存在」的
+    // 条目都不计——「剪掉了」必须以废纸篓里的东西为准，报告数字才经得起对账。
     if let Some(store) = store.as_deref() {
-        let failed: HashSet<&str> = result.failed.iter().map(|f| f.path.as_str()).collect();
-        let cuts: Vec<(&str, u64)> = items_for_cut
-            .iter()
-            .filter(|i| !failed.contains(i.path.as_str()))
-            .map(|i| (i.label.as_str(), i.bytes))
-            .collect();
+        let failed: HashSet<String> = result.failed.iter().map(|f| f.path.clone()).collect();
+        let cuts = cut_entries(&items_for_cut, &preexisting, &failed);
         if let Err(e) = store.cut_add(&cuts, now_secs()) {
             eprintln!("[m21-cut] 剪除记录落库失败（不影响清理结果）: {e}");
+        }
+        // 保留期：与 changelog / 卡片上写的「两年」对齐（只写入路径剪旧行，
+        // 记录量级几百行/年，一次 DELETE 成本可忽略）
+        let cutoff = now_secs() - CUT_RETAIN_DAYS * 86_400;
+        match store.cut_prune_before(cutoff) {
+            Ok(0) => {}
+            Ok(n) => eprintln!("[m21-cut] 清理超出保留期的剪除记录 {n} 行"),
+            Err(e) => eprintln!("[m21-cut] 剪除记录过期清理失败（不影响清理结果）: {e}"),
         }
     }
 
@@ -562,4 +594,43 @@ pub fn app_history(
     state
         .app_history(&family, &from)
         .map_err(|e| format!("读取应用历史失败：{e}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use prune_core::disk::whitelist::Level;
+
+    fn item(path: &str, label: &str, bytes: u64) -> ReclaimItem {
+        ReclaimItem {
+            path: path.to_string(),
+            label: label.to_string(),
+            bytes,
+            level: Level::L1,
+        }
+    }
+
+    /// M21 口径回归：失败项不计，「执行前已不存在」的项也不计——只有真正被
+    /// 移进废纸篓的条目才允许进入成绩单。
+    #[test]
+    fn cut_entries_counts_only_really_moved_items() {
+        let items = vec![
+            item("/c/a", "npm 缓存", 100),     // 真的移走了
+            item("/c/b", "node_modules", 200), // 移动失败
+            item("/c/c", "brew 缓存", 300),    // 报告过期，执行时已不存在
+        ];
+        let preexisting: HashSet<String> = ["/c/a", "/c/b"].iter().map(|s| s.to_string()).collect();
+        let failed: HashSet<String> = ["/c/b"].iter().map(|s| s.to_string()).collect();
+
+        let cuts = cut_entries(&items, &preexisting, &failed);
+        assert_eq!(cuts, vec![("npm 缓存", 100)]);
+    }
+
+    /// 全部都没动过（报告整体过期）→ 一条都不记，不能靠 skipped 刷数字
+    #[test]
+    fn cut_entries_is_empty_when_nothing_existed() {
+        let items = vec![item("/c/a", "npm 缓存", 100)];
+        let cuts = cut_entries(&items, &HashSet::new(), &HashSet::new());
+        assert!(cuts.is_empty());
+    }
 }

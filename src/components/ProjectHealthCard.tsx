@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { formatBytes } from "../lib/format";
 import { isTauri, revealPath } from "../lib/ipc";
@@ -46,6 +46,13 @@ function activityLabel(days: number | null): string {
 export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   const [toast, setToast] = useState<string | null>(null);
 
+  // 提示条 3 s 自走：Finder 打开失败是一次性事件，不该常驻在左下角
+  useEffect(() => {
+    if (!toast) return;
+    const timer = window.setTimeout(() => setToast(null), 3000);
+    return () => window.clearTimeout(timer);
+  }, [toast]);
+
   if (projects.length === 0) return null;
 
   const totalBytes = projects.reduce((acc, p) => acc + p.depsBytes, 0);
@@ -82,7 +89,7 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
             依赖与项目都 {STALE_DAYS} 天没动）
           </>
         ) : (
-          <>没有僵尸依赖：所有项目的依赖都在 {STALE_DAYS} 天内重装过</>
+          <>没有依赖与项目双双停摆的项目</>
         )}
         {multi.length > 0 ? ` · ${multi.length} 个项目锁文件并存` : ""}
       </p>

@@ -335,7 +335,8 @@ export function StatsBoard({
                 <span className="text-[11px] text-ink-faint">{cutEquivalence(cut.totalBytes)}</span>
               </div>
               <p className="mt-1 text-[10px] text-ink-faint">
-                {cut.totalItems} 次清理
+                {/* 口径：cut_log 一行 = 一个被剪掉的条目，所以这里是「项」不是「次」 */}
+                {cut.totalItems} 项已剪除
                 {cut.firstTs != null ? ` · 自 ${dayString(new Date(cut.firstTs * 1000))} 起` : ""}
               </p>
               {cut.top.length > 0 && (
@@ -348,7 +349,7 @@ export function StatsBoard({
                         {formatBytes(t.bytes)}
                       </span>
                       <span className="w-9 shrink-0 text-right text-[10px] text-ink-faint">
-                        {t.count} 次
+                        {t.count} 项
                       </span>
                     </div>
                   ))}
