@@ -10,7 +10,7 @@ import { BarList } from "./charts/BarList";
 import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
 import { ProjectHealthCard } from "./ProjectHealthCard";
-import { cacheLabel, LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
+import { cacheLabel, reclaimNoteText, LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
 import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
 
@@ -792,9 +792,13 @@ function PreviewPanel() {
   const execute = useDiskStore((s) => s.execute);
   const clear = useDiskStore((s) => s.clearPreview);
   const busy = useDiskStore((s) => s.busy);
+  // 说明里的组名要按当前语言渲染：报告在 store 里，组不在（过期）时退回 key。
+  // 不把 `?? []` 写进 selector：每次返回新数组会让 useSyncExternalStore 判定快照变化。
+  const report = useDiskStore((s) => s.report);
+  const groups = report?.groups ?? [];
   const [confirmed, setConfirmed] = useState(false);
   const [menu, setMenu] = useState<PathTarget | null>(null);
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
 
   // 弹层先出：清单还没生成时只渲染骨架
   if (!preview) {
@@ -860,9 +864,9 @@ function PreviewPanel() {
               </li>
             ) : null}
           </ul>
-          {preview.notes.map((n) => (
-            <p key={n} className="mt-1 text-[10px] text-warn/90">
-              {n}
+          {preview.notes.map((n, i) => (
+            <p key={`${n.code}-${i}`} className="mt-1 text-[10px] text-warn/90">
+              {reclaimNoteText(n, locale, groups)}
             </p>
           ))}
         </div>

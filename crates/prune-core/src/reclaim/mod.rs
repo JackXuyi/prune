@@ -82,6 +82,71 @@ pub fn first_level_children(root: &Path) -> Vec<ReclaimChild> {
     out
 }
 
+/// 一条「没进清单」的说明：**结构化，不带文案**。
+///
+/// 为什么不用 `String`：这些说明里嵌着分组名，而分组名在 GUI 上由前端按
+/// `disk.cache.<key>` 现查（`types/disk.ts` 的 `cacheLabel`），后端下发的只有中文
+/// `label`。后端把句子拼好，英文界面就会冒出中文组名 —— 而且中文句子会变成第二份
+/// 文案 source of truth。改成「code + 参数」后职责清晰：
+///
+/// - GUI：`reclaimNoteText()` 查前端 catalog，组名走 `cacheLabel`
+/// - CLI / example：`text_zh()` 拼固定中文（`prune-cli` 冻结中文，同 `Display`）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(
+    tag = "code",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase"
+)]
+pub enum ReclaimNote {
+    /// 还没有扫描结果（命令被提前调用；报告窗口尚未建立）
+    ScanPending,
+    /// 报告里找不到这个分组（报告过期，需要先刷新扫描）
+    MissingGroup { key: String },
+    /// L4：只给命令，不执行
+    HighRisk { key: String },
+    /// 聚合分组（root 是 home）：只做统计，不提供清理
+    Scattered { key: String, n: usize },
+    /// 依赖 Rosetta 的 darwin-x64 条目被留在清单之外
+    RosettaPending { n: usize },
+    /// 清单为空
+    NothingToDo,
+}
+
+impl ReclaimNote {
+    /// CLI / example 通道的固定中文（与 `Display` 同一条纪律：日志检索优先）。
+    ///
+    /// 组名从报告里取，与前端 `cacheLabel` 是同一职责的两个实现；报告里没有该组
+    /// （`MissingGroup` 必然如此）时回退显示 key。
+    pub fn text_zh(&self, report: &DiskReport) -> String {
+        let label = |key: &str| -> String {
+            report
+                .groups
+                .iter()
+                .find(|g| g.key == key)
+                .map(|g| g.label.clone())
+                .unwrap_or_else(|| key.to_string())
+        };
+        match self {
+            Self::ScanPending => "尚未完成扫描，请稍候或手动刷新".to_string(),
+            Self::MissingGroup { key } => {
+                format!("未找到分组 {key}（报告可能已过期，请先刷新扫描）")
+            }
+            Self::HighRisk { key } => format!(
+                "{} 属于 🔴 高风险项，只提供命令，不执行（docker system prune 等请手动执行）",
+                label(key)
+            ),
+            Self::Scattered { key, n } => format!(
+                "{} 分散在 {n} 个目录，只做统计；请在对应项目内自行删除",
+                label(key)
+            ),
+            Self::RosettaPending { n } => {
+                format!("{n} 个 darwin-x64 条目依赖 Rosetta，已保留在清单之外")
+            }
+            Self::NothingToDo => "没有可清理的内容".to_string(),
+        }
+    }
+}
+
 /// dry-run 结果
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -91,7 +156,7 @@ pub struct ReclaimPreview {
     /// 需要二次确认（L3 或超熔断）
     pub needs_confirm: bool,
     /// 被跳过的组（L4 等），给 UI 直接展示原因
-    pub notes: Vec<String>,
+    pub notes: Vec<ReclaimNote>,
 }
 
 /// 执行结果
@@ -191,21 +256,20 @@ impl std::fmt::Display for ReclaimError {
 /// - L4 组：不生成清理项，只留一条说明
 pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
     let mut items: Vec<ReclaimItem> = Vec::new();
-    let mut notes: Vec<String> = Vec::new();
+    let mut notes: Vec<ReclaimNote> = Vec::new();
     let mut needs_confirm = false;
 
     for key in keys {
         let Some(group) = report.groups.iter().find(|g| &g.key == key) else {
-            notes.push(format!("未找到分组 {key}（报告可能已过期，请先刷新扫描）"));
+            notes.push(ReclaimNote::MissingGroup { key: key.clone() });
             continue;
         };
 
         match group.level {
             Level::L4 => {
-                notes.push(format!(
-                    "{} 属于 🔴 高风险项，只提供命令，不执行（docker system prune 等请手动执行）",
-                    group.label
-                ));
+                notes.push(ReclaimNote::HighRisk {
+                    key: group.key.clone(),
+                });
                 continue;
             }
             _ => {}
@@ -231,10 +295,10 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
         // 聚合分组（如「55 个项目的 node_modules」）没有单一可删根：
         // 它的 root 是 home，绝不能当成待删项——只说明不提供清理。
         if !group.cleanable {
-            notes.push(format!(
-                "{} 分散在 {} 个目录，只做统计；请在对应项目内自行删除",
-                group.label, group.entry_count
-            ));
+            notes.push(ReclaimNote::Scattered {
+                key: group.key.clone(),
+                n: group.entry_count,
+            });
             continue;
         }
 
@@ -274,9 +338,7 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
                     .filter(|i| i.verdict == crate::classify::Verdict::NeedsConfirm)
                     .count();
                 if pending > 0 {
-                    notes.push(format!(
-                        "{pending} 个 darwin-x64 条目依赖 Rosetta，已保留在清单之外"
-                    ));
+                    notes.push(ReclaimNote::RosettaPending { n: pending });
                 }
             }
             _ => {
@@ -298,7 +360,7 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
         needs_confirm = true;
     }
     if items.is_empty() && notes.is_empty() {
-        notes.push("没有可清理的内容".into());
+        notes.push(ReclaimNote::NothingToDo);
     }
 
     ReclaimPreview {
@@ -476,7 +538,11 @@ mod tests {
         let pv = preview(&["yarn".into()], &report);
         assert_eq!(pv.items.len(), 1, "NeedsConfirm 不进默认清单");
         assert_eq!(pv.items[0].bytes, 200);
-        assert!(pv.notes.iter().any(|n| n.contains("Rosetta")));
+        assert!(
+            pv.notes.contains(&ReclaimNote::RosettaPending { n: 1 }),
+            "Rosetta 条目要留下说明，实际 notes={:?}",
+            pv.notes
+        );
         assert!(!pv.needs_confirm);
         let _ = std::fs::remove_dir_all(&home);
     }
@@ -495,7 +561,13 @@ mod tests {
         let pv = preview(&["colima".into(), "simulator".into()], &report);
         assert_eq!(pv.items.len(), 1, "L4 永不进清理项");
         assert!(pv.needs_confirm, "L3 需要确认");
-        assert!(pv.notes.iter().any(|n| n.contains("只提供命令")));
+        assert!(
+            pv.notes.contains(&ReclaimNote::HighRisk {
+                key: "colima".into()
+            }),
+            "L4 要说明「只给命令」，实际 notes={:?}",
+            pv.notes
+        );
         let _ = std::fs::remove_dir_all(&home);
     }
 
@@ -512,7 +584,10 @@ mod tests {
         assert!(pv.items.is_empty(), "聚合项不得生成清理项（root 是 home）");
         assert_eq!(pv.total_bytes, 0);
         assert!(
-            pv.notes.iter().any(|n| n.contains("55 个目录")),
+            pv.notes.contains(&ReclaimNote::Scattered {
+                key: "node-modules".into(),
+                n: 55
+            }),
             "要明确告诉用户只做统计，实际 notes={:?}",
             pv.notes
         );
@@ -715,7 +790,81 @@ mod tests {
         let report = report_with(vec![nm]);
         let pv = preview(&["node-modules".into()], &report);
         assert!(pv.items.is_empty());
-        assert!(pv.notes.iter().any(|n| n.contains("只做统计")));
+        assert!(
+            pv.notes.contains(&ReclaimNote::Scattered {
+                key: "node-modules".into(),
+                n: 55
+            }),
+            "实际 notes={:?}",
+            pv.notes
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// 线上形状是契约：前端按 `code` 分支渲染，改字段名等于改协议。
+    #[test]
+    fn note_wire_shape_is_tagged_object() {
+        let cases = [
+            (
+                ReclaimNote::RosettaPending { n: 3 },
+                serde_json::json!({ "code": "rosettaPending", "n": 3 }),
+            ),
+            (
+                ReclaimNote::MissingGroup { key: "nope".into() },
+                serde_json::json!({ "code": "missingGroup", "key": "nope" }),
+            ),
+            (
+                ReclaimNote::Scattered {
+                    key: "node-modules".into(),
+                    n: 55,
+                },
+                serde_json::json!({ "code": "scattered", "key": "node-modules", "n": 55 }),
+            ),
+            (
+                ReclaimNote::HighRisk {
+                    key: "colima".into(),
+                },
+                serde_json::json!({ "code": "highRisk", "key": "colima" }),
+            ),
+            (
+                ReclaimNote::NothingToDo,
+                serde_json::json!({ "code": "nothingToDo" }),
+            ),
+            (
+                ReclaimNote::ScanPending,
+                serde_json::json!({ "code": "scanPending" }),
+            ),
+        ];
+        for (note, want) in cases {
+            assert_eq!(serde_json::to_value(&note).unwrap(), want, "{note:?}");
+            // 反序列化同形：前端 mock / 回放旧报文都要能进
+            let back: ReclaimNote = serde_json::from_value(want).unwrap();
+            assert_eq!(back, note);
+        }
+    }
+
+    /// `text_zh` 是 CLI 通道：组名要从报告里取，取不到回退 key（不显示空白）
+    #[test]
+    fn note_text_zh_resolves_group_label_from_report() {
+        let home = temp_home("notetext");
+        let docker = home.join(".colima");
+        std::fs::create_dir_all(&docker).unwrap();
+        let report = report_with(vec![group("colima", Level::L4, &docker, 900, None)]);
+
+        let text = ReclaimNote::HighRisk {
+            key: "colima".into(),
+        }
+        .text_zh(&report);
+        assert!(text.contains(&report.groups[0].label), "组名要展开：{text}");
+        assert!(text.contains("只提供命令"), "{text}");
+
+        // 报告过期时组不在表里：回退显示 key，且不 panic
+        let stale = ReclaimNote::MissingGroup {
+            key: "golang".into(),
+        }
+        .text_zh(&report);
+        assert!(stale.contains("golang"), "{stale}");
+
         let _ = std::fs::remove_dir_all(&home);
     }
 

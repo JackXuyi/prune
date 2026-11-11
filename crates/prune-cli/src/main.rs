@@ -402,7 +402,7 @@ fn cmd_reclaim(yes: bool) -> i32 {
         println!("  {:>10}  {}", hb(it.bytes), it.path);
     }
     for n in &pv.notes {
-        println!("  ℹ️  {n}");
+        println!("  ℹ️  {}", n.text_zh(&report));
     }
 
     if !yes {

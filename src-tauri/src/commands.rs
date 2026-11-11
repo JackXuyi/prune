@@ -24,7 +24,9 @@ use prune_core::i18n::err::err_text;
 use prune_core::i18n::fill;
 use prune_core::mem::{MemSnapshot, ProcMem};
 use prune_core::net::PortSnapshot;
-use prune_core::reclaim::{self, Limits, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport};
+use prune_core::reclaim::{
+    self, Limits, ReclaimChild, ReclaimItem, ReclaimNote, ReclaimPreview, ReclaimReport,
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::port_sampler::PortState;
@@ -337,18 +339,15 @@ pub async fn disk_scan(app: AppHandle) -> Result<(), String> {
 
 /// dry-run：只生成清单，不动任何文件。
 #[tauri::command]
-pub fn reclaim_preview(
-    app: AppHandle,
-    state: State<'_, Arc<DiskState>>,
-    keys: Vec<String>,
-) -> ReclaimPreview {
+pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> ReclaimPreview {
     match state.report() {
         Some(report) => reclaim::preview(&keys, &report),
         None => ReclaimPreview {
             items: Vec::new(),
             total_bytes: 0,
             needs_confirm: false,
-            notes: vec![err_text(crate::i18n::current(&app)).no_scan_yet.into()],
+            // 文案在前端 catalog：后端只给 code（见 `ReclaimNote` 的说明）
+            notes: vec![ReclaimNote::ScanPending],
         },
     }
 }

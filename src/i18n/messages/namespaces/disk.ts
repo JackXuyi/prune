@@ -126,6 +126,16 @@ const zh = {
     confirmBig: "超过 20 GB，确认执行",
     confirmLevel: "该级别需确认后执行",
     execute: "移入废纸篓",
+    // 「没进清单」的说明。组名 {group} 由 cacheLabel 渲染，后端只给 key；
+    // emoji（🔴）留在 reclaimNoteText 里，不进 catalog。
+    note: {
+      scanPending: "尚未完成扫描，请稍候或手动刷新",
+      missingGroup: "未找到分组 {group}（报告可能已过期，请先刷新扫描）",
+      highRisk: "{group} 属于高风险项，只提供命令，不执行（docker system prune 等请手动执行）",
+      scattered: "{group} 分散在 {n} 个目录，只做统计；请在对应项目内自行删除",
+      rosettaPending: "{n} 个 darwin-x64 条目依赖 Rosetta，已保留在清单之外",
+      nothingToDo: "没有可清理的内容",
+    },
   },
   project: {
     title: "项目体检",
@@ -330,6 +340,17 @@ const en: MessageTree<typeof zh> = {
     confirmBig: "Over 20 GB — confirm to run",
     confirmLevel: "This level needs confirmation",
     execute: "Move to Trash",
+    note: {
+      scanPending: "The scan hasn't finished — wait a moment or refresh manually",
+      missingGroup: "Group {group} not found (the report may be stale — rescan first)",
+      highRisk:
+        "{group} is a high-risk item: command only, never executed (run docker system prune yourself)",
+      scattered:
+        "{group} is spread across {n} directories — stats only; delete them inside each project",
+      rosettaPending:
+        "{n} darwin-x64 entries depend on Rosetta and were left out of the cleanup list",
+      nothingToDo: "Nothing to clean up",
+    },
   },
   project: {
     title: "Project checkup",

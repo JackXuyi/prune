@@ -492,7 +492,7 @@ export function devDiskPreview(): ReclaimPreview {
     items,
     totalBytes: items.reduce((sum, i) => sum + i.bytes, 0),
     needsConfirm: false,
-    notes: ["3 个 darwin-x64 条目依赖 Rosetta，已保留在清单之外"],
+    notes: [{ code: "rosettaPending", n: 3 }],
   };
 }
 

@@ -236,7 +236,7 @@ fn main() {
             first
         );
         for n in &p.notes {
-            println!("      ↳ {n}");
+            println!("      ↳ {}", n.text_zh(&report));
         }
     }
 

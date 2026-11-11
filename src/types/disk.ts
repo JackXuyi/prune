@@ -1,5 +1,5 @@
 /** 磁盘可回收报告类型（镜像 prune_core::disk，serde camelCase）。 */
-import { dynamicText } from "../i18n";
+import { dynamicText, i18nFor } from "../i18n";
 import type { Locale, NoParamKey } from "../i18n/types";
 
 /** 安全分级：L1/L2 可直接清理，L3 需确认，L4 只给命令 */
@@ -148,12 +148,26 @@ export interface ReclaimChild {
   isDir?: boolean;
 }
 
+/**
+ * 「没进清单」的说明（镜像 `prune_core::reclaim::ReclaimNote`，内部 tag = code）。
+ *
+ * 后端只下发 code + 参数，**不带句子**：说明里的组名要按当前语言查
+ * `disk.cache.<key>`，后端拼好的中文句子在英文界面里就是漏翻。
+ */
+export type ReclaimNote =
+  | { code: "scanPending" }
+  | { code: "missingGroup"; key: string }
+  | { code: "highRisk"; key: string }
+  | { code: "scattered"; key: string; n: number }
+  | { code: "rosettaPending"; n: number }
+  | { code: "nothingToDo" };
+
 export interface ReclaimPreview {
   items: ReclaimItem[];
   totalBytes: number;
   /** L3 或超 20 GB 熔断时为 true */
   needsConfirm: boolean;
-  notes: string[];
+  notes: ReclaimNote[];
 }
 
 export interface ReclaimReport {
@@ -180,4 +194,39 @@ export const LEVEL_META: Record<Level, { labelKey: NoParamKey; dot: string; tone
  */
 export function cacheLabel(group: { key: string; label: string }, locale: Locale): string {
   return dynamicText(locale, `disk.cache.${group.key}`) ?? group.label;
+}
+
+/**
+ * 把一条「没进清单」的说明渲染成当前语言的句子。
+ *
+ * 组名优先从本次报告的 groups 里取（走 `cacheLabel`，与分组列表共用同一套译名）；
+ * 报告过期、组已不在表里时退回 `disk.cache.<key>`，再退回 key —— 与 Rust 侧
+ * `ReclaimNote::text_zh` 是同一条回退链，只是那边的末位是报告里的 label。
+ *
+ * emoji 留在代码里（spec §3.7：不进 catalog）：它是标记不是文案。
+ */
+export function reclaimNoteText(
+  note: ReclaimNote,
+  locale: Locale,
+  groups: CacheGroup[],
+): string {
+  const { t } = i18nFor(locale);
+  const label = (key: string): string => {
+    const g = groups.find((x) => x.key === key);
+    return g ? cacheLabel(g, locale) : (dynamicText(locale, `disk.cache.${key}`) ?? key);
+  };
+  switch (note.code) {
+    case "scanPending":
+      return t("disk.preview.note.scanPending");
+    case "missingGroup":
+      return t("disk.preview.note.missingGroup", { group: label(note.key) });
+    case "highRisk":
+      return `🔴 ${t("disk.preview.note.highRisk", { group: label(note.key) })}`;
+    case "scattered":
+      return t("disk.preview.note.scattered", { group: label(note.key), n: note.n });
+    case "rosettaPending":
+      return t("disk.preview.note.rosettaPending", { n: note.n });
+    case "nothingToDo":
+      return t("disk.preview.note.nothingToDo");
+  }
 }
