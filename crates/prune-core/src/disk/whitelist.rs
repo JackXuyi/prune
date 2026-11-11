@@ -695,7 +695,12 @@ mod tests {
     fn ai_entries_never_touch_user_state() {
         // 红线测试：AI 应用的「用户状态」目录永不入白名单
         // （state.vscdb = AI 聊天记录，workspaceStorage = 工作区状态，projects = 会话记录）
-        let banned = ["state.vscdb", "workspaceStorage", "anysphere.cursor-agent-worker", "projects"];
+        let banned = [
+            "state.vscdb",
+            "workspaceStorage",
+            "anysphere.cursor-agent-worker",
+            "projects",
+        ];
         for e in ENTRIES.iter() {
             if e.key.starts_with("cursor-") || e.key.starts_with("claude-") {
                 for b in banned {
@@ -711,7 +716,10 @@ mod tests {
 
     #[test]
     fn xcode_supplement_entries_registered() {
-        let ib = ENTRIES.iter().find(|e| e.key == "xcode-ibsupport").expect("IB Support 应登记");
+        let ib = ENTRIES
+            .iter()
+            .find(|e| e.key == "xcode-ibsupport")
+            .expect("IB Support 应登记");
         assert_eq!(ib.level, Level::L2);
         let rt = ENTRIES
             .iter()
