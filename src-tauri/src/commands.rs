@@ -71,14 +71,19 @@ pub async fn mem_refresh(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 面板点击 → 打开主窗口并选中目标（可选指定 tab）。
+/// 面板点击 → 打开主窗口并选中目标（可选指定 tab，或直接弹设置）。
 /// 窗口显示逻辑统一走 tray::show_main（Accessory 下 show 不切 Space，需定位 + MoveToActiveSpace）。
 #[tauri::command]
-pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>) {
+pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>, settings: Option<bool>) {
     if let Some(panel) = app.get_webview_window("panel") {
         let _ = panel.hide();
     }
     crate::tray::show_main(&app);
+    // 顺序要紧：emit 必须排在 show_main 之后 —— webview 还没显示时事件会丢，
+    // 用户点了齿轮却什么都没发生
+    if settings.unwrap_or(false) {
+        let _ = app.emit("ui://settings", ());
+    }
     if let Some(pid) = pid {
         let _ = app.emit("mem://select", pid);
     }

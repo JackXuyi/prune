@@ -16,7 +16,7 @@ import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
-import { ChevronRightIcon, ExpandIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
+import { ChevronRightIcon, ExpandIcon, GearIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge } from "../components/primitives";
 import { UpdateCard } from "../components/UpdateCard";
 
@@ -77,6 +77,14 @@ export function MenuBarPanel() {
             onClick={() => fireAndForget(openMain(), "open_main")}
           >
             <ExpandIcon size={13} />
+          </IconButton>
+          {/* 只开面板的用户原先到不了设置（齿轮只长在主窗口 rail 上）。
+              这里是「到设置」的跳板，不是面板内切语言 —— 语言切换仍在设置页一处。 */}
+          <IconButton
+            label={t("panel.action.settings")}
+            onClick={() => fireAndForget(openMain(undefined, undefined, true), "open_settings")}
+          >
+            <GearIcon size={13} />
           </IconButton>
         </header>
 

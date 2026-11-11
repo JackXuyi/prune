@@ -18,6 +18,7 @@ const zh = {
   action: {
     refresh: "立即刷新",
     openMain: "打开主窗口",
+    settings: "设置",
   },
   footer: {
     lastDeep: "上次深探 {when}",
@@ -54,6 +55,7 @@ const en: MessageTree<typeof zh> = {
   action: {
     refresh: "Refresh now",
     openMain: "Open the main window",
+    settings: "Settings",
   },
   footer: {
     lastDeep: "Last deep scan {when}",
