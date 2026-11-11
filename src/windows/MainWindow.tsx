@@ -19,6 +19,9 @@ import {
   RefreshIcon,
 } from "../components/icons";
 import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
+import type { I18n } from "../i18n";
+import { useI18n } from "../i18n/store";
+import type { NoParamKey } from "../i18n/types";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
@@ -48,13 +51,14 @@ type MainTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports";
 
 /** ⌘1–⌘6 的切换顺序（UX v3 §5.5） */
 const TAB_ORDER: MainTab[] = ["stats", "resources", "memory", "disk", "net", "ports"];
-const TAB_LABEL: Record<MainTab, string> = {
-  stats: "总览",
-  resources: "应用",
-  memory: "内存",
-  disk: "存储",
-  net: "网络",
-  ports: "端口",
+/** tab 名与 rail 共用 nav.* —— 两处分开写迟早会有一处忘了改 */
+const TAB_LABEL: Record<MainTab, NoParamKey> = {
+  stats: "nav.stats",
+  resources: "nav.resources",
+  memory: "nav.memory",
+  disk: "nav.disk",
+  net: "nav.net",
+  ports: "nav.ports",
 };
 
 /**
@@ -71,16 +75,18 @@ function mapExternalTab(payload: string): MainTab | null {
 type KillTarget = { pid: number; name: string; mem: string; x: number; y: number };
 
 /** 工作区归属的置信度说明（UI 必须让用户知道这个路径是怎么来的） */
-function sourceLabel(s: WorkspaceSource): string {
+function sourceLabel(s: WorkspaceSource, t: I18n["t"]): string {
   return s === "handle"
-    ? "依据打开的文件句柄"
+    ? t("memory.source.handle")
     : s === "label"
-      ? "依据编辑器窗口标签"
-      : "继承所属窗口";
+      ? t("memory.source.label")
+      : t("memory.source.inherited");
 }
 
 /** 主窗口（960×640）：总览 / 应用 / 内存 / 存储 / 网络 / 端口 + 设置齿轮 */
 export function MainWindow() {
+  const i18n = useI18n();
+  const { t } = i18n;
   // M9：总览是默认页——打开先看本机整体，再下钻到具体域（v3.1 起首屏含可回收主卡）
   const [tab, setTab] = useState<MainTab>("stats");
   /** 下钻来源 tab：存在时标题栏显示「← 返回{来源}」（UX v3 §4.2） */
@@ -271,19 +277,19 @@ export function MainWindow() {
   const refreshLabel =
     tab === "disk"
       ? diskScanning
-        ? "扫描中"
-        : "重新扫描"
+        ? t("memory.refresh.scanning")
+        : t("memory.refresh.rescan")
       : tab === "ports"
         ? portRefreshing
-          ? "扫描中"
-          : "扫描端口"
+          ? t("memory.refresh.scanning")
+          : t("memory.refresh.scanPorts")
         : tab === "net"
           ? netTotalRefreshing
-            ? "刷新中"
-            : "刷新"
+            ? t("memory.refresh.refreshing")
+            : t("memory.refresh.refresh")
           : refreshing
-            ? "采样中"
-            : "刷新";
+            ? t("memory.refresh.sampling")
+            : t("memory.refresh.refresh");
 
   // 快捷键（UX v3 §5.5）：⌘1–6 切 tab · ⌘R 刷新 · ⌘F 聚焦搜索 · Escape 关弹层/取消选中。
   // onRefresh 每次渲染都是新函数，用 ref 持有避免反复解绑。
@@ -321,7 +327,7 @@ export function MainWindow() {
 
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline px-5">
-          <span className="text-[13px] font-semibold tracking-tight">{TAB_LABEL[tab]}</span>
+          <span className="text-[13px] font-semibold tracking-tight">{t(TAB_LABEL[tab])}</span>
           <div className="flex-1" />
           {/* 下钻返回（UX v3 §4.2）：所有跨页跳转必须可一键回来源 */}
           {backTo && backTo !== tab ? (
@@ -330,24 +336,26 @@ export function MainWindow() {
               onClick={() => go(backTo)}
               className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
             >
-              ← 返回{TAB_LABEL[backTo]}
+              {t("nav.backTo", { label: t(TAB_LABEL[backTo]) })}
             </button>
           ) : null}
           {tab === "memory" ? (
             <>
               {snapshot ? (
                 snapshot.deepAvailable ? (
-                  <Badge tone="accent" title="footprint 口径：含被换出到磁盘的部分">
-                    footprint 口径
+                  <Badge tone="accent" title={t("memory.badgeFootprintTip")}>
+                    {t("memory.badgeFootprint")}
                   </Badge>
                 ) : (
-                  <Badge tone="warn" title="footprint 不可用，全部读数退回 RSS，不含换出量">
-                    RSS 口径 · 不含换出量
+                  <Badge tone="warn" title={t("memory.badgeRssTip")}>
+                    {t("memory.badgeRss")}
                   </Badge>
                 )
               ) : null}
               <span className="text-[10px] text-ink-faint">
-                上次深探 {formatRelative(snapshot?.deepUpdatedAt ?? null)}
+                {t("memory.lastDeepScan", {
+                  when: formatRelative(snapshot?.deepUpdatedAt ?? null, i18n.locale),
+                })}
               </span>
             </>
           ) : null}
@@ -405,7 +413,7 @@ export function MainWindow() {
               setKillTarget({
                 pid: binding.pid ?? 0,
                 name: binding.comm,
-                mem: `端口 ${port}`,
+                mem: t("memory.fromPort", { port }),
                 x,
                 y,
               });
@@ -420,16 +428,22 @@ export function MainWindow() {
           <div className="flex min-h-0 flex-1">
             <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
               <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
-                <span className="text-[11px] font-medium tracking-wide text-ink-dim">进程家族</span>
+                <span className="text-[11px] font-medium tracking-wide text-ink-dim">
+                  {t("memory.families.title")}
+                </span>
                 <span className="text-[10px] text-ink-faint">
-                  {families.length} 个 · 按总量降序
+                  {t("memory.families.count", { n: families.length })}
                 </span>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
                 {loading && !snapshot ? (
-                  <p className="px-2 py-3 text-[11px] text-ink-faint">正在采样…</p>
+                  <p className="px-2 py-3 text-[11px] text-ink-faint">
+                    {t("common.progress.sampling")}
+                  </p>
                 ) : families.length === 0 ? (
-                  <p className="px-2 py-3 text-[11px] text-ink-faint">暂无进程数据</p>
+                  <p className="px-2 py-3 text-[11px] text-ink-faint">
+                    {t("memory.families.empty")}
+                  </p>
                 ) : (
                   <ul>
                     {families.map((f) => (
@@ -513,6 +527,8 @@ function FamilyRow({
   const total = totalOf(family);
   const ratio = swappedRatio(family);
   const exact = isExact(family);
+  const i18n = useI18n();
+  const { t } = i18n;
   const children = useMemo(
     () =>
       processes
@@ -538,8 +554,10 @@ function FamilyRow({
             {family.name}
           </span>
           <span className="mt-0.5 block text-[10px] text-ink-faint">
-            {family.processCount} 个进程
-            {family.workspaces.length > 0 ? ` · ${family.workspaces.length} 个项目` : ""}
+            {i18n.plural("common.unit.processes", family.processCount)}
+            {family.workspaces.length > 0
+              ? t("memory.families.workspaceCount", { n: family.workspaces.length })
+              : ""}
             {family.footprint == null ? " · RSS" : exact ? "" : " · ≈"}
           </span>
         </span>
@@ -549,7 +567,7 @@ function FamilyRow({
             {formatBytes(total)}
           </span>
           <span className="mt-0.5 block text-[10px] text-ink-faint">
-            {ratio != null ? `${formatPercent(ratio)} 在磁盘` : "—"}
+            {ratio != null ? t("memory.onDisk", { pct: formatPercent(ratio) }) : "—"}
           </span>
         </span>
       </button>
@@ -567,7 +585,7 @@ function FamilyRow({
                     e.preventDefault();
                     onKillMenu(p, e.clientX, e.clientY);
                   }}
-                  title="点击查看明细 · 右键结束进程"
+                  title={t("memory.rowHint")}
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
                     isActive ? "bg-accent/[0.10] text-ink" : "text-ink-dim hover:bg-white/[0.04]"
                   }`}
@@ -577,7 +595,10 @@ function FamilyRow({
                     {p.workspace ? (
                       <span
                         className="ml-1.5 text-[10px] text-ink-faint"
-                        title={`${p.workspace.path}（${sourceLabel(p.workspace.source)}）`}
+                        title={t("memory.workspaceTitle", {
+                          path: p.workspace.path,
+                          why: sourceLabel(p.workspace.source, t),
+                        })}
                       >
                         {p.workspace.label}
                       </span>
@@ -598,6 +619,7 @@ function FamilyRow({
 
 function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: number) => void }) {
   const snapshot = useMemStore((s) => s.snapshot);
+  const { t } = useI18n();
   if (!snapshot) return null;
 
   const { swap, pressure, thrash, compressorBytes, freeBytes, physicalTotal, topSwapped } = snapshot;
@@ -606,34 +628,51 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
   const hasSwapMetrics = thrash != null;
   const swapHint =
     swap.fileCount == null
-      ? `${formatBytes(swap.used)} / ${formatBytes(swap.total)} · pagefile`
-      : `${formatBytes(swap.used)} / ${formatBytes(swap.total)} · ${swap.fileCount} 个 swapfile · 占用存储见「存储」tab`;
+      ? t("memory.swap.hintPagefile", {
+          used: formatBytes(swap.used),
+          total: formatBytes(swap.total),
+        })
+      : t("memory.swap.hintFiles", {
+          used: formatBytes(swap.used),
+          total: formatBytes(swap.total),
+          n: swap.fileCount,
+        });
 
   return (
     <div className="space-y-4">
       <div>
-        <h1 className="text-[15px] font-semibold tracking-tight">内存概况</h1>
-        <p className="mt-0.5 text-[11px] text-ink-faint">
-          内存域系统级读数 · 点击左侧家族展开进程 · 磁盘读数见「存储」tab
-        </p>
+        <h1 className="text-[15px] font-semibold tracking-tight">{t("memory.title")}</h1>
+        <p className="mt-0.5 text-[11px] text-ink-faint">{t("memory.subtitle")}</p>
       </div>
 
       {/* UI v4（§6.3）：左统计 + 右压力环。环比值口径随平台 metrics 不同，
           caption 写明换算，不冒充「占用率」 */}
       <div className="flex items-start gap-6 border-b border-hairline-soft pb-5">
         <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-8 gap-y-5">
-          <Stat label="物理内存" value={numOf(physicalTotal)} unit={unitOf(physicalTotal)} />
           <Stat
-            label="已用"
+            label={t("memory.stat.physical")}
+            value={numOf(physicalTotal)}
+            unit={unitOf(physicalTotal)}
+          />
+          <Stat
+            label={t("memory.stat.used")}
             value={formatBytes(snapshot.physicalUsedBytes ?? 0)}
             hint={physicalTotal > 0 ? formatPercent((snapshot.physicalUsedBytes ?? 0) / physicalTotal) : undefined}
           />
-          <Stat label="可用" value={formatBytes(freeBytes)} hint={freeBytesHint(compressorBytes)} />
+          <Stat
+            label={t("memory.stat.available")}
+            value={formatBytes(freeBytes)}
+            hint={freeBytesHint(compressorBytes, t)}
+          />
           {compressorBytes != null ? (
-            <Stat label="压缩内存" value={formatBytes(compressorBytes)} hint="vm_stat 压缩页" />
+            <Stat
+              label={t("memory.stat.compressed")}
+              value={formatBytes(compressorBytes)}
+              hint={t("memory.stat.compressedHint")}
+            />
           ) : null}
           <Stat
-            label="swap 已用"
+            label={t("memory.stat.swapUsed")}
             value={formatPercent(swapRatio)}
             tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
             hint={swapHint}
@@ -643,13 +682,15 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
       </div>
 
       {swap.total > 0 ? (
-        <div className="border-b border-hairline-soft pb-5" title="轨道渐变即阈值：过 75% 转黄、过 90% 转红；swap 配置为 0 时不画">
+        <div className="border-b border-hairline-soft pb-5" title={t("memory.swap.gaugeTip")}>
           {/* UI v4 swap 渐变科技条：阈值直接画在轨道色带上（§6.3） */}
           <div className="flex items-baseline justify-between">
-            <span className="text-[11px] text-ink-dim">swap 占用</span>
+            <span className="text-[11px] text-ink-dim">{t("memory.swap.title")}</span>
             <span className="font-mono text-[11px] tabular-nums text-ink-dim">
               {formatBytes(swap.used)} / {formatBytes(swap.total)}
-              {swap.fileCount != null ? ` · ${swap.fileCount} 个 swapfile` : " · pagefile"}
+              {swap.fileCount != null
+                ? t("memory.swap.files", { n: swap.fileCount })
+                : t("memory.swap.pagefile")}
             </span>
           </div>
           <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/[0.05]">
@@ -682,17 +723,17 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
             <div
               className="absolute -inset-y-0.5 w-px bg-ink-faint/80"
               style={{ left: "75%" }}
-              title="预警阈值 75%"
+              title={t("memory.swap.warnMark")}
             />
             <div
               className="absolute -inset-y-0.5 w-px bg-ink-faint/80"
               style={{ left: "90%" }}
-              title="危险阈值 90%"
+              title={t("memory.swap.dangerMark")}
             />
           </div>
           <div className="mt-1 flex items-baseline justify-between text-[9.5px] text-ink-faint">
-            <span>{formatPercent(swapRatio)} 已用</span>
-            <span>色带阈值 75% / 90%（竖刻度）</span>
+            <span>{t("memory.swap.usedPct", { pct: formatPercent(swapRatio) })}</span>
+            <span>{t("memory.swap.bandTip")}</span>
           </div>
         </div>
       ) : null}
@@ -700,27 +741,27 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
       {pressure ? (
         <section className="border-b border-hairline-soft pb-5">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] text-ink-dim">内存压力</span>
+            <span className="text-[11px] text-ink-dim">{t("memory.pressure.title")}</span>
             <PressureDot level={pressure.level} />
           </div>
           <div className="mt-2.5 flex items-center justify-between text-[10px] text-ink-faint">
-            <span>{pressureCaption(pressure)}</span>
+            <span>{pressureCaption(pressure, t)}</span>
             {swap.newToday != null ? (
               <span>
-                今日新增 swapfile <span className="font-mono text-ink-dim">+{swap.newToday}</span>
+                {t("memory.pressure.newToday", { n: swap.newToday })}
               </span>
             ) : null}
           </div>
           {hasSwapMetrics ? (
             <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-ink-faint">
               <span>
-                换入速率{" "}
+                {t("memory.pressure.swapin")}{" "}
                 <span className="font-mono tabular-nums text-ink-dim">
                   {formatRate(thrash.swapinsPerSec)}/s
                 </span>
               </span>
               <span>
-                换出速率{" "}
+                {t("memory.pressure.swapout")}{" "}
                 <span className="font-mono tabular-nums text-ink-dim">
                   {formatRate(thrash.swapoutsPerSec)}/s
                 </span>
@@ -733,11 +774,11 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
       {hasSwapMetrics ? (
         <section>
           <div className="flex items-baseline justify-between">
-            <span className="text-[11px] text-ink-dim">换出受害者</span>
-            <span className="text-[10px] text-ink-faint">存活但大部分在磁盘上</span>
+            <span className="text-[11px] text-ink-dim">{t("memory.victims.title")}</span>
+            <span className="text-[10px] text-ink-faint">{t("memory.victims.subtitle")}</span>
           </div>
           {topSwapped.length === 0 ? (
-            <p className="mt-2 py-1 text-[11px] text-ink-faint">当前没有明显被换出的进程。</p>
+            <p className="mt-2 py-1 text-[11px] text-ink-faint">{t("common.empty.swapped")}</p>
           ) : (
             <ul className="mt-1.5">
               {topSwapped.map((p) => (
@@ -754,8 +795,7 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
 
       {!snapshot.deepAvailable ? (
         <p className="mt-4 rounded-lg bg-warn/[0.07] px-3 py-2 text-[11px] leading-relaxed text-warn">
-          深探不可用：当前全部为 RSS 口径。macOS 请确认 /usr/bin/footprint 可执行；
-          Windows 通常是该进程受保护或权限不足。
+          {t("memory.deepUnavailable")}
         </p>
       ) : null}
     </div>
@@ -763,8 +803,8 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
 }
 
 /** 「可用」的补注：macOS 给的是 Pages free，Windows 是 AvailPhys，语义不同别混着说 */
-function freeBytesHint(compressorBytes: number | null): string {
-  return compressorBytes == null ? "系统可用物理内存" : "Pages free";
+function freeBytesHint(compressorBytes: number | null, t: I18n["t"]): string {
+  return compressorBytes == null ? t("memory.stat.availableHint") : t("memory.stat.availableHintMac");
 }
 
 /**
@@ -785,14 +825,16 @@ function PressureRing({
     : warning
       ? "var(--color-warn)"
       : "var(--color-accent)";
+  const { t } = useI18n();
+  const caption = pressureCaption(pressure, t);
 
   return (
-    <div className="shrink-0" title={pressureCaption(pressure)}>
+    <div className="shrink-0" title={caption}>
       <RingGauge
         segments={[{ value: Math.max(0.04, Math.min(1, ratio)), color }]}
         size={104}
         stroke={9}
-        ariaLabel={`内存压力：${pressureCaption(pressure)}`}
+        ariaLabel={t("memory.pressure.aria", { caption })}
       >
         <div className="text-center">
           <span
@@ -802,7 +844,9 @@ function PressureRing({
             {Math.round(Math.min(1, ratio) * 100)}
           </span>
           <span className="mt-0.5 block text-[9px] text-ink-faint">
-            {pressure.metric === "occupancy" ? "占用 %" : "内核档"}
+            {pressure.metric === "occupancy"
+              ? t("memory.pressure.occupancyUnit")
+              : t("memory.pressure.kernelUnit")}
           </span>
         </div>
       </RingGauge>
@@ -811,11 +855,14 @@ function PressureRing({
 }
 
 /** 压力行的原始值说明：两个平台的 raw 含义完全不同 */
-function pressureCaption(pressure: { raw: number; metric: "kernel" | "occupancy" }): string {
+function pressureCaption(
+  pressure: { raw: number; metric: "kernel" | "occupancy" },
+  t: I18n["t"],
+): string {
   if (pressure.metric === "occupancy") {
-    return `内存占用率 ${pressure.raw}%（<80 正常 / 80–91 警告 / ≥92 紧张）`;
+    return t("memory.pressure.captionOccupancy", { raw: pressure.raw });
   }
-  return `内核原始值 ${pressure.raw}（1 正常 / 2 警告 / 4 紧张）`;
+  return t("memory.pressure.captionKernel", { raw: pressure.raw });
 }
 
 function VictimRow({
@@ -827,6 +874,7 @@ function VictimRow({
 }) {
   const select = useMemStore((s) => s.select);
   const ratio = swappedRatio(proc);
+  const { t } = useI18n();
   return (
     <li>
       <button
@@ -836,7 +884,7 @@ function VictimRow({
           e.preventDefault();
           onKillMenu(proc, e.clientX, e.clientY);
         }}
-        title="点击查看明细 · 右键结束进程"
+        title={t("memory.rowHint")}
         className="w-full rounded-md px-1 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
       >
         <div className="flex w-full items-center gap-2">
@@ -869,6 +917,8 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
   const points = useMemHistory(proc.pid, 240);
   const snapshot = useMemStore((s) => s.snapshot);
   const ports = usePortStore((s) => s.snapshot);
+  const i18n = useI18n();
+  const { t } = i18n;
   const listenPorts = useMemo(
     () => (ports ? portsOfPid(ports.entries, proc.pid) : []),
     [ports, proc.pid],
@@ -897,7 +947,7 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
           onClick={onBack}
           className="text-[11px] text-accent transition-colors hover:text-ink"
         >
-          ← 返回概况
+          {t("nav.backToOverview")}
         </button>
       </div>
       <div className="flex items-start gap-3">
@@ -908,9 +958,13 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
           </p>
         </div>
         {footprint == null ? (
-          <Badge tone="warn" title="该进程尚未完成 footprint 深探">RSS 口径</Badge>
+          <Badge tone="warn" title={t("memory.inspector.badgeRssTip")}>
+            {t("memory.badgeRss")}
+          </Badge>
         ) : (
-          <Badge tone="accent" title="footprint 含被换出到磁盘的部分">footprint 口径</Badge>
+          <Badge tone="accent" title={t("memory.badgeFootprintTip")}>
+            {t("memory.badgeFootprint")}
+          </Badge>
         )}
       </div>
 
@@ -919,17 +973,33 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
       {footprint != null && footprint > 0 ? (
         <section>
           <div className="mb-2 flex items-baseline justify-between">
-            <span className="text-[11px] font-medium text-ink-dim">内存构成一览</span>
+            <span className="text-[11px] font-medium text-ink-dim">
+              {t("memory.inspector.compositionTitle")}
+            </span>
             <span className="text-[10px] text-ink-faint">
-              {ratio != null ? `${formatPercent(ratio)} 在磁盘上` : ""}
+              {ratio != null ? t("memory.inspector.onDisk", { pct: formatPercent(ratio) }) : ""}
             </span>
           </div>
           <StackBar
             height={6}
-            ariaLabel={`内存构成：RSS ${formatBytes(rss)}，已换出到磁盘 ${formatBytes(swapped)}，footprint 合计 ${formatBytes(footprint)}`}
+            ariaLabel={t("memory.inspector.compositionAria", {
+              rss: formatBytes(rss),
+              swapped: formatBytes(swapped),
+              footprint: formatBytes(footprint),
+            })}
             segments={[
-              { key: "rss", label: "RSS（物理常驻）", value: rss, tone: "neutral" },
-              { key: "swapped", label: "已换出到磁盘", value: swapped, tone: "warn" },
+              {
+                key: "rss",
+                label: t("memory.inspector.rssSeg"),
+                value: rss,
+                tone: "neutral",
+              },
+              {
+                key: "swapped",
+                label: t("memory.inspector.swappedSeg"),
+                value: swapped,
+                tone: "warn",
+              },
             ]}
             total={footprint}
           />
@@ -938,18 +1008,24 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
 
       <section className="border-b border-hairline-soft pb-4">
         <div className="mb-2 flex items-baseline justify-between">
-          <span className="text-[11px] font-medium text-ink-dim">监听端口</span>
+          <span className="text-[11px] font-medium text-ink-dim">
+            {t("memory.inspector.portsTitle")}
+          </span>
           <span className="text-[10px] text-ink-faint">
-            {ports ? `端口快照 ${formatClock(ports.at)}` : "尚未扫描端口"}
+            {ports
+              ? t("memory.inspector.portsSnapshot", {
+                  time: formatClock(ports.at, i18n.locale),
+                })
+              : t("memory.inspector.portsNotScanned")}
           </span>
         </div>
         {!ports ? (
           <p className="text-[10.5px] leading-relaxed text-ink-faint">
-            还没扫过端口。这里为空不代表该进程没有监听——打开「端口」tab 扫一轮再看。
+            {t("common.empty.listenPortsUnscanned")}
           </p>
         ) : listenPorts.length === 0 ? (
           <p className="text-[10.5px] leading-relaxed text-ink-faint">
-            最近一次扫描里没有该进程的监听端口。
+            {t("common.empty.listenPorts")}
           </p>
         ) : (
           <ul className="flex flex-wrap gap-1.5">
@@ -970,30 +1046,42 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
 
       <section className="border-b border-hairline-soft pb-4">
         <div className="mb-3 flex items-baseline justify-between">
-          <span className="text-[11px] font-medium text-ink-dim">内存构成</span>
-          <span className="text-[10px] text-ink-faint">同量纲对照</span>
+          <span className="text-[11px] font-medium text-ink-dim">
+            {t("memory.inspector.compareTitle")}
+          </span>
+          <span className="text-[10px] text-ink-faint">{t("memory.inspector.compareNote")}</span>
         </div>
 
         <div className="space-y-3.5">
           <CompareBar
-            label="footprint（含换出）"
-            value={footprint == null ? "未深探" : formatBytes(footprint)}
+            label={t("memory.inspector.compareFootprint")}
+            value={
+              footprint == null ? t("common.time.notDeepScanned") : formatBytes(footprint)
+            }
             ratio={(footprint ?? 0) / max}
             tone="accent"
           />
           <CompareBar
-            label="RSS（物理常驻）"
+            label={t("memory.inspector.rssSeg")}
             value={formatBytes(rss)}
             ratio={rss / max}
             tone="neutral"
-            sub={footprint != null && footprint > 0 ? `占 footprint 的 ${formatPercent(rss / footprint)}` : undefined}
+            sub={
+              footprint != null && footprint > 0
+                ? t("memory.inspector.share", { pct: formatPercent(rss / footprint) })
+                : undefined
+            }
           />
           <CompareBar
-            label="已换出到磁盘"
+            label={t("memory.inspector.swappedSeg")}
             value={formatBytes(swapped)}
             ratio={footprint ? swapped / footprint : 0}
             tone="warn"
-            sub={ratio != null ? `占 footprint 的 ${formatPercent(ratio)}` : "需要 footprint 深探数据"}
+            sub={
+              ratio != null
+                ? t("memory.inspector.share", { pct: formatPercent(ratio) })
+                : t("memory.inspector.needsDeep")
+            }
           />
         </div>
       </section>
@@ -1001,9 +1089,11 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
       <section className="border-b border-hairline-soft pb-4">
         <div className="flex items-baseline justify-between">
           <span className="text-[11px] font-medium text-ink-dim">
-            {seriesKey === "footprint" ? "footprint 走势" : "RSS 走势"}
+            {seriesKey === "footprint"
+              ? t("memory.inspector.trendFootprint")
+              : t("memory.inspector.trendRss")}
           </span>
-          <span className="text-[10px] text-ink-faint">最近 4 小时 · 5 min 采样</span>
+          <span className="text-[10px] text-ink-faint">{t("memory.inspector.trendNote")}</span>
         </div>
         <div className="mt-2.5">
           <Sparkline values={values} tone={seriesKey === "footprint" ? "accent" : "warn"} />
@@ -1011,11 +1101,13 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
         {points.length > 0 ? (
           <div className="mt-1.5 flex items-center justify-between text-[10px] text-ink-faint">
             <span>
-              低 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(seriesMin)}</span>
+              {t("memory.inspector.low")}{" "}
+              <span className="font-mono tabular-nums text-ink-dim">{formatBytes(seriesMin)}</span>
             </span>
-            <span>{points.length} 个点</span>
+            <span>{t("memory.inspector.points", { n: points.length })}</span>
             <span>
-              高 <span className="font-mono tabular-nums text-ink-dim">{formatBytes(seriesMax)}</span>
+              {t("memory.inspector.high")}{" "}
+              <span className="font-mono tabular-nums text-ink-dim">{formatBytes(seriesMax)}</span>
             </span>
           </div>
         ) : null}
@@ -1024,28 +1116,41 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
       {leak ? <LeakEvidence item={leak} /> : null}
 
       <section>
-        <div className="mb-2 text-[11px] font-medium text-ink-dim">进程信息</div>
+        <div className="mb-2 text-[11px] font-medium text-ink-dim">
+          {t("memory.inspector.infoTitle")}
+        </div>
         <dl className="space-y-1.5 text-[11px]">
-          <Row label="可执行文件" value={proc.exe ?? "不可读"} mono />
           <Row
-            label="工作区"
-            value={proc.workspace ? proc.workspace.path : "未归属（没有可用的项目线索）"}
+            label={t("memory.inspector.exe")}
+            value={proc.exe ?? t("common.state.unavailable")}
+            mono
+          />
+          <Row
+            label={t("memory.inspector.workspace")}
+            value={proc.workspace ? proc.workspace.path : t("memory.inspector.noWorkspace")}
             mono={!!proc.workspace}
           />
           {proc.workspace ? (
-            <Row label="归属依据" value={sourceLabel(proc.workspace.source)} />
+            <Row
+              label={t("memory.inspector.source")}
+              value={sourceLabel(proc.workspace.source, t)}
+            />
           ) : null}
-          <Row label="启动时间" value={formatClock(proc.startTime)} mono />
-          <Row label="家族" value={proc.family} />
           <Row
-            label="读数来源"
-            value={memSourceLabel(proc.source)}
+            label={t("memory.inspector.started")}
+            value={formatClock(proc.startTime, i18n.locale)}
+            mono
+          />
+          <Row label={t("memory.inspector.family")} value={proc.family} />
+          <Row
+            label={t("memory.inspector.readSource")}
+            value={memSourceLabel(proc.source, i18n.locale)}
             mono
           />
         </dl>
         {snapshot?.deepAvailable === false ? (
           <p className="mt-2.5 rounded bg-warn/[0.07] px-2 py-1.5 text-[10px] leading-relaxed text-warn">
-            深探不可用，当前为 RSS 口径。
+            {t("memory.inspector.deepUnavailable")}
           </p>
         ) : null}
       </section>
@@ -1079,6 +1184,7 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
   const refresh = useMemStore((s) => s.refresh);
   const select = useMemStore((s) => s.select);
   const refreshPorts = usePortStore((s) => s.refresh);
+  const { t } = useI18n();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -1119,13 +1225,13 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
         {phase === "idle" ? (
           <>
             <MenuItem
-              label="结束进程"
-              hint="SIGTERM · 可优雅退出"
+              label={t("memory.kill.term")}
+              hint={t("memory.kill.termHint")}
               onClick={() => setPhase("confirm")}
             />
             <MenuItem
-              label="强制结束"
-              hint="SIGKILL · 立即终止"
+              label={t("memory.kill.force")}
+              hint={t("memory.kill.forceHint")}
               tone="danger"
               onClick={() => setPhase("confirm-force")}
             />
@@ -1133,17 +1239,20 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
         ) : (
           <div className="px-3 py-1.5">
             <p className="text-[11px] leading-snug text-ink-dim">
-              {phase === "confirm" ? "结束" : "强制结束"}
-              <span className="mx-1 font-medium text-ink">「{target.name}」</span>
-              <span className="font-mono text-[10px] tabular-nums text-ink-faint">
-                pid {target.pid} · {target.mem}
-              </span>
-              ？
+              {phase === "confirm"
+                ? t("memory.kill.confirmTerm", {
+                    name: target.name,
+                    pid: target.pid,
+                    mem: target.mem,
+                  })
+                : t("memory.kill.confirmForce", {
+                    name: target.name,
+                    pid: target.pid,
+                    mem: target.mem,
+                  })}
             </p>
             <p className="mt-0.5 text-[10px] leading-snug text-ink-faint">
-              {phase === "confirm"
-                ? "发送 SIGTERM，应用可保存数据后退出"
-                : "立即杀死，未保存的数据会丢失"}
+              {phase === "confirm" ? t("memory.kill.termNote") : t("memory.kill.forceNote")}
             </p>
             {err ? <p className="mt-1 text-[10px] leading-snug text-danger">{err}</p> : null}
             <div className="mt-2 flex gap-1.5">
@@ -1153,7 +1262,7 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
                 onClick={() => void run(phase === "confirm-force")}
                 className="flex-1 rounded-md bg-danger/90 px-2 py-1 text-[10.5px] text-white transition-colors hover:bg-danger disabled:opacity-50"
               >
-                {busy ? "执行中…" : "确认"}
+                {busy ? t("common.action.executing") : t("common.action.confirm")}
               </button>
               <button
                 type="button"
@@ -1161,7 +1270,7 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
                 onClick={() => (err ? onClose() : setPhase("idle"))}
                 className="flex-1 rounded-md border border-hairline px-2 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] hover:text-ink disabled:opacity-50"
               >
-                {err ? "关闭" : "取消"}
+                {err ? t("common.action.close") : t("common.action.cancel")}
               </button>
             </div>
           </div>

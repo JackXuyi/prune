@@ -1,15 +1,18 @@
 /** 与 prune-core 的 serde 结构一一对应（camelCase）。改这里必须同步 Rust 侧。 */
+import { i18nFor } from "../i18n";
+import { currentLocale } from "../i18n/store";
+import type { Locale } from "../i18n/types";
 
 /** 深探口径：macOS footprint / Windows Private Bytes / 降级 RSS */
 export type MemSource = "footprint" | "private" | "rss";
 
 /** 读数来源的展示文案：两个平台拿到的是不同指标，不能合并写成「footprint」 */
-export function memSourceLabel(source: MemSource): string {
+export function memSourceLabel(source: MemSource, locale: Locale = currentLocale()): string {
   switch (source) {
     case "footprint":
       return "/usr/bin/footprint --swapped";
     case "private":
-      return "Private Bytes（不含换出）";
+      return i18nFor(locale).t("memory.readSource.private");
     default:
       return "sysinfo RSS";
   }

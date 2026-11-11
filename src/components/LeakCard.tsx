@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
 
+import { i18nFor } from "../i18n";
+import { useI18n } from "../i18n/store";
+import type { I18n } from "../i18n";
 import { formatBytes, formatPercent, formatRelative } from "../lib/format";
 import { isTauri, leakCases, memHistory } from "../lib/ipc";
 import { useAppIcons } from "../lib/useAppIcons";
@@ -20,18 +23,26 @@ import { Sparkline } from "./Sparkline";
  *
  * 误报一次的信任成本远高于漏报一次，所以这里是「证据优先」的排版：
  * 数字在前，结论在后，且措辞留有余地。
+ *
+ * i18n：`windowLabel` / `evidenceLine` 是纯函数，locale 必须显式传入 ——
+ * 函数内部读全局会让「切语言后已渲染的旧串」不更新。
  */
 
-function windowLabel(secs: number): string {
-  if (secs >= 3600) return `${Math.round(secs / 3600)} 小时`;
-  return `${Math.round(secs / 60)} min`;
+function windowLabel(secs: number, t: I18n["t"]): string {
+  if (secs >= 3600) return t("memory.leak.windowHours", { n: Math.round(secs / 3600) });
+  return t("memory.leak.windowMinutes", { n: Math.round(secs / 60) });
 }
 
 /** 一句话证据：近 30 min 增长 480 MB（+51%）· 斜率 960 MB/h · R² 0.86 */
-export function evidenceLine(item: LeakItem): string {
-  return `近 ${windowLabel(item.windowSecs)}增长 ${formatBytes(item.growth)}（+${formatPercent(
-    item.growthRatio,
-  )}）· 斜率 ${formatBytes(item.slopeMbPerHour * 1e6)}/h · R² ${item.r2.toFixed(2)}`;
+export function evidenceLine(item: LeakItem, locale: I18n["locale"]): string {
+  const t = i18nFor(locale).t;
+  return t("memory.leak.evidence", {
+    window: windowLabel(item.windowSecs, t),
+    growth: formatBytes(item.growth),
+    pct: formatPercent(item.growthRatio),
+    slope: formatBytes(item.slopeMbPerHour * 1e6),
+    r2: item.r2.toFixed(2),
+  });
 }
 
 /** 面板用：一行提示条，只在有命中时出现 */
@@ -42,24 +53,31 @@ export function LeakBanner({
   report: LeakReport;
   onOpen: () => void;
 }) {
+  const { t, locale } = useI18n();
   const items = report.items;
   if (items.length === 0) return null;
 
   const families = new Set(items.map((i) => i.family));
-  const window = windowLabel(items[0].windowSecs);
+  const window = windowLabel(items[0].windowSecs, t);
 
   return (
     <button
       type="button"
       onClick={onOpen}
-      title={items.map((i) => `${i.name}：${evidenceLine(i)}`).join("\n")}
+      title={items.map((i) => `${i.name}: ${evidenceLine(i, locale)}`).join("\n")}
       className="mb-2 flex w-full items-center gap-2 rounded-lg border border-warn/25 bg-warn/[0.07] px-2.5 py-2 text-left transition-colors hover:bg-warn/[0.11]"
     >
       <span className="min-w-0 flex-1">
-        <span className="block text-[11px] leading-tight text-warn">疑似内存泄漏</span>
+        <span className="block text-[11px] leading-tight text-warn">
+          {t("memory.leak.bannerTitle")}
+        </span>
         <span className="mt-0.5 block text-[10px] leading-tight text-ink-faint">
-          {families.size} 个应用 · {items.length} 个进程 · {window}合计 +
-          {formatBytes(totalGrowth(items))}
+          {t("memory.leak.bannerMeta", {
+            families: families.size,
+            procs: items.length,
+            window,
+            growth: formatBytes(totalGrowth(items)),
+          })}
         </span>
       </span>
       <ChevronRightIcon size={12} className="shrink-0 text-warn/70" />
@@ -75,11 +93,12 @@ export function LeakCard({
   report: LeakReport;
   onOpen: (pid: number) => void;
 }) {
+  const { t } = useI18n();
   // 无法判定时必须说出来，不能让用户以为「检查过、没问题」
   if (report.note) {
     return (
       <p className="rounded-lg border border-hairline-soft bg-surface-raised/40 px-3 py-2 text-[11px] leading-relaxed text-ink-faint">
-        泄漏判定当前不可用：{report.note}
+        {t("memory.leak.unavailable", { note: report.note })}
       </p>
     );
   }
@@ -136,6 +155,8 @@ function CaseSection({
 }) {
   const cases = useCaseBook(report);
   const processes = useMemStore((s) => s.processes);
+  const i18n = useI18n();
+  const { t } = i18n;
 
   // 嫌疑人档案照：按 family 取主进程 exe 换真图标；拿不到 AppIcon 自己降级字母徽标
   const families = [...new Set(report.items.map((i) => i.family))];
@@ -151,13 +172,13 @@ function CaseSection({
     <section className="rounded-lg border border-warn/25 bg-warn/[0.05] p-3">
       <div className="flex items-baseline justify-between gap-2">
         <div className="flex items-center gap-1.5">
-          <span className="text-[11px] font-medium text-warn">悬案卷宗</span>
-          <Badge tone="warn" title="统计判断，不是结论；依据见每行的增长量、斜率与 R²">
-            按曲线判断
+          <span className="text-[11px] font-medium text-warn">{t("memory.leak.caseTitle")}</span>
+          <Badge tone="warn" title={t("memory.leak.caseBadgeTip")}>
+            {t("memory.leak.caseBadge")}
           </Badge>
         </div>
         <span className="text-[10px] text-ink-faint">
-          检查了 {report.observed} 个进程 · {report.items.length} 件在办
+          {t("memory.leak.checked", { n: report.observed, m: report.items.length })}
         </span>
       </div>
 
@@ -174,29 +195,31 @@ function CaseSection({
                   family={item.family}
                   icon={icons[item.family] ?? null}
                   size={28}
-                  title={`${item.family} · 嫌疑人档案照`}
+                  title={t("memory.leak.avatarTip", { family: item.family })}
                 />
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-1.5">
                     <span className="truncate font-mono text-[10px] tabular-nums text-warn/80">
-                      {caseIdOf(cases, item) ?? `PID ${item.pid}`}
+                      {caseIdOf(cases, item) ?? t("memory.leak.pid", { pid: item.pid })}
                     </span>
                     <span className="truncate text-[12px] leading-tight text-ink">{item.name}</span>
                     <span className="truncate text-[10px] text-ink-faint">{item.family}</span>
                     {item.gcRuntime ? (
                       <span
                         className="shrink-0 text-[10px] text-ink-faint"
-                        title="GC 语言：门槛翻倍至 300 MB / 60 min"
+                        title={t("memory.leak.gcTip")}
                       >
-                        GC 语言
+                        {t("memory.leak.gc")}
                       </span>
                     ) : null}
                     <span className="ml-auto shrink-0 text-[10px] text-ink-faint">
-                      侦查 {durationLabel(item, cases)}
+                      {t("memory.leak.investigating", {
+                        d: durationLabel(item, cases, t),
+                      })}
                     </span>
                   </span>
                   <span className="mt-0.5 block truncate text-[10px] leading-tight text-ink-faint">
-                    {evidenceLine(item)}
+                    {evidenceLine(item, i18n.locale)}
                   </span>
                 </span>
                 <span className="shrink-0 text-right">
@@ -204,7 +227,7 @@ function CaseSection({
                     +{formatBytes(item.growth)}
                   </span>
                   <span className="mt-0.5 block font-mono text-[10px] tabular-nums text-ink-faint">
-                    现 {formatBytes(item.footprint)}
+                    {t("memory.leak.current", { size: formatBytes(item.footprint) })}
                   </span>
                 </span>
                 <ChevronRightIcon size={11} className="shrink-0 text-ink-faint" />
@@ -221,9 +244,7 @@ function CaseSection({
       {closed.length > 0 && <ArchiveRoom cases={closed} />}
 
       <p className="mt-1.5 text-[10px] leading-relaxed text-ink-faint">
-        判据：存在超 {windowLabel(report.windowSecs)}、净增长超门槛且占比 &gt; 40%、
-        线性回归 R² &gt; 0.70、且不是一次性跃升。浏览器、虚拟机与系统进程不在判定范围内。
-        这只是嫌疑，建议重启该应用后观察是否复现——嫌疑人离场后未复现的案件会自动归档。
+        {t("memory.leak.criteria", { window: windowLabel(report.windowSecs, t) })}
       </p>
     </section>
   );
@@ -235,9 +256,9 @@ function caseIdOf(cases: LeakCase[], item: LeakItem): string | null {
 }
 
 /** 侦查时长：立案至今的口语化描述（卷宗编号缺失时退回「窗口」口径） */
-function durationLabel(item: LeakItem, cases: LeakCase[]): string {
+function durationLabel(item: LeakItem, cases: LeakCase[], t: I18n["t"]): string {
   const c = cases.find((x) => x.pid === item.pid && x.startTime === item.startTime);
-  if (!c) return windowLabel(item.windowSecs);
+  if (!c) return windowLabel(item.windowSecs, t);
   const mins = Math.max(1, Math.round((c.lastSeen - c.firstSeen) / 60));
   if (mins >= 60) return `${Math.floor(mins / 60)}h${mins % 60 > 0 ? ` ${mins % 60}m` : ""}`;
   return `${mins} min`;
@@ -245,10 +266,11 @@ function durationLabel(item: LeakItem, cases: LeakCase[]): string {
 
 /** 档案室：已结案卷宗（折叠，默认收起——这是彩蛋不是告警） */
 function ArchiveRoom({ cases }: { cases: LeakCase[] }) {
+  const { t, locale } = useI18n();
   return (
     <details className="mt-2 border-t border-warn/10 pt-2">
       <summary className="cursor-pointer select-none text-[10px] text-ink-faint transition-colors hover:text-ink-dim">
-        档案室 · {cases.length} 件已结案
+        {t("memory.leak.archive", { n: cases.length })}
       </summary>
       <ul className="mt-1.5 space-y-1">
         {cases.map((c) => (
@@ -259,12 +281,10 @@ function ArchiveRoom({ cases }: { cases: LeakCase[] }) {
               <span className="ml-1 text-[10px] text-ink-faint">{c.family}</span>
             </span>
             <span className="ml-auto shrink-0 text-[10px] text-ink-faint">
-              {c.status === "relapsed"
-                ? "同应用另立新案，疑似复发 · 建议留意"
-                : "嫌疑人已离场，此后同应用未见新嫌疑 · 卷宗归档"}
+              {c.status === "relapsed" ? t("memory.leak.relapsed") : t("memory.leak.archived")}
             </span>
             <span className="w-16 shrink-0 text-right text-[10px] text-ink-faint">
-              {formatRelative(c.closedAt)}
+              {formatRelative(c.closedAt, locale)}
             </span>
           </li>
         ))}
@@ -275,30 +295,43 @@ function ArchiveRoom({ cases }: { cases: LeakCase[] }) {
 
 /** 检视器用：选中进程命中时展示完整证据 */
 export function LeakEvidence({ item }: { item: LeakItem }) {
+  const { t } = useI18n();
   return (
     <section className="rounded-lg border border-warn/25 bg-warn/[0.05] p-3.5">
       <div className="flex items-baseline justify-between">
-        <span className="text-[11px] font-medium text-warn">疑似内存泄漏</span>
-        <span className="text-[10px] text-ink-faint">按曲线判断，不是结论</span>
+        <span className="text-[11px] font-medium text-warn">{t("memory.leak.badge")}</span>
+        <span className="text-[10px] text-ink-faint">{t("memory.leak.badgeTip")}</span>
       </div>
       <dl className="mt-2 space-y-1.5 text-[11px]">
-        <EvRow label="窗口" value={`近 ${windowLabel(item.windowSecs)}（${item.points} 个采样点）`} />
         <EvRow
-          label="净增长"
-          value={`${formatBytes(item.growth)}（+${formatPercent(item.growthRatio)}）`}
+          label={t("memory.leak.windowRow")}
+          value={t("memory.leak.windowValue", {
+            window: windowLabel(item.windowSecs, t),
+            n: item.points,
+          })}
         />
-        <EvRow label="斜率" value={`${formatBytes(item.slopeMbPerHour * 1e6)}/h`} />
-        <EvRow label="拟合优度" value={`R² ${item.r2.toFixed(3)}`} />
         <EvRow
-          label="最大单点跃升"
-          value={`占净增长 ${formatPercent(item.stepRatio)}（越低越像持续爬升）`}
+          label={t("memory.leak.growthRow")}
+          value={t("memory.leak.growthValue", {
+            size: formatBytes(item.growth),
+            pct: formatPercent(item.growthRatio),
+          })}
+        />
+        <EvRow
+          label={t("memory.leak.slopeRow")}
+          value={`${formatBytes(item.slopeMbPerHour * 1e6)}/h`}
+        />
+        <EvRow label={t("memory.leak.r2Row")} value={`R² ${item.r2.toFixed(3)}`} />
+        <EvRow
+          label={t("memory.leak.stepRow")}
+          value={t("memory.leak.stepValue", { pct: formatPercent(item.stepRatio) })}
         />
         {item.gcRuntime ? (
-          <EvRow label="门槛" value="GC 语言：300 MB / 60 min（普通进程 150 MB / 30 min）" />
+          <EvRow label={t("memory.leak.thresholdRow")} value={t("memory.leak.thresholdGc")} />
         ) : null}
       </dl>
       <p className="mt-2 text-[10px] leading-relaxed text-ink-faint">
-        统计特征符合「持续增长」，但也可能是缓存累积。建议重启该应用后观察是否复现。
+        {t("memory.leak.conclusion")}
       </p>
     </section>
   );

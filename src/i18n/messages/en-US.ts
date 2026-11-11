@@ -7,6 +7,7 @@
  */
 import type { Messages } from "../types";
 import { common } from "./namespaces/common";
+import { memory } from "./namespaces/memory";
 import { nav } from "./namespaces/nav";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
@@ -15,6 +16,7 @@ import { update } from "./namespaces/update";
 
 export const en = {
   common: common.en,
+  memory: memory.en,
   nav: nav.en,
   resources: resources.en,
   settings: settings.en,

@@ -39,7 +39,6 @@ const ALLOW = [
 const PENDING = [
   "src/components/LanBoard.tsx",
   "src/components/LanDeviceCard.tsx",
-  "src/components/LeakCard.tsx",
   "src/components/NetBoard.tsx",
   "src/components/PortList.tsx",
   "src/components/ProjectHealthCard.tsx",
@@ -61,9 +60,7 @@ const PENDING = [
   "src/types/appdisk.ts",
   "src/types/disk.ts",
   "src/types/lan.ts",
-  "src/types/mem.ts",
   "src/types/net.ts",
-  "src/windows/MainWindow.tsx",
 ];
 
 const CJK = /[\u4e00-\u9fff]/;

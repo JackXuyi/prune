@@ -5,6 +5,7 @@
  * 因此新增文案必须先写中文；英文侧由 `MessageTree<typeof zh>` 强制补齐。
  */
 import { common } from "./namespaces/common";
+import { memory } from "./namespaces/memory";
 import { nav } from "./namespaces/nav";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
@@ -13,6 +14,7 @@ import { update } from "./namespaces/update";
 
 export const zh = {
   common: common.zh,
+  memory: memory.zh,
   nav: nav.zh,
   resources: resources.zh,
   settings: settings.zh,
