@@ -75,6 +75,7 @@ pub fn run() {
             commands::app_bundles,
             commands::app_icons,
             commands::app_history,
+            commands::app_history_daily,
             net_sampler::net_speed_snapshot,
             net_sampler::net_speed_set_active,
             net_sampler::net_total_snapshot,

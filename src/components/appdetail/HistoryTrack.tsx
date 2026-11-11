@@ -1,10 +1,11 @@
 /**
- * D5：应用详情「近 7 天」历史区（三轨 + 区间切换 + 覆盖率）。
+ * D5：应用详情「历史走势」区（三轨 + 区间切换 + 覆盖率）。
  *
  * 口径纪律（v1.1 §5.5）：
  * - 历史内存是 **RSS**，当前读数是 footprint——脚注里写明，两套不相减；
  * - 缺失小时/天画灰虚线，不当 0；
- * - 覆盖率 < 60% 角标转 warn 并说明原因（Prune 未运行 / 后台采样关闭）。
+ * - 覆盖率 < 60% 角标转 warn 并说明原因（Prune 未运行 / 后台采样关闭）；
+ * - M25：30 天视图直接消费后端天粒度聚合（只回有记录的天），小时视图照旧前端聚合。
  */
 import { useMemo, useState } from "react";
 
@@ -12,28 +13,33 @@ import { BarSeries, type BarDatum } from "../charts/BarSeries";
 import { EmptyState } from "../EmptyArt";
 import { formatBytes } from "../../lib/format";
 import { aggregateDays, lastDays, lastHours } from "../../lib/useAppHistory";
-import type { HistoryBucket } from "../../types/appHistory";
+import type { DailyBucket, HistoryBucket } from "../../types/appHistory";
 
-type Range = "24h" | "7d";
+type Range = "24h" | "7d" | "30d";
 
 const CPU_COLOR = "var(--color-domain-cpu)";
 const MEM_COLOR = "var(--color-info)";
 const NET_COLOR = "var(--color-domain-net)";
 
+const RANGE_LABEL: Record<Range, string> = { "24h": "24 h", "7d": "7 天", "30d": "30 天" };
+
 export function HistoryTrack({
   rows,
+  daily,
   loading,
   error,
 }: {
   rows: HistoryBucket[];
+  /** M25：天粒度聚合行（只含有记录的天），30 天视图直接消费 */
+  daily: DailyBucket[];
   loading: boolean;
   error: string | null;
 }) {
   const [range, setRange] = useState<Range>("7d");
 
-  const view = useMemo(() => buildView(rows, range), [rows, range]);
+  const view = useMemo(() => buildView(rows, daily, range), [rows, daily, range]);
 
-  if (!loading && rows.length === 0) {
+  if (!loading && rows.length === 0 && daily.length === 0) {
     return (
       <section className="rounded-xl border border-hairline-soft bg-white/[0.02] py-4">
         <EmptyState
@@ -41,7 +47,7 @@ export function HistoryTrack({
           note={
             error
               ? `读取失败：${error}`
-              : "Prune 运行满一小时后，这里会出现 CPU / 内存 / 流量的近 7 天走势"
+              : "Prune 运行满一小时后，这里会出现 CPU / 内存 / 流量的历史走势"
           }
         />
       </section>
@@ -51,9 +57,9 @@ export function HistoryTrack({
   return (
     <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
       <div className="flex items-center gap-2 text-[10px] text-ink-dim">
-        <span className="text-[11px] font-medium text-ink">近 7 天</span>
+        <span className="text-[11px] font-medium text-ink">历史走势</span>
         <div className="grow" />
-        {(["7d", "24h"] as const).map((r) => (
+        {(["30d", "7d", "24h"] as const).map((r) => (
           <button
             key={r}
             type="button"
@@ -65,7 +71,7 @@ export function HistoryTrack({
             }`}
             aria-pressed={range === r}
           >
-            {r === "7d" ? "7 天" : "24 h"}
+            {RANGE_LABEL[r]}
           </button>
         ))}
         <span
@@ -75,7 +81,7 @@ export function HistoryTrack({
           title={
             view.coverage != null && view.coverage < 0.6
               ? "记录不完整：Prune 只在这段时间的一部分里运行，或后台流量采样被关闭"
-              : "覆盖 = 有样本的小时数 / 该区间应有小时数"
+              : "覆盖 = 有记录的时段 / 该区间应有时段"
           }
         >
           {view.coverage == null ? "覆盖 —" : `覆盖 ${Math.round(view.coverage * 100)}%`}
@@ -105,8 +111,8 @@ export function HistoryTrack({
       />
 
       <p className="mt-1.5 text-[9px] leading-snug text-ink-faint">
-        历史为 <span className="text-ink-dim">RSS</span> 口径（每 10 s 采样、按小时聚合），
-        与上方 footprint 当前值不是同一口径，不能相减；灰虚线 = 该时段没有记录。
+        历史为 <span className="text-ink-dim">RSS</span> 口径（每 10 s 采样、按小时聚合、
+        保留 30 天），与上方 footprint 当前值不是同一口径，不能相减；灰虚线 = 该时段没有记录。
       </p>
     </section>
   );
@@ -142,51 +148,53 @@ function Track({
   );
 }
 
-function buildView(rows: HistoryBucket[], range: Range) {
+function buildView(rows: HistoryBucket[], daily: DailyBucket[], range: Range) {
   const now = new Date();
   const byBucket = new Map(rows.map((r) => [r.bucket, r]));
+  const byDay = new Map(daily.map((r) => [r.day, r]));
 
-  const bars: { cpu: BarDatum[]; mem: BarDatum[]; net: BarDatum[]; expectedHours: number } =
-    range === "24h"
-      ? hoursView(byBucket, now)
-      : daysView(rows, now);
+  // 30 天视图用后端天桶；24h 用小时桶；7d 用小时桶前端聚合成天
+  const bars =
+    range === "30d"
+      ? monthView(byDay, now)
+      : range === "24h"
+        ? hoursView(byBucket, now)
+        : daysView(rows, now);
 
-  const inRange = range === "24h" ? bars.expectedHours : 7 * 24;
-  const withSamples = rows.filter((r) => r.samples > 0).length;
-  // 只统计窗口内的小时：窗口外（8 天里多出的那天）不算进覆盖率分母
-  const windowKeys = new Set(
-    range === "24h" ? lastHours(24, now) : lastDays(7, now).flatMap(dayHours),
-  );
-  const covered = rows.filter((r) => r.samples > 0 && windowKeys.has(r.bucket)).length;
-  const coverage = inRange > 0 ? Math.min(1, covered / inRange) : null;
+  // 覆盖率：30d 按「有记录的天 / 应有天数」，其余按「有样本的小时 / 应有小时」
+  const inRange = range === "30d" ? 30 : range === "24h" ? 24 : 7 * 24;
+  const covered =
+    range === "30d"
+      ? daily.filter((r) => lastDays(30, now).includes(r.day)).length
+      : (() => {
+          const windowKeys = new Set(
+            range === "24h" ? lastHours(24, now) : lastDays(7, now).flatMap(dayHours),
+          );
+          return rows.filter((r) => r.samples > 0 && windowKeys.has(r.bucket)).length;
+        })();
+  const coverage = inRange > 0 && covered > 0 ? Math.min(1, covered / inRange) : null;
 
-  const cpuPeaks = rows
-    .filter((r) => windowKeys.has(r.bucket) && r.cpuPeak != null)
-    .map((r) => r.cpuPeak as number);
-  const cpuAvgVals = rows
-    .filter((r) => windowKeys.has(r.bucket) && r.cpuAvg != null)
-    .map((r) => r.cpuAvg as number);
+  const windowDayKeys = new Set(lastDays(range === "30d" ? 30 : 7, now));
+  const inWindowDaily = daily.filter((r) => windowDayKeys.has(r.day));
+  const cpuPeaks = inWindowDaily
+    .map((r) => r.cpuPeak)
+    .filter((v): v is number => v != null);
+  const cpuAvgVals = inWindowDaily.map((r) => r.cpuAvg).filter((v): v is number => v != null);
   const cpuPeak = cpuPeaks.length ? Math.max(...cpuPeaks) : null;
   const cpuAvg = cpuAvgVals.length
     ? cpuAvgVals.reduce((a, b) => a + b, 0) / cpuAvgVals.length
     : null;
 
-  const memPeak = rows
-    .filter((r) => windowKeys.has(r.bucket) && r.rssPeak != null)
-    .reduce((m, r) => Math.max(m, r.rssPeak as number), 0);
-  const today = lastHours(1, now)[0];
-  const todayRow = byBucket.get(today);
+  const memPeak = inWindowDaily.reduce((m, r) => Math.max(m, r.rssPeak ?? 0), 0);
+  const today = dayKeyOf(now);
+  const todayRow = byDay.get(today);
 
-  const netDown = rows
-    .filter((r) => windowKeys.has(r.bucket))
-    .reduce((s, r) => s + r.netDown, 0);
-  const netUp = rows
-    .filter((r) => windowKeys.has(r.bucket))
-    .reduce((s, r) => s + r.netUp, 0);
+  const netDown = inWindowDaily.reduce((s, r) => s + r.netDown, 0);
+  const netUp = inWindowDaily.reduce((s, r) => s + r.netUp, 0);
 
   return {
     ...bars,
-    coverage: withSamples === 0 ? null : coverage,
+    coverage,
     cpuSummary:
       cpuPeak == null
         ? "峰值 — · 均值 —"
@@ -197,6 +205,11 @@ function buildView(rows: HistoryBucket[], range: Range) {
         : "峰值 — · 今日 —",
     netSummary: `↓ ${formatBytes(netDown)} · ↑ ${formatBytes(netUp)}`,
   };
+}
+
+function dayKeyOf(d: Date): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
 function dayHours(day: string): string[] {
@@ -248,6 +261,36 @@ function daysView(rows: HistoryBucket[], now: Date) {
     };
   });
   return { cpu, mem, net, expectedHours: 7 * 24 };
+}
+
+/** M25：30 天视图 —— 直接消费后端天粒度聚合（每根柱 = 一天，只有有记录的天有实心柱） */
+function monthView(byDay: Map<string, DailyBucket>, now: Date) {
+  const days = lastDays(30, now);
+  const cpu: BarDatum[] = days.map((d) => {
+    const r = byDay.get(d);
+    return {
+      label: kLabel(d, false),
+      value: r?.cpuPeak ?? 0,
+      hasData: (r?.samples ?? 0) > 0 && r?.cpuPeak != null,
+    };
+  });
+  const mem: BarDatum[] = days.map((d) => {
+    const r = byDay.get(d);
+    return {
+      label: kLabel(d, false),
+      value: r?.rssPeak ?? 0,
+      hasData: (r?.samples ?? 0) > 0 && r?.rssPeak != null,
+    };
+  });
+  const net: BarDatum[] = days.map((d) => {
+    const r = byDay.get(d);
+    return {
+      label: kLabel(d, false),
+      value: (r?.netDown ?? 0) + (r?.netUp ?? 0),
+      hasData: (r?.samples ?? 0) > 0,
+    };
+  });
+  return { cpu, mem, net, expectedHours: 30 * 24 };
 }
 
 function kLabel(key: string, hourly: boolean): string {

@@ -27,3 +27,22 @@ export interface HistoryBucket {
   /** RSS 样本数：判「这一小时 Prune 在不在」 */
   samples: number;
 }
+
+/**
+ * M25：应用**天粒度**历史的一行（后端 SQL 聚合小时桶，30 天只回 30 行）。
+ *
+ * **只含有记录的天**：缺失由前端画灰柱，不能用 0 补（与小时桶同纪律）。
+ * 口径与前端 `aggregateDays` 逐字段一致：均值 Σsum/Σn 重算、峰值取 MAX、流量相加。
+ */
+export interface DailyBucket {
+  /** 本地日期 `YYYY-MM-DD`，字典序即时间序 */
+  day: string;
+  rssAvg: number | null;
+  rssPeak: number | null;
+  cpuAvg: number | null;
+  cpuPeak: number | null;
+  netDown: number;
+  netUp: number;
+  /** 当日 RSS 样本数（所有小时桶之和） */
+  samples: number;
+}

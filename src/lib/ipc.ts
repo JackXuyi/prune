@@ -4,7 +4,7 @@ import { invoke } from "@tauri-apps/api/core";
 import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
 import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
-import type { HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
+import type { DailyBucket, HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
 import type { LeakCase, MemSnapshot, Point, ProcMem } from "../types/mem";
 import type {
   DayTraffic,
@@ -184,6 +184,14 @@ export function appIcons(items: IconQuery[]): Promise<IconMap> {
  */
 export function appHistory(family: string, hours: number): Promise<HistoryBucket[]> {
   return invoke<HistoryBucket[]>("app_history", { family, hours });
+}
+
+/**
+ * M25：某应用近 N 天的天粒度聚合（后端 SQL 聚合，30 天只回 30 行）。
+ * 只返回**有记录的天**，缺失由前端画灰柱（不补 0）。
+ */
+export function appHistoryDaily(family: string, days: number): Promise<DailyBucket[]> {
+  return invoke<DailyBucket[]>("app_history_daily", { family, days });
 }
 
 /**

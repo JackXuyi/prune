@@ -154,6 +154,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M22** 泄漏侦探档案（悬案卷宗）：泄漏嫌疑从警告条重塑为有状态的案件簿——立案（CASE-MMDD-NN）→ 侦查（嫌疑人档案照 + 证物生长曲线 + 证据数字）→ 结案（嫌疑人离场后未复现自动归档；同应用另立新案判「疑似复发」）；措辞红线不变（只说嫌疑不说结论）；案件簿在 prune-core 纯逻辑可单测（[方案](./docs/f3-detective-file-plan.md)）
 - [x] **M23** 局域网新面孔提醒：灵动岛第四类事件——邻居表出现从未见过的在线设备（60 s 一拍，**零主动探测、零 lsof**，只是 arp/GetIpNetTable2 观察者）→「新面孔 · 192.168.0.77 加入了局域网」，点击直达 ports tab 局域网设备区；终身制已知集（同 IP 只报一次）+ 网段变化重建基线（换 Wi-Fi 不刷屏）+ 单轮 3 条上限余量合并 + 独立 4/h 频控（[方案](./docs/f5-lan-watch-plan.md)）
 - [x] **M24** 项目健康卡（项目体检）：把「N 个 node_modules 共 X GB」拆成按项目的依赖账本——依赖体积 / 依赖上次安装（node_modules mtime）/ 项目最后活动（package.json · 锁文件 · .git/index）/ 多锁文件并存；结论只陈述事实（僵尸依赖 = 依赖与项目双双 ≥60 天没动 · 偏胖 ≥1.5 GB · 久未重装），不代删；**零新增扫描**（复用 node_modules 聚合表，每项目仅 6 次 stat：4 个锁文件 + package.json + .git/index）（[方案](./docs/f9-project-health-plan.md)）
+- [x] **M25** 应用历史 30 天：`app_hourly` 保留期 8 天 → 30 天（对标 Vitals 同深度）+ 天粒度聚合下推 SQLite（`app_daily_get`，720 小时桶 → 30 行）+ 应用详情历史走势 24 h / 7 天 / 30 天三档区间；RSS 口径与「缺失画灰不补 0」纪律不变（[方案](./docs/f10-app-history-30d-plan.md)）
 
 ## 相关文档
 

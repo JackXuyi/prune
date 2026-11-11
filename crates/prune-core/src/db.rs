@@ -386,6 +386,45 @@ impl Store {
         conn.execute("DELETE FROM app_hourly WHERE bucket < ?1", params![bucket])
     }
 
+    /// 某家族自 `from_day`（含）起的**天粒度**聚合（M25），按 day 升序。
+    ///
+    /// 为什么不把 720 个小时桶全发给前端：30 天视图只要 30 根柱，
+    /// 聚合下推到 SQLite 一条 SQL 完成（行数 720 → 30）。
+    /// 只返回有行的天：缺失天由前端画灰柱，不补 0（与小时桶同纪律）。
+    pub fn app_daily_get(&self, family: &str, from_day: &str) -> rusqlite::Result<Vec<DailyRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT substr(bucket, 1, 10) AS day,
+                    SUM(rss_sum), SUM(rss_n), MAX(rss_peak),
+                    SUM(cpu_sum), SUM(cpu_n), MAX(cpu_peak),
+                    SUM(net_down), SUM(net_up)
+             FROM app_hourly
+             WHERE family = ?1 AND substr(bucket, 1, 10) >= ?2
+             GROUP BY day
+             ORDER BY day ASC",
+        )?;
+        let rows = stmt.query_map(params![family, from_day], |row| {
+            let day: String = row.get(0)?;
+            let rss_sum = row.get::<_, i64>(1)?.max(0) as u64;
+            let rss_n = row.get::<_, i64>(2)?.max(0) as u32;
+            let rss_peak = row.get::<_, i64>(3)?.max(0) as u64;
+            let cpu_sum = row.get::<_, f64>(4)?.max(0.0) as f32;
+            let cpu_n = row.get::<_, i64>(5)?.max(0) as u32;
+            let cpu_peak = row.get::<_, f64>(6)?.max(0.0) as f32;
+            Ok(DailyRow {
+                day,
+                rss_avg: (rss_n > 0).then(|| rss_sum / rss_n as u64),
+                rss_peak: (rss_n > 0).then_some(rss_peak),
+                cpu_avg: (cpu_n > 0).then(|| cpu_sum / cpu_n as f32),
+                cpu_peak: (cpu_n > 0).then_some(cpu_peak),
+                net_down: row.get::<_, i64>(7)?.max(0) as u64,
+                net_up: row.get::<_, i64>(8)?.max(0) as u64,
+                samples: rss_n,
+            })
+        })?;
+        rows.collect()
+    }
+
     // ------------------------------------------------------------ 剪除成绩单（M21）
 
     /// 批量追加剪除记录（单事务）。append-only：清理动作不可撤销，记录也不删改，
@@ -446,6 +485,24 @@ impl Store {
         let conn = self.lock();
         conn.execute("DELETE FROM cut_log WHERE ts < ?1", params![cutoff])
     }
+}
+
+/// 读回的一行**天粒度**聚合（M25：per-app 历史深度 8 天 → 30 天）。
+///
+/// 由 `app_hourly` 的小时桶在 SQL 里再聚合：均值用 Σsum/Σn 重算（不是均值的均值），
+/// 峰值取 MAX，流量相加 —— 与前端 `aggregateDays` 的口径逐字段一致。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DailyRow {
+    /// 本地日期 `YYYY-MM-DD`（小时桶前 10 位）
+    pub day: String,
+    pub rss_avg: Option<u64>,
+    pub rss_peak: Option<u64>,
+    pub cpu_avg: Option<f32>,
+    pub cpu_peak: Option<f32>,
+    pub net_down: u64,
+    pub net_up: u64,
+    pub samples: u32,
 }
 
 /// 剪除成绩单聚合（M21）
@@ -826,6 +883,74 @@ mod tests {
 
         assert_eq!(store.app_hourly_prune_before("2026-11-02T00").unwrap(), 1);
         assert_eq!(store.app_hourly_get("Cursor", "0000").unwrap().len(), 1);
+    }
+
+    // ---------------------------------------------------------- 应用天粒度聚合（M25）
+
+    /// 同一天多个小时桶：均值重算（Σsum/Σn，不是均值的均值）、峰值取 MAX、流量相加
+    #[test]
+    fn app_daily_aggregates_hours_within_a_day() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .app_hourly_add(
+                &[
+                    hourly("Cursor", "2026-11-09T09", 800, 2, 500, 6.0, 2, 8.0),
+                    hourly("Cursor", "2026-11-09T10", 400, 1, 900, 3.0, 1, 3.0),
+                ],
+                1,
+            )
+            .unwrap();
+
+        let rows = store.app_daily_get("Cursor", "2026-11-01").unwrap();
+        assert_eq!(rows.len(), 1);
+        let r = &rows[0];
+        assert_eq!(r.day, "2026-11-09");
+        assert_eq!(r.rss_avg, Some(400), "(800+400)/3，不是均值 (400+400)/2");
+        assert_eq!(r.rss_peak, Some(900));
+        assert!((r.cpu_avg.unwrap() - 3.0).abs() < 1e-6, "(6+3)/3");
+        assert_eq!(r.cpu_peak, Some(8.0));
+        assert_eq!(r.samples, 3);
+    }
+
+    /// 跨天各自成行，且只返回 `from_day` 之后（含）的天
+    #[test]
+    fn app_daily_groups_by_day_and_filters_since() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .app_hourly_add(
+                &[
+                    hourly("Cursor", "2026-11-05T23", 100, 1, 100, 1.0, 1, 1.0),
+                    hourly("Cursor", "2026-11-08T01", 200, 1, 200, 2.0, 1, 2.0),
+                    hourly("Cursor", "2026-11-09T22", 300, 1, 300, 3.0, 1, 3.0),
+                ],
+                1,
+            )
+            .unwrap();
+
+        let rows = store.app_daily_get("Cursor", "2026-11-08").unwrap();
+        let days: Vec<&str> = rows.iter().map(|r| r.day.as_str()).collect();
+        assert_eq!(days, vec!["2026-11-08", "2026-11-09"]);
+        assert_eq!(rows[0].rss_peak, Some(200));
+    }
+
+    /// 家族互不串 + 缺失天不出现（前端画灰柱，不补 0）
+    #[test]
+    fn app_daily_isolates_families_and_skips_missing_days() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .app_hourly_add(
+                &[
+                    hourly("Cursor", "2026-11-09T10", 1, 1, 1, 1.0, 1, 1.0),
+                    hourly("Node", "2026-11-09T10", 9, 1, 9, 9.0, 1, 9.0),
+                ],
+                1,
+            )
+            .unwrap();
+
+        let rows = store.app_daily_get("Node", "2026-11-01").unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].day, "2026-11-09");
+        assert_eq!(rows[0].rss_avg, Some(9));
     }
 
     // ---------------------------------------------------------- 剪除成绩单（M21）

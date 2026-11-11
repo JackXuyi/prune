@@ -351,8 +351,13 @@ export function AppDetail({
             />
           </div>
 
-          {/* 近 7 天 */}
-          <HistoryTrack rows={history.rows} loading={history.loading} error={history.error} />
+          {/* 历史走势（24 h / 7 天 / 30 天，M25） */}
+          <HistoryTrack
+            rows={history.rows}
+            daily={history.daily}
+            loading={history.loading}
+            error={history.error}
+          />
 
           {/* 进程明细 */}
           <ProcTable members={members} onOpenProcess={onOpenProcess} onKillMenu={onKillMenu} />

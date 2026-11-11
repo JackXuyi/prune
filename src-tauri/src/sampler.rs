@@ -103,8 +103,9 @@ struct Prev {
 
 /// 小时历史落库节流：攒 60 s 写一次，避免每 10 s 一次事务
 const APP_HISTORY_FLUSH: Duration = Duration::from_secs(60);
-/// 历史保留 8 天（多留 1 天保证「7 整天」完整）
-const APP_HISTORY_RETAIN_SECS: i64 = 8 * 24 * 3600;
+/// 历史保留 30 天（M25，对标 Vitals 同深度；原来 8 天是为「7 整天 + 余量」，
+/// 深度扩展后 30 天保证「30 整天」完整）
+const APP_HISTORY_RETAIN_SECS: i64 = 30 * 24 * 3600;
 
 /// 单家族的当前小时累计（增量，写完即清）
 #[derive(Default)]
@@ -332,6 +333,20 @@ impl MemState {
         match &self.store {
             Some(store) => store
                 .app_hourly_get(family, from_bucket)
+                .map_err(|e| e.to_string()),
+            None => Ok(Vec::new()),
+        }
+    }
+
+    /// M25：读某家族自 `from_day` 起的天粒度聚合（只含有记录的天）
+    pub fn app_history_daily(
+        &self,
+        family: &str,
+        from_day: &str,
+    ) -> Result<Vec<prune_core::db::DailyRow>, String> {
+        match &self.store {
+            Some(store) => store
+                .app_daily_get(family, from_day)
                 .map_err(|e| e.to_string()),
             None => Ok(Vec::new()),
         }

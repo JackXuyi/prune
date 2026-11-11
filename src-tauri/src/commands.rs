@@ -589,11 +589,29 @@ pub fn app_history(
     family: String,
     hours: u32,
 ) -> Result<Vec<HourlyRow>, String> {
+    // M25：保留期扩到 30 天，查询窗口同步放开到 30 天
     let from =
-        prune_core::localtime::hour_string(now_secs() - (hours.clamp(1, 24 * 10) as i64) * 3600);
+        prune_core::localtime::hour_string(now_secs() - (hours.clamp(1, 24 * 30) as i64) * 3600);
     state
         .app_history(&family, &from)
         .map_err(|e| format!("读取应用历史失败：{e}"))
+}
+
+/// 应用近 N 天的历史聚合（天粒度，M25）。
+///
+/// 聚合在 SQLite 里完成（720 个小时桶 → 30 行），只返回**有记录的天**：
+/// 缺失由前端画灰柱，不在这里补 0（与小时桶同纪律）。
+#[tauri::command]
+pub fn app_history_daily(
+    state: State<'_, Arc<MemState>>,
+    family: String,
+    days: u32,
+) -> Result<Vec<prune_core::db::DailyRow>, String> {
+    let from =
+        prune_core::localtime::day_string(now_secs() - (days.clamp(1, 30) as i64) * 86_400);
+    state
+        .app_history_daily(&family, &from)
+        .map_err(|e| format!("读取应用天历史失败：{e}"))
 }
 
 #[cfg(test)]

@@ -1,16 +1,19 @@
 /**
- * D3/D5：应用小时历史（一次拉 8 天 = 192 h，前端按需聚合）。
+ * D3/D5/M25：应用历史（小时桶一次拉 8 天 = 192 h，前端按需聚合；
+ * 天桶一次拉 31 天，供 30 天视图 —— 后端 SQL 聚合，只回有记录的天）。
  *
  * 为什么不按视图分别请求：区间切换要「即时」，而且 24 h 是 7 天的子集，
  * 一次拉完切换零请求。刷新节拍 5 min（与深探轮同拍），窗口不可见时不刷新。
  */
 import { useEffect, useRef, useState } from "react";
 
-import type { HistoryBucket } from "../types/appHistory";
-import { appHistory, isTauri } from "./ipc";
+import type { DailyBucket, HistoryBucket } from "../types/appHistory";
+import { appHistory, appHistoryDaily, isTauri } from "./ipc";
 
 /** 拉取窗口：8 天（比 7 天多一天，保证「7 整天」完整） */
 export const HISTORY_HOURS = 192;
+/** 天粒度拉取窗口：31 天（比 30 天多一天，保证「30 整天」完整，M25） */
+export const HISTORY_DAYS = 31;
 /** 刷新间隔 */
 const REFRESH_MS = 5 * 60 * 1000;
 
@@ -46,11 +49,14 @@ export function lastDays(n: number, now = new Date()): string[] {
 
 export function useAppHistory(family: string | null): {
   rows: HistoryBucket[];
+  /** M25：天粒度聚合行（只含有记录的天），30 天视图直接消费 */
+  daily: DailyBucket[];
   loading: boolean;
   error: string | null;
   refresh: () => void;
 } {
   const [rows, setRows] = useState<HistoryBucket[]>([]);
+  const [daily, setDaily] = useState<DailyBucket[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
@@ -65,6 +71,7 @@ export function useAppHistory(family: string | null): {
 
   useEffect(() => {
     setRows([]);
+    setDaily([]);
     setError(null);
     if (!family) return;
 
@@ -84,6 +91,7 @@ export function useAppHistory(family: string | null): {
         }))
         .filter((b) => b.samples > 0);
       setRows(fake);
+      setDaily(fakeDaily(fake));
       return;
     }
 
@@ -91,9 +99,13 @@ export function useAppHistory(family: string | null): {
     const load = async () => {
       setLoading(true);
       try {
-        const data = await appHistory(family, HISTORY_HOURS);
+        const [hourly, days] = await Promise.all([
+          appHistory(family, HISTORY_HOURS),
+          appHistoryDaily(family, HISTORY_DAYS),
+        ]);
         if (alive.current) {
-          setRows(data);
+          setRows(hourly);
+          setDaily(days);
           setError(null);
         }
       } catch (e) {
@@ -113,7 +125,32 @@ export function useAppHistory(family: string | null): {
     };
   }, [family, nonce]);
 
-  return { rows, loading, error, refresh: () => setNonce((n) => n + 1) };
+  return { rows, daily, loading, error, refresh: () => setNonce((n) => n + 1) };
+}
+
+/** 浏览器走查用的假天序列：把假小时聚合成天，保证 30d 视图结构可见 */
+function fakeDaily(rows: HistoryBucket[]): DailyBucket[] {
+  const byDay = new Map<string, DailyBucket>();
+  for (const r of rows) {
+    const day = r.bucket.slice(0, 10);
+    const cur = byDay.get(day) ?? {
+      day,
+      rssAvg: null,
+      rssPeak: 0,
+      cpuAvg: null,
+      cpuPeak: 0,
+      netDown: 0,
+      netUp: 0,
+      samples: 0,
+    };
+    cur.rssPeak = Math.max(cur.rssPeak ?? 0, r.rssPeak ?? 0);
+    cur.cpuPeak = Math.max(cur.cpuPeak ?? 0, r.cpuPeak ?? 0);
+    cur.netDown += r.netDown;
+    cur.netUp += r.netUp;
+    cur.samples += r.samples;
+    byDay.set(day, cur);
+  }
+  return [...byDay.values()];
 }
 
 /** 某天的聚合（7 天视图的一根柱） */
