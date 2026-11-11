@@ -13,6 +13,9 @@
 //!
 //! 来源：`docs/research/reclaim-scan.sh`（macOS 实测清单）、
 //! Windows 侧依据各包管理器默认缓存位置（npm / pnpm / Yarn / pip / Cypress / Playwright / Electron）。
+//! AI 应用条目（2026-11）：本机实测 + DevCleaner / CacheCleaner / Mole 竞品字段指南对齐——
+//! 三家均把 Cursor / Claude / Ollama 缓存列为 Safe 类，但**均按路径扫**；
+//! 本表延续同一口径，并显式排除「可再生」与「用户状态」的模糊地带（见各条目注释）。
 //! 级别语义见 `docs/prune-feature-spec-v2.md` §7.1。
 
 use std::path::{Path, PathBuf};
@@ -272,6 +275,121 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         key: "xcode-archives",
         label: "Archives（归档包）",
         rel: "Library/Developer/Xcode/Archives",
+        level: Level::L3,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // ---------- AI 应用（2026-11 扩充；竞品对齐见文件头来源注） ----------
+    // Cursor（Electron 系，缓存全部可再生）。
+    // ⚠️ `Application Support/Cursor/User/`（含 state.vscdb AI 聊天记录、
+    // workspaceStorage 工作区状态）与 `globalStorage/anysphere.cursor-agent-worker`
+    // **不是缓存**，永不登记——本机实测 state.vscdb 18 GB，删除即丢失对话与状态。
+    WhitelistEntry {
+        key: "cursor-cacheddata",
+        label: "Cursor V8 代码缓存",
+        rel: "Library/Application Support/Cursor/CachedData",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "cursor-cache",
+        label: "Cursor HTTP 缓存",
+        rel: "Library/Application Support/Cursor/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "cursor-gpu",
+        label: "Cursor GPU 缓存",
+        rel: "Library/Application Support/Cursor/GPUCache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "cursor-vsix",
+        label: "Cursor 扩展安装包缓存",
+        rel: "Library/Application Support/Cursor/CachedExtensionVSIXs",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "cursor-logs",
+        label: "Cursor 日志",
+        rel: "Library/Application Support/Cursor/logs",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "cursor-caches",
+        label: "Cursor 系统缓存",
+        rel: "Library/Caches/com.todesktop.230313mzl4w4u92",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // Claude 桌面版（Electron 系；对话数据在 Application Support/Claude 根下，只登记其缓存子目录）
+    WhitelistEntry {
+        key: "claude-app-cache",
+        label: "Claude HTTP 缓存",
+        rel: "Library/Application Support/Claude/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "claude-desktop-caches",
+        label: "Claude 系统缓存",
+        rel: "Library/Caches/com.anthropic.claudefordesktop",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // Claude Code CLI：shell 快照每轮会话自动重建（官方可再生）；
+    // `.claude/projects` 会话记录是用户数据，不登记。
+    WhitelistEntry {
+        key: "claude-shell-snapshots",
+        label: "Claude Code shell 快照",
+        rel: ".claude/shell-snapshots",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::All,
+    },
+    // Ollama：模型可 `ollama pull` 重下但代价高 → L3 逐项确认；
+    // 清理走废纸篓，Ollama 服务重启后自行重建索引。
+    WhitelistEntry {
+        key: "ollama-models",
+        label: "Ollama 模型权重（可重新 pull）",
+        rel: ".ollama/models",
+        level: Level::L3,
+        a1_scope: false,
+        os: Os::All,
+    },
+    WhitelistEntry {
+        key: "ollama-logs",
+        label: "Ollama 日志",
+        rel: ".ollama/logs",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::All,
+    },
+    // ---------- Xcode 补扫（2026-11：DerivedData/DeviceSupport/Archives 等既有条目之外的缺口） ----------
+    WhitelistEntry {
+        key: "xcode-ibsupport",
+        label: "Interface Builder 设备支持",
+        rel: "Library/Developer/Xcode/UserData/IB Support",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "simulator-runtimes",
+        label: "Simulator 旧平台运行时（可重下）",
+        rel: "Library/Developer/CoreSimulator/Profiles/Runtimes",
         level: Level::L3,
         a1_scope: false,
         os: Os::MacOnly,
@@ -546,5 +664,61 @@ mod tests {
         keys.sort_unstable();
         keys.dedup();
         assert_eq!(keys.len(), total, "key 不能重复（IPC 按 key 定位）");
+    }
+
+    #[test]
+    fn ai_entries_cover_three_apps_with_safe_levels() {
+        let by = |k: &str| ENTRIES.iter().find(|e| e.key == k).expect("登记项应存在");
+        // Cursor 六项全部 🟢 可再生缓存
+        for k in [
+            "cursor-cacheddata",
+            "cursor-cache",
+            "cursor-gpu",
+            "cursor-vsix",
+            "cursor-logs",
+            "cursor-caches",
+        ] {
+            assert_eq!(by(k).level, Level::L2, "{k} 必须是 L2");
+            assert_eq!(by(k).os, Os::MacOnly, "{k} 路径仅实测过 macOS");
+        }
+        // Claude：桌面版两条 macOS + CLI 快照跨平台
+        assert_eq!(by("claude-app-cache").level, Level::L2);
+        assert_eq!(by("claude-desktop-caches").level, Level::L2);
+        assert_eq!(by("claude-shell-snapshots").os, Os::All);
+        // Ollama：模型是唯一 L3（可重 pull 但代价高），日志 L2
+        assert_eq!(by("ollama-models").level, Level::L3);
+        assert_eq!(by("ollama-logs").level, Level::L2);
+        assert_eq!(by("ollama-models").os, Os::All);
+    }
+
+    #[test]
+    fn ai_entries_never_touch_user_state() {
+        // 红线测试：AI 应用的「用户状态」目录永不入白名单
+        // （state.vscdb = AI 聊天记录，workspaceStorage = 工作区状态，projects = 会话记录）
+        let banned = ["state.vscdb", "workspaceStorage", "anysphere.cursor-agent-worker", "projects"];
+        for e in ENTRIES.iter() {
+            if e.key.starts_with("cursor-") || e.key.starts_with("claude-") {
+                for b in banned {
+                    assert!(
+                        !e.rel.contains(b),
+                        "{} 指向了用户状态路径（含 {b}），AI 聊天记录不可再生",
+                        e.key
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn xcode_supplement_entries_registered() {
+        let ib = ENTRIES.iter().find(|e| e.key == "xcode-ibsupport").expect("IB Support 应登记");
+        assert_eq!(ib.level, Level::L2);
+        let rt = ENTRIES
+            .iter()
+            .find(|e| e.key == "simulator-runtimes")
+            .expect("旧运行时应登记");
+        assert_eq!(rt.level, Level::L3, "运行时可重下但代价高，必须逐项确认");
+        assert_eq!(ib.os, Os::MacOnly);
+        assert_eq!(rt.os, Os::MacOnly);
     }
 }
