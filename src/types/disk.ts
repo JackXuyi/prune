@@ -87,6 +87,29 @@ export interface VolumeInfo {
   userAvailableBytes: number;
 }
 
+/** F9 项目体检结论：优先级 僵尸 > 偏胖 > 久未重装 > 健康 */
+export type ProjectVerdict = "healthy" | "stale" | "heavy" | "zombie";
+
+/** 一个项目的依赖账本（F9/M24）：只陈述事实，不给「可删」判决 */
+export interface ProjectHealth {
+  /** 展示名：相对 home 的项目路径 */
+  name: string;
+  /** 项目根绝对路径（点击定位目标） */
+  root: string;
+  /** node_modules 绝对路径 */
+  depsPath: string;
+  depsBytes: number;
+  /** 依赖上次安装距今天数（node_modules mtime） */
+  depsAgeDays: number;
+  /** 项目最后活动距今天数；null = 没找到任何标记文件 */
+  activityAgeDays: number | null;
+  /** 同时存在的包管理器（npm/yarn/pnpm/bun） */
+  lockfiles: string[];
+  /** ≥2 个锁文件并存 */
+  multiManager: boolean;
+  verdict: ProjectVerdict;
+}
+
 export interface DiskReport {
   scannedAt: number;
   scanElapsedMs: number;
@@ -97,6 +120,8 @@ export interface DiskReport {
   totals: Totals;
   /** home 所在卷容量（M4/S0；旧报告缺省为 null） */
   volume?: VolumeInfo | null;
+  /** F9 项目体检（旧报告缺省为空数组） */
+  projects?: ProjectHealth[];
 }
 
 export interface ScanProgress {

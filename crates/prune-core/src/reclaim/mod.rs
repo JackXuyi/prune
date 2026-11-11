@@ -416,6 +416,7 @@ mod tests {
                 cache_total: 0,
             },
             volume: None,
+            projects: Vec::new(),
         }
     }
 

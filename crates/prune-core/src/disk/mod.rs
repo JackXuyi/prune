@@ -8,9 +8,11 @@
 //! 1099 GB（实测），而真实占用约 3 GB —— 虚高的数字会直接毁掉首屏可信度。
 
 pub mod incremental;
+pub mod project;
 pub mod whitelist;
 
 pub use incremental::{EntryFingerprint, ScanSnapshot};
+pub use project::{ProjectHealth, ProjectVerdict};
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -207,6 +209,9 @@ pub struct DiskReport {
     /// M4/S0：home 所在卷容量（statvfs 失败为 None；旧报告反序列化缺省为 None）
     #[serde(default)]
     pub volume: Option<VolumeInfo>,
+    /// F9/M24：按项目的依赖账本（旧报告反序列化为空）
+    #[serde(default)]
+    pub projects: Vec<ProjectHealth>,
 }
 
 /// 扫描进度（前端进度条 + 心跳日志）
@@ -797,6 +802,8 @@ pub fn scan_with(
         totals,
         // 扫描入口实时取：容量是「现在」的读数，不跟随报告缓存
         volume: volume_info(home),
+        // F9 项目体检：纯聚合 + 每项目几次 stat，跟随本轮 mtime，不额外扫描
+        projects: project::build_projects(&nm_map, home, now_nanos),
     };
     let snapshot = ScanSnapshot {
         taken_at: now_ts(),

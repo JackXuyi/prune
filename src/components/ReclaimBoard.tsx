@@ -7,6 +7,7 @@ import { StackBar } from "./charts/StackBar";
 import { BarList } from "./charts/BarList";
 import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
+import { ProjectHealthCard } from "./ProjectHealthCard";
 import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
 import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
@@ -215,6 +216,9 @@ export function ReclaimBoard() {
           </div>
         </section>
       ) : null}
+
+      {/* F9 项目体检：把「N 个 node_modules 共 X GB」拆成按项目的账本 */}
+      <ProjectHealthCard projects={report.projects ?? []} />
 
       <section className="mt-4">
         <div className="flex items-baseline justify-between">
