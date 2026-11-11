@@ -2,7 +2,20 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 三处一致）。
 
-## 0.6.0
+## 0.7.0
+
+### 中英双语（i18n 全链路）
+
+- **两套文案、一处来源**：前端 14 个命名空间（settings / net / disk / memory / resources / ports / lan / stats / island / panel / chart / nav / update / common）约 2000 条 key，中文为准、英文并列；Rust 侧同样一套表，但用**结构体常量**而不是字符串 key——Rust 没有 TS 的模板字面量类型，key 拼错只能运行时发现，结构体缺字段是编译错误
+- **解析链**：settings.json 的 `locale`（auto / zh / en）→ macOS `defaults read -g AppleLanguages` 或 Windows `GetUserDefaultUILanguage` → 兜底 En。切换不重启：写盘 → 重建托盘菜单 → 广播 `locale://changed`，主窗口 / 面板 / 灵动岛同帧换语言
+- **繁体落英文**（行为变更）：`from_tag` 收窄到 `hant` / `-tw` / `-hk` / `-mo`，且 `hans` 优先（`zh-Hans-HK` 仍判简体）。catalog 只有简体，给繁体用户简体不如给英文诚实；影响面不止设置页——托盘 / 灵动岛 / 报告走同一套判定，Rust `is_traditional` 与 TS `isTraditionalTag` 逐字一致、10 条用例两边共用
+- **设置页语言下拉**：三颗胶囊改下拉，「跟随系统」带副标题说明系统语言被认成了什么（正常 / 「ja-JP · 暂用 English」/ 读取失败三种）。`LocalePayload` 扩到 `{current, source, system, autoResolved}`，三个通道一起改——只改一半会出现「主窗口对、设置页错」。顺手删掉缓存系统语言的 `OnceLock`：它让「跟随系统」在进程内永远读第一次的值，而代码注释早就承诺「重复点一次应当刷新」
+- **入口不止一处**：⌘, 打开设置；菜单栏面板 header 齿轮经 `open_main(settings)` → `ui://settings` 直达。只开面板的用户原先到不了设置，语言切错了就再也走不回去
+- **判定与文案分家**：诊断结论用 `VerdictKind` 8 变体断言「命中哪条规则」而不是中文整句，改文案不再挂测试；阈值（50 / 80 ms 等）从常量 format 进句子，避免「界面说 50 ms、代码按 80 ms 判」
+- **Rust 侧文案**：`prune-core/src/i18n/{diag_text, report, err}` 三张表；报告布局只写一次（`render_with`），中英各一张静态片段表；`ReclaimError::text(locale)` 新增而 `Display` 保留中文给 CLI（`prune-cli` 冻结中文）
+- **预览说明结构化**：`ReclaimPreview.notes` 从 `Vec<String>` 改为 `Vec<ReclaimNote>`（`scanPending` / `missingGroup` / `highRisk` / `scattered` / `rosettaPending` / `nothingToDo`），后端只下发 code + 参数，组名交给前端 `cacheLabel()` 渲染——后端 `label` 只有中文，拼好的句子在英文界面里必然露中文
+- **门禁**：`scripts/check-i18n.mjs` 拦四类问题——源码硬编码中文、catalog 未被引用的 key、中英 key 不对齐、参数占位符不一致；`pnpm build` 把它串在前端构建前面，过不了就不出包
+- **文案纪律**：emoji 留在代码里不进 catalog；语言名（中文 / English）恒为原文不翻译；产品名与专有名词不译
 
 ### 托盘双击直达主窗口 + 面板「去清理」主 CTA
 
@@ -79,6 +92,8 @@
 - **三道防刷屏闸**：① Prune 启动首轮只建基线，存量端口一条不弹；② 每端口 10 min 冷却，dev server kill→重启横跳不重复报；③ 端口事件独立 6/h 频控。端口转空闲即重新武装
 - **常驻开销 0 起步**：30 s 一拍守望，灵动岛或保镖开关关闭时整拍跳过；端口 tab 活跃且快照 <20 s 时复用 PortState 快照（不起第二轮 lsof）；自扫时复用 PortState 的 ProjectCache（cwd 查询跨轮共享）。判定逻辑 `PortGuardMonitor` 在 prune-core，纯函数 + 10 个单测
 - 设置：灵动岛区新增「端口冲突保镖」开关（`island.port_guard`，默认开）；`IslandSettings` 前后端同次变更同步加字段
+
+## 0.6.0
 
 ### 局域网设备页卡片化重设计（M18 UI）
 
