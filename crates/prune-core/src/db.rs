@@ -99,6 +99,12 @@ CREATE TABLE IF NOT EXISTS app_hourly (
     PRIMARY KEY (family, bucket)
 );
 CREATE INDEX IF NOT EXISTS idx_app_hourly_bucket ON app_hourly (bucket);
+CREATE TABLE IF NOT EXISTS cut_log (
+    ts    INTEGER NOT NULL,              -- 秒级本地时间（M21 剪除成绩单）
+    label TEXT    NOT NULL,              -- 分组 label（「npm 缓存」「node_modules」…）
+    bytes INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_cut_log_ts ON cut_log (ts);
 ";
 
 impl Store {
@@ -379,6 +385,86 @@ impl Store {
         let conn = self.lock();
         conn.execute("DELETE FROM app_hourly WHERE bucket < ?1", params![bucket])
     }
+
+    // ------------------------------------------------------------ 剪除成绩单（M21）
+
+    /// 批量追加剪除记录（单事务）。append-only：清理动作不可撤销，记录也不删改，
+    /// 唯一的删除入口是保留期清理（800 天，见 `cut_prune_before`）。
+    pub fn cut_add(&self, items: &[(&str, u64)], now: i64) -> rusqlite::Result<usize> {
+        if items.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt =
+                tx.prepare("INSERT INTO cut_log (ts, label, bytes) VALUES (?1, ?2, ?3)")?;
+            for (label, bytes) in items {
+                stmt.execute(params![now, *label, sat(*bytes) as i64])?;
+            }
+        }
+        tx.commit()?;
+        Ok(items.len())
+    }
+
+    /// 全量聚合：累计字节、次数、首条时间（`None` = 还没剪过，不是 0）。
+    /// 记录量级「几百行/年」，全表扫比维护区间参数诚实——不引入「从哪天算起」的口径分歧。
+    pub fn cut_summary(&self) -> rusqlite::Result<CutSummary> {
+        let conn = self.lock();
+        conn.query_row(
+            "SELECT COALESCE(SUM(bytes), 0), COUNT(*), MIN(ts) FROM cut_log",
+            [],
+            |r| {
+                Ok(CutSummary {
+                    total_bytes: r.get::<_, i64>(0)?.max(0) as u64,
+                    total_items: r.get::<_, i64>(1)?.max(0) as u64,
+                    first_ts: r.get::<_, Option<i64>>(2)?,
+                })
+            },
+        )
+    }
+
+    /// 受害者 Top N：按累计字节降序（并列按 label 字典序，次序稳定）。
+    pub fn cut_top(&self, n: u32) -> rusqlite::Result<Vec<CutTop>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT label, SUM(bytes), COUNT(*) FROM cut_log
+             GROUP BY label ORDER BY SUM(bytes) DESC, label ASC LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![n], |row| {
+            Ok(CutTop {
+                label: row.get(0)?,
+                bytes: row.get::<_, i64>(1)?.max(0) as u64,
+                count: row.get::<_, i64>(2)?.max(0) as u64,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 删除早于 `cutoff` 的记录（保留期由调用方按秒级时间戳传入）
+    pub fn cut_prune_before(&self, cutoff: i64) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM cut_log WHERE ts < ?1", params![cutoff])
+    }
+}
+
+/// 剪除成绩单聚合（M21）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutSummary {
+    pub total_bytes: u64,
+    pub total_items: u64,
+    /// 首条记录的秒级时间戳；`None` = 还没剪过
+    pub first_ts: Option<i64>,
+}
+
+/// 按分组聚合的一行 Top N
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutTop {
+    pub label: String,
+    pub bytes: u64,
+    pub count: u64,
 }
 
 /// u64 → i64 的饱和转换：日流量不可能到 9.2 EB，但脏数据不能翻转成负数
@@ -740,5 +826,74 @@ mod tests {
 
         assert_eq!(store.app_hourly_prune_before("2026-11-02T00").unwrap(), 1);
         assert_eq!(store.app_hourly_get("Cursor", "0000").unwrap().len(), 1);
+    }
+
+    // ---------------------------------------------------------- 剪除成绩单（M21）
+
+    /// 空库：summary 全 0 且 first_ts 是 None（「没剪过」≠「剪了 0 字节」）
+    #[test]
+    fn cut_summary_empty_is_none_first_ts() {
+        let store = Store::open_in_memory().unwrap();
+        let s = store.cut_summary().unwrap();
+        assert_eq!(s.total_bytes, 0);
+        assert_eq!(s.total_items, 0);
+        assert!(s.first_ts.is_none());
+        assert!(store.cut_top(3).unwrap().is_empty());
+    }
+
+    /// 多次清理跨 label 累加；Top N 按字节降序并列按字典序
+    #[test]
+    fn cut_add_accumulates_and_top_sorts_by_bytes() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .cut_add(&[("npm 缓存", 3_000), ("node_modules", 1_000)], 100)
+            .unwrap();
+        store
+            .cut_add(&[("npm 缓存", 2_000), ("brew", 2_500)], 200)
+            .unwrap();
+
+        let s = store.cut_summary().unwrap();
+        assert_eq!(s.total_bytes, 8_500);
+        assert_eq!(s.total_items, 4);
+        assert_eq!(s.first_ts, Some(100));
+
+        let top = store.cut_top(2).unwrap();
+        assert_eq!(top.len(), 2);
+        assert_eq!(top[0].label, "npm 缓存");
+        assert_eq!(top[0].bytes, 5_000);
+        assert_eq!(top[0].count, 2);
+        assert_eq!(top[1].label, "brew"); // 2_500 > 1_000，node_modules 被挤出
+    }
+
+    /// 保留期清理：只删更早的，边界当天保留
+    #[test]
+    fn cut_prune_before_removes_old_rows_only() {
+        let store = Store::open_in_memory().unwrap();
+        store.cut_add(&[("a", 1)], 100).unwrap();
+        store.cut_add(&[("b", 2)], 300).unwrap();
+        assert_eq!(store.cut_prune_before(200).unwrap(), 1);
+        let s = store.cut_summary().unwrap();
+        assert_eq!(s.total_items, 1);
+        assert_eq!(s.total_bytes, 2);
+    }
+
+    /// 重启存活：同一文件重开一次 Store，成绩单不丢
+    #[test]
+    fn cut_log_survives_reopen() {
+        let path = std::env::temp_dir().join(format!("prune-cut-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        {
+            let store = Store::open(&path).unwrap();
+            store.cut_add(&[("npm 缓存", 700)], 42).unwrap();
+        }
+        {
+            let store = Store::open(&path).unwrap();
+            let s = store.cut_summary().unwrap();
+            assert_eq!(s.total_bytes, 700);
+            assert_eq!(s.first_ts, Some(42));
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
     }
 }

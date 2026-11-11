@@ -101,6 +101,28 @@ export function reclaimExecute(items: ReclaimItem[], confirmed: boolean): Promis
   return invoke<ReclaimReport>("reclaim_execute", { items, confirmed });
 }
 
+// ---------------------------------------------------------------- 剪除成绩单（M21）
+
+/** 按分组聚合的一行 Top N（label 来自清理分组，如「npm 缓存」「node_modules」） */
+export interface CutTop {
+  label: string;
+  bytes: number;
+  count: number;
+}
+
+/** 剪除成绩单：累计 / 次数 / 首次时间 / Top 5。全 0 + 空 Top = 还没剪过 */
+export interface CutReport {
+  totalBytes: number;
+  totalItems: number;
+  firstTs: number | null;
+  top: CutTop[];
+}
+
+/** 剪除成绩单（M21）：数据来自用户亲手执行过的清理，append-only 落在本地库 */
+export function cutReport(): Promise<CutReport> {
+  return invoke<CutReport>("cut_report");
+}
+
 // ---------------------------------------------------------------- 端口（M7）
 
 /** 最新一轮端口快照；null = 还没扫过（**不是「没有端口」**） */

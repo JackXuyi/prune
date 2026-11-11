@@ -6,6 +6,7 @@ import {
   netReadout,
   portReadout,
 } from "../lib/statsReadout";
+import { dayString } from "../lib/format";
 import { UI_TEXT } from "../lib/uiText";
 import { useVolumeInfo } from "../lib/useVolumeInfo";
 import { AreaChart } from "./charts/AreaChart";
@@ -20,8 +21,11 @@ import { useMemStore } from "../stores/memStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
 import { formatBytes, formatPercent } from "../lib/format";
+import { cutReport, type CutReport } from "../lib/ipc";
 import { NetDirectionReading } from "./stats/NetReading";
 import { DomainCard } from "./stats/DomainCard";
+
+import { useEffect, useState } from "react";
 
 /**
  * 下钻目标：总览卡只导航，不做任何清理/结束动作（M9 §4，UX v3 §6.1）。
@@ -58,6 +62,21 @@ export function StatsBoard({
   const netHistory = useNetTotalStore((s) => s.history);
   // 卷容量：进入 tab、点刷新时各取一次（statvfs 微秒级，无需缓存）
   const { volume, known } = useVolumeInfo(refreshNonce);
+  // 剪除成绩单（M21）：进入 tab / 点刷新各取一次；tab 切换会重挂载，天然重新拉取
+  const [cut, setCut] = useState<CutReport | null>(null);
+  useEffect(() => {
+    let alive = true;
+    void cutReport()
+      .then((r) => {
+        if (alive) setCut(r);
+      })
+      .catch(() => {
+        if (alive) setCut(null); // 读不到就当「无记录」，不弹错——成绩单是彩蛋不是告警
+      });
+    return () => {
+      alive = false;
+    };
+  }, [refreshNonce]);
 
   const mem = memoryReadout(snapshot);
   const cpu = cpuReadout(snapshot?.cpu);
@@ -298,9 +317,74 @@ export function StatsBoard({
         />
       </div>
 
+      {/* 剪除成绩单（M21）：只统计你亲手剪掉的，本地 SQLite append-only */}
+      {cut && (
+        <div className="mt-3 rounded-[18px] border border-hairline bg-white/[0.02] px-5 py-4">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[11px] font-medium tracking-wide text-ink-dim">剪除成绩单</span>
+            <span className="text-[10px] text-ink-faint">只记录你亲手剪掉的 · 本地留存两年</span>
+          </div>
+          {cut.totalItems > 0 ? (
+            <>
+              <div className="mt-2 flex items-baseline gap-3">
+                <CountUp
+                  value={cut.totalBytes}
+                  format={formatBytes}
+                  className="font-mono text-[22px] leading-none tabular-nums text-ink"
+                />
+                <span className="text-[11px] text-ink-faint">{cutEquivalence(cut.totalBytes)}</span>
+              </div>
+              <p className="mt-1 text-[10px] text-ink-faint">
+                {cut.totalItems} 次清理
+                {cut.firstTs != null ? ` · 自 ${dayString(new Date(cut.firstTs * 1000))} 起` : ""}
+              </p>
+              {cut.top.length > 0 && (
+                <div className="mt-2.5 grid gap-1">
+                  {cut.top.slice(0, 3).map((t, i) => (
+                    <div key={t.label} className="flex items-baseline gap-2 text-[11px]">
+                      <span className="w-3 shrink-0 font-mono text-ink-faint">{i + 1}</span>
+                      <span className="truncate text-ink-dim">{t.label}</span>
+                      <span className="ml-auto shrink-0 font-mono tabular-nums text-ink">
+                        {formatBytes(t.bytes)}
+                      </span>
+                      <span className="w-9 shrink-0 text-right text-[10px] text-ink-faint">
+                        {t.count} 次
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </>
+          ) : (
+            <div className="mt-2 flex items-center justify-between gap-3">
+              <p className="text-[11px] text-ink-faint">
+                还没有剪除记录 —— 去存储页挑一项缓存，完成第一次清理。
+              </p>
+              <button
+                type="button"
+                onClick={() => onDrill("disk")}
+                className="shrink-0 rounded-md bg-white/[0.06] px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.1] hover:text-ink"
+              >
+                去存储
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       <p className="mt-4 text-[10px] leading-relaxed text-ink-faint">{UI_TEXT.statsPrinciple}</p>
     </div>
   );
+}
+
+/** 换算彩蛋：≥4 GB 用「高清电影」（4 GB/部），否则用「照片」（3 MB/张） */
+function cutEquivalence(totalBytes: number): string {
+  const MOVIE = 4e9;
+  const PHOTO = 3e6;
+  if (totalBytes >= MOVIE) {
+    return `相当于 ${Math.max(1, Math.round(totalBytes / MOVIE))} 部高清电影`;
+  }
+  return `相当于 ${Math.max(1, Math.round(totalBytes / PHOTO))} 张照片`;
 }
 
 function LegendDot({

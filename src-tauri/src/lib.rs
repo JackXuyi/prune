@@ -66,6 +66,7 @@ pub fn run() {
             commands::reclaim_preview,
             commands::reclaim_children,
             commands::reclaim_execute,
+            commands::cut_report,
             commands::port_snapshot,
             commands::port_refresh,
             commands::port_set_active,
@@ -122,6 +123,9 @@ pub fn run() {
             });
 
             app.manage(Arc::new(sampler::MemState::new(store.clone())));
+            // M21：store 同时注册为独立状态，清理落库（cut_log）与成绩单命令直接访问，
+            // 不再借道 MemState/TotalNetState
+            app.manage(store.clone());
             app.manage(Arc::new(scan::DiskState::new()));
             app.manage(Arc::new(port_sampler::PortState::new()));
             app.manage(Arc::new(commands::AppDiskState::new()));

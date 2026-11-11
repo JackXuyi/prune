@@ -12,12 +12,13 @@
 //! - `reclaim_execute` 执行清理（走废纸篓，护栏在 prune-core）
 //! - `app_disk`       M8：按家族测量磁盘三层占用（按需 + TTL，绝不进定时轮）
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
 use prune_core::appdisk::{AppDisk, AppDiskCache, BundleQuery, BundleSize};
-use prune_core::db::{HourlyRow, Point};
+use prune_core::db::Store;
+use prune_core::db::{CutSummary, CutTop, HourlyRow, Point};
 use prune_core::disk::{DiskReport, VolumeInfo};
 use prune_core::mem::{MemSnapshot, ProcMem};
 use prune_core::net::PortSnapshot;
@@ -339,6 +340,7 @@ pub async fn reclaim_children(path: String) -> Result<Vec<ReclaimChild>, String>
 pub async fn reclaim_execute(
     app: AppHandle,
     state: State<'_, Arc<DiskState>>,
+    store: State<'_, Option<Arc<Store>>>,
     items: Vec<ReclaimItem>,
     confirmed: bool,
 ) -> Result<ReclaimReport, String> {
@@ -354,6 +356,8 @@ pub async fn reclaim_execute(
         })
         .unwrap_or_default();
 
+    // 闭包要拿走 items（跨线程）；落库在 await 之后用另一份
+    let items_for_cut = items.clone();
     let result = tauri::async_runtime::spawn_blocking(move || {
         reclaim::execute(&items, &home, confirmed, Limits::default(), &allowed)
     })
@@ -368,6 +372,20 @@ pub async fn reclaim_execute(
         result.failed.len()
     );
 
+    // M21 剪除成绩单：成功项落库（append-only）。失败项不计——
+    // 「剪掉了」必须以废纸篓里的东西为准，报告数字才经得起对账。
+    if let Some(store) = store.as_deref() {
+        let failed: HashSet<&str> = result.failed.iter().map(|f| f.path.as_str()).collect();
+        let cuts: Vec<(&str, u64)> = items_for_cut
+            .iter()
+            .filter(|i| !failed.contains(i.path.as_str()))
+            .map(|i| (i.label.as_str(), i.bytes))
+            .collect();
+        if let Err(e) = store.cut_add(&cuts, now_secs()) {
+            eprintln!("[m21-cut] 剪除记录落库失败（不影响清理结果）: {e}");
+        }
+    }
+
     let handle = app.clone();
     tauri::async_runtime::spawn(async move {
         if let Err(e) = scan::scan_now(&handle, false).await {
@@ -376,6 +394,47 @@ pub async fn reclaim_execute(
     });
 
     Ok(result)
+}
+
+/// 剪除成绩单（M21）：累计字节 / 次数 / 首条时间 / 受害者 Top 5。
+/// store 不可用时返回全 0 + 空 Top（前端空态，不是报错——与 net「今日不可用」同纪律）。
+#[tauri::command]
+pub fn cut_report(store: State<'_, Option<Arc<Store>>>) -> Result<CutReportDto, String> {
+    let Some(store) = store.as_deref() else {
+        return Ok(CutReportDto {
+            total_bytes: 0,
+            total_items: 0,
+            first_ts: None,
+            top: Vec::new(),
+        });
+    };
+    let summary = store
+        .cut_summary()
+        .map_err(|e| format!("读取剪除记录失败：{e}"))?;
+    let top = store
+        .cut_top(5)
+        .map_err(|e| format!("读取剪除 Top 榜失败：{e}"))?;
+    let CutSummary {
+        total_bytes,
+        total_items,
+        first_ts,
+    } = summary;
+    Ok(CutReportDto {
+        total_bytes,
+        total_items,
+        first_ts,
+        top,
+    })
+}
+
+/// `cut_report` 的返回 DTO（camelCase，与 Rust 侧 struct 字段一一对应）
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CutReportDto {
+    pub total_bytes: u64,
+    pub total_items: u64,
+    pub first_ts: Option<i64>,
+    pub top: Vec<CutTop>,
 }
 
 // ---------------------------------------------------------------- 应用图标（D1）
