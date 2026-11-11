@@ -4,6 +4,32 @@
 
 ## 0.6.0
 
+### 托盘双击直达主窗口 + 面板「去清理」主 CTA
+
+- **双击 tray 图标 = 直接打开主窗口**：macOS 上 Tauri 不派发 `DoubleClick`（该变体仅 Windows），改为两次左键 Up 间隔 350 ms 内自行判定；第一击已弹出的面板先收起再开主窗口，三连击不会被算成第二次双击。Windows 的 `Click`×2 + `DoubleClick` 连发由「500 ms 窗口去重」合并；判定抽为纯函数 `within_window`（4 个单测，含时钟回拨）
+- **面板底部「可回收 X GB → 去清理」主 CTA**：产品主张（可回收 GB = 首屏主数字）此前只是存储行的副读数——看得到数字、找不到动作。现升为 accent 强调按钮，直达存储 tab 清理流；文案受「不造假事实」红线约束：未深探显示「尚未深探 · 去扫描」、扫出 0 显示「暂无可回收 · 看明细」、扫描中显示「正在深探 · 看进度」，绝不把 null 渲染成 0 GB
+- **高度预算零回归**：CTA 行沿用原「应用入口」的 30 px，面板 432 贴合高度不变；无泄漏条时内容零溢出（Playwright 实测 `scrollHeight - clientHeight = 0`），出现泄漏条时滚动（既有行为）；「应用 N」入口保留为同行弱链接
+- 双击行为已列入 `docs/ns-popover-acceptance.md` 人工目测清单
+
+### 应用历史深度 8 天 → 30 天（M25，对标 Vitals）
+
+- **保留期 30 天**：`app_hourly` 小时聚合的保留期从 8 天扩到 30 天（原来为「7 整天 + 余量」设计）；采样、落库节拍（60 s flush）与增量语义不变
+- **天粒度聚合下推 SQLite**：新增 `app_daily_get`——按天 GROUP BY 一条 SQL 完成（720 个小时桶 → ≤30 行），均值用 Σsum/Σn 重算（不是均值的均值）、峰值取 MAX、流量相加，与前端 `aggregateDays` 口径逐字段一致；3 个新单测（同天聚合 / 跨天分组与 since 过滤 / 家族隔离）
+- **命令与窗口**：`app_history` 查询窗口 clamp 10 天 → 30 天；新增 `app_history_daily(family, days)`（clamp 30）
+- **应用详情「历史走势」三档区间**：24 h / 7 天 / 30 天——30 天视图直接消费天桶（每根柱 = 一天），24 h/7 d 视图照旧前端聚合；覆盖率 30 天档按「有记录的天 / 30」计算；空态判断同时看小时与天数据
+- **口径纪律不变**：历史仍是 RSS 口径（脚注写明，与 footprint 当前值不相减）；缺失小时/天画灰虚线不补 0；覆盖率 < 60% 角标转 warn
+- **已知取舍**：fast 轮全量家族进账（本机实测 657 个家族 / 2 天 1.8 万行 / 库 9.4 MB），30 天外推 ≈ 27 万行 / ~140 MB SQLite——对清几十 GB 缓存的开发机可接受，如实记录不藏
+
+### AI 应用缓存 + Xcode 补扫（白名单扩充，P0）
+
+- **AI 应用缓存 11 条登记**（2026-11 竞品对齐，DevCleaner / CacheCleaner / Mole 均已支持，Prune 补齐）：
+  - **Cursor** 六项 🟢：V8 代码缓存 / HTTP 缓存 / GPU 缓存 / 扩展安装包缓存 / 日志 / 系统缓存（本机实测新增 2.92 GB 可回收）
+  - **Claude** 三项：桌面版 HTTP 缓存与系统缓存（macOS）+ Claude Code shell 快照（跨平台，官方可再生）
+  - **Ollama** 两项：日志 🟢 + 模型权重 🟡（L3 逐项确认——可 `ollama pull` 重下但代价高）
+- **Xcode 补扫 2 条**：Interface Builder 设备支持（🟢）+ Simulator 旧平台运行时（🟡，可重下但代价高）——DerivedData / DeviceSupport / Archives 等既有条目之外的缺口
+- **用户状态红线（代码层约束）**：`state.vscdb`（AI 聊天记录，本机实测 18 GB）、`workspaceStorage`、`anysphere.cursor-agent-worker`、`.claude/projects` 永不登记——竞品指南同样强调「缓存 vs 工作区状态必须区分」；新增红线单测防回归
+- 零代码改动扩散：白名单登记即自动进入扫描 / 报告 / dry-run / 废纸篓清理 / MCP 全链路；平台过滤照旧（AI 桌面端路径仅登记实测过的 macOS，Ollama 与 Claude Code 为 home 相对路径两端通用）
+
 ### 项目健康卡（M24，项目体检）
 
 - **按项目的依赖账本**：把「55 个 node_modules 共 17 GB」拆开——每个项目一行：依赖体积、依赖上次安装（node_modules mtime）、项目最后活动（package.json / 锁文件 / `.git/index` 里最新那个）、锁文件并存情况；点击行在 Finder 里打开项目目录
