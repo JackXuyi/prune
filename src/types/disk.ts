@@ -1,4 +1,6 @@
 /** 磁盘可回收报告类型（镜像 prune_core::disk，serde camelCase）。 */
+import { dynamicText } from "../i18n";
+import type { Locale, NoParamKey } from "../i18n/types";
 
 /** 安全分级：L1/L2 可直接清理，L3 需确认，L4 只给命令 */
 export type Level = "l1" | "l2" | "l3" | "l4";
@@ -162,9 +164,20 @@ export interface ReclaimReport {
   skipped: number;
 }
 
-export const LEVEL_META: Record<Level, { label: string; tone: "accent" | "warn" | "danger" | "neutral" }> = {
-  l1: { label: "🟢 零后悔", tone: "accent" },
-  l2: { label: "🟢 可再生", tone: "accent" },
-  l3: { label: "🟡 需判断", tone: "warn" },
-  l4: { label: "🔴 只给命令", tone: "danger" },
+export const LEVEL_META: Record<Level, { labelKey: NoParamKey; dot: string; tone: "accent" | "warn" | "danger" | "neutral" }> = {
+  l1: { labelKey: "disk.level.l1", dot: "🟢", tone: "accent" },
+  l2: { labelKey: "disk.level.l2", dot: "🟢", tone: "accent" },
+  l3: { labelKey: "disk.level.l3", dot: "🟡", tone: "warn" },
+  l4: { labelKey: "disk.level.l4", dot: "🔴", tone: "danger" },
 };
+
+/**
+ * 缓存分组名的展示文案：按后端稳定 key 查 `disk.cache.<key>`，查不到回退后端 label。
+ *
+ * 为什么允许动态 key：缓存条目的集合由 `whitelist.rs` 决定，前端不可能靠
+ * `as const` 提前枚举（枚举一次就多一处漏改点）。回退链保证「catalog 缺 key」
+ * 不会显示成裸 key；`scripts/check-i18n.mjs` 会解析 Rust 源码逐条核对。
+ */
+export function cacheLabel(group: { key: string; label: string }, locale: Locale): string {
+  return dynamicText(locale, `disk.cache.${group.key}`) ?? group.label;
+}

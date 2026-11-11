@@ -105,4 +105,13 @@ export function localeName(l: Locale): string {
   return l === "zh" ? "中文" : "English";
 }
 
+/**
+ * 动态 key 查表：只给「key 集合由后端决定」的场景用（`disk.cache.<key>`，
+ * key 来自 Rust `whitelist.rs`）。缺 key 返回 `undefined` —— 调用方必须
+ * 自己给回退（后端下发的 label），不能让它显示成裸 key。
+ */
+export function dynamicText(locale: Locale, key: string): string | undefined {
+  return DICTS[locale][key];
+}
+
 export type { Locale, MessageKey, Params } from "./types";

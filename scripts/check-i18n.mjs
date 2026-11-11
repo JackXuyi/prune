@@ -41,8 +41,6 @@ const PENDING = [
   "src/components/LanDeviceCard.tsx",
   "src/components/NetBoard.tsx",
   "src/components/PortList.tsx",
-  "src/components/ProjectHealthCard.tsx",
-  "src/components/ReclaimBoard.tsx",
   "src/components/Sparkline.tsx",
   "src/components/charts/BarSeries.tsx",
   "src/components/charts/MeterBar.tsx",
@@ -58,7 +56,6 @@ const PENDING = [
   "src/stores/netTotalStore.ts",
   "src/stores/portStore.ts",
   "src/types/appdisk.ts",
-  "src/types/disk.ts",
   "src/types/lan.ts",
   "src/types/net.ts",
 ];
@@ -180,6 +177,30 @@ function scan(code) {
 
 const violations = [];
 const extra = [];
+const missingCache = [];
+
+/**
+ * 跨语言闸门：`whitelist.rs` 里每一条 `key` 都必须在 catalog 里有
+ * `disk.cache.<key>`。缓存名的 key 集合由 Rust 决定，前端枚举不完 ——
+ * 只能在构建时对着源码核对，否则发版当天才发现英文界面里冒出中文缓存名。
+ */
+const WHITELIST = join(ROOT, "crates/prune-core/src/disk/whitelist.rs");
+const DISK_CATALOG = join(ROOT, "src/i18n/messages/namespaces/disk.ts");
+{
+  const rs = readFileSync(WHITELIST, "utf8");
+  const ts = readFileSync(DISK_CATALOG, "utf8");
+  // 只看 ENTRIES 里的 key（label/rel 也是字符串，不能整文件乱扫）
+  const keys = [...rs.matchAll(/^\s*key:\s*"([^"]+)"/gm)].map((m) => m[1]);
+  // 只核中文块：英文侧由 `MessageTree<typeof zh>` 在 tsc 里强制补齐，
+  // 两套都扫一遍没意义，但扫错块（扫到英文）会让「中文漏 key」漏网。
+  const zhOnly = ts.slice(0, ts.indexOf("const en: MessageTree"));
+  const cacheBlock = zhOnly.slice(zhOnly.indexOf("cache: {"));
+  for (const k of keys) {
+    const bare = /^[a-z][a-z0-9]*$/i.test(k);
+    const pattern = bare ? new RegExp(`^\\s*${k}:`, "m") : new RegExp(`^\\s*"${k}":`, "m");
+    if (!pattern.test(cacheBlock)) missingCache.push(k);
+  }
+}
 
 for (const abs of walk(SRC)) {
   const rel = relative(ROOT, abs);
@@ -196,11 +217,15 @@ for (const abs of walk(SRC)) {
   if (badLocale) extra.push(`${rel}  硬编码 zh-CN 时间/数字格式`);
 }
 
-if (violations.length === 0 && extra.length === 0) {
+if (violations.length === 0 && extra.length === 0 && missingCache.length === 0) {
   console.log("[i18n] ✅ 无硬编码中文");
   process.exit(0);
 }
 
+if (missingCache.length) {
+  console.error(`[i18n] ❌ ${missingCache.length} 条后端缓存名缺 catalog 条目：`);
+  for (const k of missingCache) console.error(`  disk.cache.${k}  （whitelist.rs）`);
+}
 if (violations.length) {
   console.error(`[i18n] ❌ ${violations.length} 处硬编码中文：`);
   for (const v of violations) console.error("  " + v);

@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 
+import { useI18n } from "../i18n/store";
+import type { I18n } from "../i18n";
 import { formatBytes, formatPercent, formatRelative } from "../lib/format";
 import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
@@ -8,7 +10,7 @@ import { BarList } from "./charts/BarList";
 import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
 import { ProjectHealthCard } from "./ProjectHealthCard";
-import { LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
+import { cacheLabel, LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
 import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Badge, Meter } from "./primitives";
 
@@ -20,6 +22,7 @@ function VolumeBar({
   volume: VolumeInfo;
   reclaimable: number;
 }) {
+  const { t } = useI18n();
   const used = Math.max(0, volume.totalBytes - volume.availableBytes);
   const usedRatio = volume.totalBytes > 0 ? used / volume.totalBytes : 0;
   const reclaimOfFree =
@@ -34,7 +37,11 @@ function VolumeBar({
         segments={[{ value: Math.max(0.04, usedRatio), color: ringColor }]}
         size={72}
         stroke={6}
-        ariaLabel={`卷已用 ${formatPercent(usedRatio)}：${formatBytes(used)} / ${formatBytes(volume.totalBytes)}`}
+        ariaLabel={t("disk.volume.aria", {
+          pct: formatPercent(usedRatio),
+          used: formatBytes(used),
+          total: formatBytes(volume.totalBytes),
+        })}
       >
         <span className="font-mono text-[13px] tabular-nums text-ink">
           {Math.round(usedRatio * 100)}
@@ -43,16 +50,18 @@ function VolumeBar({
       </RingGauge>
       <div className="min-w-0 flex-1">
         <div className="flex items-baseline justify-between">
-          <span className="text-[11px] font-medium text-ink-dim">卷容量</span>
+          <span className="text-[11px] font-medium text-ink-dim">{t("disk.volume.title")}</span>
           <span className="font-mono text-[11px] tabular-nums text-ink-dim">
-            已用 {formatBytes(used)} / {formatBytes(volume.totalBytes)}
-            <span className="ml-2 text-ink">剩余 {formatBytes(volume.userAvailableBytes)}</span>
+            {t("disk.volume.used", { used: formatBytes(used), total: formatBytes(volume.totalBytes) })}
+            <span className="ml-2 text-ink">
+              {t("disk.volume.free", { free: formatBytes(volume.userAvailableBytes) })}
+            </span>
           </span>
         </div>
         <p className="mt-1.5 text-[10px] text-ink-faint">
-          可回收 <span className="font-mono tabular-nums text-accent">{formatBytes(reclaimable)}</span>
+          {t("disk.volume.reclaimable", { size: formatBytes(reclaimable) })}
           {reclaimOfFree > 0
-            ? ` · 相当于剩余空间的 ${Math.round(reclaimOfFree * 100)}%`
+            ? t("disk.volume.reclaimOfFree", { pct: Math.round(reclaimOfFree * 100) })
             : ""}
         </p>
       </div>
@@ -63,11 +72,11 @@ function VolumeBar({
 /** A4 活跃度分界（与 prune-core STALE_DAYS 对齐）：超过即标灰 */
 const STALE_DAYS = 180;
 
-function formatAge(days: number): string {
-  if (days <= 0) return "最近有改动";
-  if (days < 30) return `${days} 天未改动`;
-  if (days < 365) return `${Math.round(days / 30)} 个月未改动`;
-  return `${(days / 365).toFixed(1)} 年未改动`;
+function formatAge(days: number, t: I18n["t"]): string {
+  if (days <= 0) return t("disk.age.recent");
+  if (days < 30) return t("common.unit.unchanged", { n: days });
+  if (days < 365) return t("common.unit.unchangedMonths", { n: Math.round(days / 30) });
+  return t("common.unit.unchangedYears", { n: (days / 365).toFixed(1) });
 }
 
 /** 主窗口「可回收」tab：A1 杀手卡片 + A2 分组 + A3 合并建议 + dry-run → 清理 */
@@ -81,6 +90,8 @@ export function ReclaimBoard() {
   const lastReclaimed = useDiskStore((s) => s.lastReclaimed);
   const refresh = useDiskStore((s) => s.refresh);
   const clearReclaimed = useDiskStore((s) => s.clearReclaimed);
+  const i18n = useI18n();
+  const { t } = i18n;
 
   if (error) {
     return (
@@ -93,11 +104,13 @@ export function ReclaimBoard() {
   if (!report) {
     return (
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <h1 className="text-[15px] font-semibold tracking-tight">可回收空间</h1>
+        <h1 className="text-[15px] font-semibold tracking-tight">{t("disk.title")}</h1>
         <p className="mt-1 text-[11px] text-ink-faint">
           {scanning
-            ? `正在扫描…${progress ? `（${progress.done}/${progress.total}）` : ""}`
-            : "首次扫描在启动 30 秒后自动开始，也可以手动触发。"}
+            ? progress
+              ? t("disk.scanningWith", { done: progress.done, total: progress.total })
+              : t("disk.scanning")
+            : t("common.hint.firstScan")}
         </p>
         <button
           type="button"
@@ -106,10 +119,12 @@ export function ReclaimBoard() {
           className="mt-3 flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
         >
           <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
-          {scanning ? "扫描中" : "立即扫描"}
+          {scanning ? t("common.progress.scanning") : t("common.action.scanNow")}
         </button>
         {/* UI v4（§6.7）：剪刀线稿空态——等待扫描也有情绪 */}
-        {!scanning ? <EmptyState title="还没有扫描结果" note="扫描是只读统计，不会动任何文件。" /> : null}
+        {!scanning ? (
+          <EmptyState title={t("disk.empty.noReportTitle")} note={t("disk.empty.noReportNote")} />
+        ) : null}
       </div>
     );
   }
@@ -123,11 +138,11 @@ export function ReclaimBoard() {
           <h1 className="text-[22px] font-semibold leading-tight tracking-tight">
             <span className="mr-1 text-accent">⚡</span>
             {formatBytes(report.totals.reclaimable)}
-            <span className="ml-1.5 text-[13px] font-normal text-ink-faint">可回收</span>
+            <span className="ml-1.5 text-[13px] font-normal text-ink-faint">
+              {t("disk.reclaimableSuffix")}
+            </span>
           </h1>
-          <p className="mt-1 text-[11px] text-ink-faint">
-            L1 零后悔 + L2 可再生 + L3 需判断 · Docker 等 L4 高风险项不计入
-          </p>
+          <p className="mt-1 text-[11px] text-ink-faint">{t("disk.subnet")}</p>
         </div>
         <button
           type="button"
@@ -136,7 +151,7 @@ export function ReclaimBoard() {
           className="mt-1 flex shrink-0 items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
         >
           <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
-          {scanning ? "扫描中" : "重新扫描"}
+          {scanning ? t("common.progress.scanning") : t("common.action.rescan")}
         </button>
       </div>
 
@@ -145,7 +160,7 @@ export function ReclaimBoard() {
 
       {/* UI v4（§6.7）：扫完了但没有可回收项——「很干净」是正反馈不是缺数据 */}
       {report.totals.reclaimable === 0 ? (
-        <EmptyState title="很干净，没什么可剪的 ✂️" note="跨平台二进制、可再生缓存、项目依赖都没有明显浪费。" />
+        <EmptyState title={t("disk.empty.cleanTitle")} note={t("disk.empty.cleanNote")} />
       ) : null}
 
       <ReclaimStack totals={report.totals} />
@@ -155,8 +170,13 @@ export function ReclaimBoard() {
       {scanning ? (
         <div className="mt-3 text-[10px] text-ink-faint">
           {progress
-            ? `扫描中 ${progress.done}/${progress.total} · ${progress.phase} · 已统计 ${formatBytes(progress.bytesSoFar)}`
-            : "扫描中…"}
+            ? t("disk.progressLine", {
+                done: progress.done,
+                total: progress.total,
+                phase: progress.phase,
+                bytes: formatBytes(progress.bytesSoFar),
+              })
+            : t("common.progress.scanning")}
         </div>
       ) : null}
 
@@ -172,12 +192,19 @@ export function ReclaimBoard() {
             </span>
           ) : null}
           <span>
-            已移入废纸篓 {lastReclaimed.moved} 项 · {formatBytes(lastReclaimed.bytes)}
-            {lastReclaimed.skipped > 0 ? ` · 跳过 ${lastReclaimed.skipped} 个已消失条目` : ""}
-            {lastReclaimed.failed.length > 0 ? ` · 失败 ${lastReclaimed.failed.length} 项` : ""}
+            {t("disk.reclaimed.moved", {
+              n: lastReclaimed.moved,
+              size: formatBytes(lastReclaimed.bytes),
+            })}
+            {lastReclaimed.skipped > 0
+              ? t("disk.reclaimed.skipped", { n: lastReclaimed.skipped })
+              : ""}
+            {lastReclaimed.failed.length > 0
+              ? t("disk.reclaimed.failed", { n: lastReclaimed.failed.length })
+              : ""}
           </span>
           <button type="button" onClick={clearReclaimed} className="text-[10px] text-ink-dim hover:text-ink">
-            知道了
+            {t("disk.reclaimed.dismiss")}
           </button>
         </div>
       ) : null}
@@ -186,9 +213,9 @@ export function ReclaimBoard() {
         <DeadweightCard group={a1} dw={a1.deadweight} />
       ) : (
         <section className="mt-4">
-          <h2 className="text-[12px] font-medium text-ink-dim">跨平台二进制 · 未发现</h2>
+          <h2 className="text-[12px] font-medium text-ink-dim">{t("disk.deadweight.noneTitle")}</h2>
           <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">
-            Yarn v6 缓存不存在，或其中只有本机架构的包——本地单架构安装时这是正常状态。
+            {t("disk.deadweight.noneNote")}
           </p>
         </section>
       )}
@@ -197,12 +224,13 @@ export function ReclaimBoard() {
         <section className="mt-4 rounded-xl bg-warn/[0.06] p-3.5">
           <div className="flex items-baseline justify-between">
             <h2 className="text-[12px] font-medium text-ink">
-              同一批依赖存了 {report.dup.managers.length} 份
+              {t("disk.dup.title", { n: report.dup.managers.length })}
             </h2>
             <span className="font-mono text-[12px] tabular-nums text-warn">
               {formatBytes(report.dup.totalBytes)}
             </span>
           </div>
+          {/* advice 由 Rust 生成：P4 批次随 commands 一起本地化，这里先用后端串 */}
           <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">{report.dup.advice}</p>
           <div className="mt-2 flex flex-wrap gap-1.5">
             {report.dup.managers.map(([name, bytes]) => (
@@ -222,11 +250,14 @@ export function ReclaimBoard() {
 
       <section className="mt-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="text-[12px] font-medium text-ink-dim">全部可回收项</h2>
+          <h2 className="text-[12px] font-medium text-ink-dim">{t("disk.groups.title")}</h2>
           <span className="text-[10px] text-ink-faint">
-            {report.groups.length} 组 · 扫描 {formatRelative(report.scannedAt)} · 耗时{" "}
-            {(report.scanElapsedMs / 1000).toFixed(1)} s
-            {report.incremental ? " · 增量" : ""}
+            {t("disk.groups.meta", {
+              n: report.groups.length,
+              when: formatRelative(report.scannedAt, i18n.locale),
+              secs: (report.scanElapsedMs / 1000).toFixed(1),
+            })}
+            {report.incremental ? t("disk.groups.incremental") : ""}
           </span>
         </div>
         <ul className="mt-1.5 space-y-1">
@@ -249,35 +280,47 @@ export function ReclaimBoard() {
  * 总量为 0 时 StackBar 自身不渲染（不画空轨道冒充数据）。
  */
 function ReclaimStack({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
+  const { t } = useI18n();
   return (
     <div className="mt-4">
       <div className="flex items-baseline justify-between">
-        <span className="text-[11px] font-medium text-ink-dim">可回收构成</span>
-        <span className="text-[10px] text-ink-faint">斜纹段 = 只给命令，不计入</span>
+        <span className="text-[11px] font-medium text-ink-dim">{t("disk.stack.title")}</span>
+        <span className="text-[10px] text-ink-faint">{t("disk.stack.note")}</span>
       </div>
       <StackBar
         className="mt-2"
-        ariaLabel={`可回收构成：L1 ${formatBytes(totals.deadweight)}，L2 ${formatBytes(totals.l2)}，L3 ${formatBytes(totals.l3)}，L4 ${formatBytes(totals.l4)} 不计入`}
+        ariaLabel={t("disk.stack.aria", {
+          l1: formatBytes(totals.deadweight),
+          l2: formatBytes(totals.l2),
+          l3: formatBytes(totals.l3),
+          l4: formatBytes(totals.l4),
+        })}
         segments={[
-          { key: "l1", label: "L1 跨平台二进制", value: totals.deadweight, tone: "accent" },
-          { key: "l2", label: "L2 包管理器等缓存", value: totals.l2, tone: "info" },
-          { key: "l3", label: "L3 项目依赖 / 模拟器", value: totals.l3, tone: "neutral" },
-          { key: "l4", label: "L4 Docker 等高风险项", value: totals.l4, muted: true },
+          { key: "l1", label: `L1 ${t("disk.tier.l1")}`, value: totals.deadweight, tone: "accent" },
+          { key: "l2", label: `L2 ${t("disk.tier.l2")}`, value: totals.l2, tone: "info" },
+          { key: "l3", label: `L3 ${t("disk.tier.l3")}`, value: totals.l3, tone: "neutral" },
+          { key: "l4", label: `L4 ${t("disk.tier.l4")}`, value: totals.l4, muted: true },
         ]}
       />
       <p className="mt-1.5 text-[10px] text-ink-faint">
-        L1 {formatBytes(totals.deadweight)} · L2 {formatBytes(totals.l2)} · L3{" "}
-        {formatBytes(totals.l3)} · L4 {formatBytes(totals.l4)} 只给命令，不计入
+        {t("disk.tier.total", {
+          l1: formatBytes(totals.deadweight),
+          l2: formatBytes(totals.l2),
+          l3: formatBytes(totals.l3),
+          l4: formatBytes(totals.l4),
+        })}
       </p>
     </div>
   );
 }
 
-function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {  const rows: { level: Level; tag: string; label: string; bytes: number; hint: string }[] = [
-    { level: "l1", tag: "L1", label: "跨平台二进制", bytes: totals.deadweight, hint: "零后悔 · 你的 Mac 永远加载不了" },
-    { level: "l2", tag: "L2", label: "包管理器等缓存", bytes: totals.l2, hint: "可再生 · 删了会重建，只慢下一次安装" },
-    { level: "l3", tag: "L3", label: "项目依赖 / 模拟器", bytes: totals.l3, hint: "需判断 · 要重装或丢模拟器状态，逐个确认" },
-    { level: "l4", tag: "L4", label: "Docker 等高风险项", bytes: totals.l4, hint: "只提供命令，不执行，不计入主数字" },
+function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
+  const { t } = useI18n();
+  const rows: { level: Level; tag: string; label: string; bytes: number; hint: string }[] = [
+    { level: "l1", tag: "L1", label: t("disk.tier.l1"), bytes: totals.deadweight, hint: t("disk.tier.l1Hint") },
+    { level: "l2", tag: "L2", label: t("disk.tier.l2"), bytes: totals.l2, hint: t("disk.tier.l2Hint") },
+    { level: "l3", tag: "L3", label: t("disk.tier.l3"), bytes: totals.l3, hint: t("disk.tier.l3Hint") },
+    { level: "l4", tag: "L4", label: t("disk.tier.l4"), bytes: totals.l4, hint: t("disk.tier.l4Hint") },
   ];
   const max = Math.max(...rows.map((r) => r.bytes), 1);
 
@@ -304,18 +347,22 @@ function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: nu
 function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats }) {
   const loadPreview = useDiskStore((s) => s.loadPreview);
   const busy = useDiskStore((s) => s.busy);
+  const { t, locale } = useI18n();
 
   return (
     <section className="mt-4 rounded-xl bg-accent/[0.06] p-3.5">
       <div className="flex items-start justify-between gap-3">
         <div>
           <h2 className="text-[13px] font-semibold tracking-tight text-ink">
-            🟢 {formatBytes(dw.bytes)} · 你的 Mac 永远加载不了
+            🟢 {t("disk.deadweight.title", { size: formatBytes(dw.bytes) })}
           </h2>
           <p className="mt-0.5 text-[10.5px] text-ink-faint">
-            {group.label} · {dw.entryCount} 个跨平台二进制缓存包
-            {dw.ratio != null ? ` · 浪费比 ${dw.ratio.toFixed(1)} : 1` : ""} · 本机可用{" "}
-            {formatBytes(dw.nativeBytes)}
+            {t("disk.deadweight.meta", {
+              label: cacheLabel(group, locale),
+              n: dw.entryCount,
+            })}
+            {dw.ratio != null ? t("disk.deadweight.ratio", { ratio: dw.ratio.toFixed(1) }) : ""}
+            {t("disk.deadweight.native", { size: formatBytes(dw.nativeBytes) })}
           </p>
         </div>
         <button
@@ -324,7 +371,7 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
           disabled={busy}
           className="shrink-0 rounded-md bg-accent/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
         >
-          预览清理
+          {t("disk.deadweight.preview")}
         </button>
       </div>
 
@@ -333,7 +380,12 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
           <div key={p.platform} className="flex items-baseline justify-between text-[10.5px]">
             <span className="text-ink-dim">{p.platform}</span>
             <span className="text-ink-faint">
-              {p.entryCount} 个 · <span className="font-mono tabular-nums text-ink-dim">{formatBytes(p.bytes)}</span>
+              <span className="font-mono tabular-nums text-ink-dim">
+                {t("disk.deadweight.platformEntry", {
+                  n: p.entryCount,
+                  size: formatBytes(p.bytes),
+                })}
+              </span>
             </span>
           </div>
         ))}
@@ -343,15 +395,39 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
       <StackBar
         className="mt-2.5"
         height={5}
-        ariaLabel={`跨平台浪费 ${formatBytes(dw.bytes)}，本机可用 ${formatBytes(dw.nativeBytes)}${dw.ratio != null ? `，浪费比 ${dw.ratio.toFixed(1)} 比 1` : ""}`}
+        ariaLabel={
+          dw.ratio != null
+            ? t("disk.deadweight.ariaRatio", {
+                waste: formatBytes(dw.bytes),
+                native: formatBytes(dw.nativeBytes),
+                ratio: dw.ratio.toFixed(1),
+              })
+            : t("disk.deadweight.aria", {
+                waste: formatBytes(dw.bytes),
+                native: formatBytes(dw.nativeBytes),
+              })
+        }
         segments={[
-          { key: "waste", label: "跨平台浪费", value: dw.bytes, tone: "accent" },
-          { key: "native", label: "本机可用", value: dw.nativeBytes, tone: "neutral" },
+          { key: "waste", label: t("disk.deadweight.segWaste"), value: dw.bytes, tone: "accent" },
+          {
+            key: "native",
+            label: t("disk.deadweight.segNative"),
+            value: dw.nativeBytes,
+            tone: "neutral",
+          },
         ]}
       />
       <p className="mt-1 text-[10px] text-ink-faint">
-        浪费 {formatBytes(dw.bytes)} · 本机可用 {formatBytes(dw.nativeBytes)}
-        {dw.ratio != null ? ` · 浪费比 ${dw.ratio.toFixed(1)} : 1` : ""}
+        {dw.ratio != null
+          ? t("disk.deadweight.summaryRatio", {
+              waste: formatBytes(dw.bytes),
+              native: formatBytes(dw.nativeBytes),
+              ratio: dw.ratio.toFixed(1),
+            })
+          : t("disk.deadweight.summary", {
+              waste: formatBytes(dw.bytes),
+              native: formatBytes(dw.nativeBytes),
+            })}
       </p>
 
       {/* 各平台浪费分布（§7.6「多实体比大小」）：谁是大头一眼看出 */}
@@ -362,15 +438,22 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
             key: p.platform,
             label: p.platform,
             value: p.bytes,
-            display: `${p.entryCount} 个 · ${formatBytes(p.bytes)}`,
-            title: `${p.platform}：${p.entryCount} 个跨平台缓存包，共 ${formatBytes(p.bytes)}`,
+            display: t("disk.deadweight.platformEntry", {
+              n: p.entryCount,
+              size: formatBytes(p.bytes),
+            }),
+            title: t("disk.deadweight.barTitle", {
+              platform: p.platform,
+              n: p.entryCount,
+              size: formatBytes(p.bytes),
+            }),
           }))}
         />
       ) : null}
 
       <details className="mt-2">
         <summary className="cursor-pointer text-[10.5px] text-ink-faint hover:text-ink-dim">
-          最大的 {Math.min(dw.items.length, 10)} 个条目
+          {t("disk.deadweight.topItems", { n: Math.min(dw.items.length, 10) })}
         </summary>
         <ul className="mt-1.5 space-y-0.5">
           {dw.items.slice(0, 10).map((it) => (
@@ -389,7 +472,7 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
 
       {dw.otherBytes > 0 ? (
         <p className="mt-2 text-[10px] text-ink-faint">
-          另有 {formatBytes(dw.otherBytes)} 为普通包或依赖 Rosetta 的 darwin-x64 条目，不在默认清理清单内。
+          {t("disk.deadweight.other", { size: formatBytes(dw.otherBytes) })}
         </p>
       ) : null}
     </section>
@@ -399,6 +482,7 @@ function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats 
 function GroupRow({ group }: { group: CacheGroup }) {
   const loadPreview = useDiskStore((s) => s.loadPreview);
   const busy = useDiskStore((s) => s.busy);
+  const { t, locale } = useI18n();
   const meta = LEVEL_META[group.level];
   const details = group.details ?? [];
   const [menu, setMenu] = useState<PathTarget | null>(null);
@@ -417,17 +501,23 @@ function GroupRow({ group }: { group: CacheGroup }) {
         e.preventDefault();
         setMenu({ path: group.root, isDir: true, x: e.clientX, y: e.clientY });
       }}
-      title={rootIsDir ? `${group.root}\n右键可打开所在目录` : group.root}
+      title={
+        rootIsDir ? t("disk.fileList.title", { path: group.root, tip: t("disk.pathMenu.rootTip") }) : group.root
+      }
     >
       <div className="flex items-center gap-2">
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[11.5px] text-ink">{group.label}</span>
+          <span className="block truncate text-[11.5px] text-ink">{cacheLabel(group, locale)}</span>
           <span className="mt-0.5 block truncate text-[10px] text-ink-faint" title={group.root}>
-            {group.entryCount > 0 ? `${group.entryCount} 项 · ` : ""}
+            {group.entryCount > 0
+              ? `${t("disk.group.entryCount", { n: group.entryCount })} · `
+              : ""}
             {group.root}
           </span>
         </span>
-        <Badge tone={meta.tone}>{meta.label}</Badge>
+        <Badge tone={meta.tone}>
+          {meta.dot} {t(meta.labelKey)}
+        </Badge>
         <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
           {formatBytes(group.totalBytes)}
         </span>
@@ -438,14 +528,14 @@ function GroupRow({ group }: { group: CacheGroup }) {
             disabled={busy || group.totalBytes === 0}
             className="w-16 shrink-0 rounded bg-white/[0.05] px-1.5 py-1 text-[10px] text-ink-dim transition-colors hover:bg-accent/[0.12] hover:text-accent disabled:opacity-40"
           >
-            预览
+            {t("disk.group.preview")}
           </button>
         ) : (
           <span
             className="w-16 shrink-0 text-center text-[10px] text-ink-faint"
-            title={group.level === "l4" ? "只提供命令，不执行" : "分散在多个项目目录，只做统计"}
+            title={group.level === "l4" ? t("disk.group.manualTip") : t("disk.group.statsOnlyTip")}
           >
-            {group.level === "l4" ? "手动处理" : "只统计"}
+            {group.level === "l4" ? t("disk.group.manual") : t("disk.group.statsOnly")}
           </span>
         )}
       </div>
@@ -457,14 +547,15 @@ function GroupRow({ group }: { group: CacheGroup }) {
 
 /** A4/A5 明细：按体积降序（Rust 侧已排），Top 20 + 「N 天未改动」，>180 天标灰 */
 function GroupDetails({ details }: { details: DetailItem[] }) {
+  const { t } = useI18n();
   const stale = details.filter((d) => d.ageDays > STALE_DAYS).length;
   const shown = details.slice(0, 20);
   const [menu, setMenu] = useState<PathTarget | null>(null);
   return (
     <details className="mt-1 pl-2">
       <summary className="cursor-pointer text-[10px] text-ink-faint hover:text-ink-dim">
-        {details.length} 项明细（按体积）
-        {stale > 0 ? ` · ${stale} 项超过 ${STALE_DAYS} 天未改动` : ""}
+        {t("disk.details.summary", { n: details.length })}
+        {stale > 0 ? t("disk.details.stale", { n: stale, days: STALE_DAYS }) : ""}
       </summary>
       <ul className="mt-1 space-y-0.5">
         {shown.map((d) => (
@@ -475,12 +566,12 @@ function GroupDetails({ details }: { details: DetailItem[] }) {
               e.preventDefault();
               setMenu({ path: d.path, isDir: true, x: e.clientX, y: e.clientY });
             }}
-            title={`${d.path}\n右键可打开所在目录`}
+            title={t("disk.fileList.title", { path: d.path, tip: t("disk.pathMenu.rootTip") })}
           >
             <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
               {formatBytes(d.bytes)}
             </span>
-            <span className="w-20 shrink-0 text-ink-faint">{formatAge(d.ageDays)}</span>
+            <span className="w-20 shrink-0 text-ink-faint">{formatAge(d.ageDays, t)}</span>
             <span
               className={`min-w-0 flex-1 truncate ${d.ageDays > STALE_DAYS ? "text-ink-faint" : "text-ink-dim"}`}
             >
@@ -489,7 +580,9 @@ function GroupDetails({ details }: { details: DetailItem[] }) {
           </li>
         ))}
         {details.length > shown.length ? (
-          <li className="text-[10px] text-ink-faint">… 另有 {details.length - shown.length} 项</li>
+          <li className="text-[10px] text-ink-faint">
+            {t("disk.details.more", { n: details.length - shown.length })}
+          </li>
         ) : null}
       </ul>
       {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
@@ -511,6 +604,7 @@ function joinPath(root: string, name: string): string {
 function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void }) {
   const [err, setErr] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const { t } = useI18n();
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -526,7 +620,7 @@ function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void
 
   const reveal = async () => {
     if (!isTauri()) {
-      setErr("浏览器预览模式无法打开 Finder");
+      setErr(t("disk.err.needsDesktop"));
       return;
     }
     try {
@@ -543,7 +637,7 @@ function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void
       setCopied(true);
       onClose();
     } catch {
-      setErr("复制失败");
+      setErr(t("common.action.copyFailed"));
     }
   };
 
@@ -567,7 +661,7 @@ function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void
           className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
         >
           {target.isDir ? <FolderIcon size={12} /> : <FileIcon size={12} />}
-          {target.isDir ? "在 Finder 中打开" : "在 Finder 中显示"}
+          {target.isDir ? t("disk.pathMenu.openDir") : t("disk.pathMenu.revealFile")}
         </button>
         <button
           type="button"
@@ -575,7 +669,7 @@ function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void
           className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
         >
           <span className="w-3 text-center font-mono text-[10px] text-ink-faint">⧉</span>
-          {copied ? "已复制" : "复制路径"}
+          {copied ? t("common.action.copied") : t("disk.pathMenu.copyPath")}
         </button>
         {err ? (
           <p className="border-t border-hairline-soft px-2.5 pt-1.5 pb-1 text-[10px] leading-snug text-danger">
@@ -596,6 +690,7 @@ function FileList({ root }: { root: string }) {
   const [err, setErr] = useState<string | null>(null);
   const [menu, setMenu] = useState<PathTarget | null>(null);
   const [toast, setToast] = useState<string | null>(null);
+  const { t } = useI18n();
 
   useEffect(() => {
     let alive = true;
@@ -662,7 +757,10 @@ function FileList({ root }: { root: string }) {
                     setMenu({ path: full, isDir: c.isDir ?? false, x: e.clientX, y: e.clientY });
                   }}
                   className="flex w-full items-center gap-2 px-2 py-[3px] text-left text-[10px] text-ink-dim transition-colors hover:bg-white/[0.05] hover:text-ink"
-                  title={`${full}\n单击在 Finder 中打开 · 右键更多`}
+                  title={t("disk.fileList.title", {
+                    path: full,
+                    tip: t("disk.pathMenu.openWithTip"),
+                  })}
                 >
                   {c.isDir ? (
                     <FolderIcon size={11} className="shrink-0 text-accent/70" />
@@ -696,13 +794,15 @@ function PreviewPanel() {
   const busy = useDiskStore((s) => s.busy);
   const [confirmed, setConfirmed] = useState(false);
   const [menu, setMenu] = useState<PathTarget | null>(null);
+  const { t } = useI18n();
 
   // 弹层先出：清单还没生成时只渲染骨架
   if (!preview) {
     return (
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-[#0b0e11]/95 px-5 py-3 backdrop-blur-xl">
         <h3 className="text-[12px] font-medium text-ink">
-          正在生成清理清单<span className="animate-pulse text-ink-faint">…</span>
+          {t("disk.preview.building")}
+          <span className="animate-pulse text-ink-faint">…</span>
         </h3>
         <div className="mt-2 space-y-1.5">
           {[0, 1, 2].map((i) => (
@@ -724,9 +824,9 @@ function PreviewPanel() {
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h3 className="text-[12px] font-medium text-ink">
-            待清理 <span className="font-mono tabular-nums text-accent">{formatBytes(preview.totalBytes)}</span>
+            {t("disk.preview.title", { size: formatBytes(preview.totalBytes) })}
             <span className="ml-1.5 text-[10px] font-normal text-ink-faint">
-              {preview.items.length} 项 · 全部走废纸篓，可恢复
+              {t("disk.preview.meta", { n: preview.items.length })}
             </span>
           </h3>
           <ul className="mt-1 max-h-56 overflow-y-auto pr-2">
@@ -738,7 +838,10 @@ function PreviewPanel() {
                     e.preventDefault();
                     setMenu({ path: it.path, isDir: true, x: e.clientX, y: e.clientY });
                   }}
-                  title={`${it.path}\n右键可打开所在目录`}
+                  title={t("disk.fileList.title", {
+                    path: it.path,
+                    tip: t("disk.pathMenu.rootTip"),
+                  })}
                 >
                   <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
                     {formatBytes(it.bytes)}
@@ -746,13 +849,15 @@ function PreviewPanel() {
                   <span className="min-w-0 flex-1 truncate">{it.label}</span>
                 </div>
                 <div className="ml-[68px]">
-                  <p className="text-[9.5px] text-ink-faint/80">一级条目 · 单击在 Finder 中打开，右键更多</p>
+                  <p className="text-[9.5px] text-ink-faint/80">{t("disk.preview.itemTip")}</p>
                   <FileList root={it.path} />
                 </div>
               </li>
             ))}
             {preview.items.length > shown.length ? (
-              <li className="text-[10px] text-ink-faint">… 另有 {preview.items.length - shown.length} 项</li>
+              <li className="text-[10px] text-ink-faint">
+                {t("disk.preview.more", { n: preview.items.length - shown.length })}
+              </li>
             ) : null}
           </ul>
           {preview.notes.map((n) => (
@@ -771,7 +876,9 @@ function PreviewPanel() {
                 onChange={(e) => setConfirmed(e.target.checked)}
                 className="size-3 accent-[#34d399]"
               />
-              {preview.totalBytes > 20 * 1024 ** 3 ? "超过 20 GB，确认执行" : "该级别需确认后执行"}
+              {preview.totalBytes > 20 * 1024 ** 3
+                ? t("disk.preview.confirmBig")
+                : t("disk.preview.confirmLevel")}
             </label>
           ) : null}
           <div className="flex items-center gap-2">
@@ -780,7 +887,7 @@ function PreviewPanel() {
               onClick={clear}
               className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
             >
-              取消
+              {t("common.action.cancel")}
             </button>
             <button
               type="button"
@@ -788,7 +895,7 @@ function PreviewPanel() {
               onClick={() => void execute(confirmed)}
               className="rounded-md bg-accent/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
             >
-              {busy ? "执行中…" : "移入废纸篓"}
+              {busy ? t("common.action.executing") : t("disk.preview.execute")}
             </button>
           </div>
         </div>
