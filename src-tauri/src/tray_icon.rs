@@ -16,6 +16,7 @@
 
 use std::sync::OnceLock;
 
+use prune_core::pet::PetMood;
 use tauri::image::Image;
 
 /// 主题持久化键（与 tray.rs 共用同一个 settings.json，只改本键）
@@ -187,6 +188,79 @@ fn decode_frames(bytes: [&'static [u8]; 4]) -> [Image<'static>; 4] {
     std::array::from_fn(|i| Image::from_bytes(bytes[i]).expect("内置托盘动画帧损坏"))
 }
 
+// ---- M20 · 心情帧集（Cat 皮专属，docs/f1-pet-mood-plan.md §3.2）----
+//
+// Pant / Alert 各 4 帧，由 scripts/gen-tray-cat-moods.mjs 生成（可重跑，确定性渲染）。
+// Leisure / Sprint 复用前跃帧集（Sprint 只是播得更快），不在此定义。
+
+/// 心情 → 帧集。只对 Cat 皮有意义；剪刀皮不是宠物，调用方（tray.rs）负责皮检查，
+/// 这里不做分支——剪刀调用 Pant 帧集会得到 4 张猫图（资源从不混用，防呆靠调用方）。
+pub fn mood_frames(mood: PetMood) -> &'static [Image<'static>] {
+    match mood {
+        PetMood::Leisure | PetMood::Sprint => IconTheme::Cat.frames(),
+        PetMood::Pant => pant_frames(),
+        PetMood::Alert => arch_frames(),
+    }
+}
+
+/// 心情 → 播放顺序。Pant / Alert 是独立 4 帧循环。
+pub fn mood_beats(mood: PetMood) -> &'static [usize] {
+    match mood {
+        PetMood::Leisure | PetMood::Sprint => IconTheme::Cat.beats(),
+        PetMood::Pant | PetMood::Alert => &MOOD_BEATS,
+    }
+}
+
+const MOOD_BEATS: [usize; 4] = [0, 1, 2, 3];
+
+fn pant_frames() -> &'static [Image<'static>] {
+    static FRAMES: OnceLock<Vec<Image<'static>>> = OnceLock::new();
+    FRAMES.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let bytes: [&'static [u8]; 4] = [
+            include_bytes!("../icons/tray-anim/cat-mood/pant/macos/f0.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/pant/macos/f1.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/pant/macos/f2.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/pant/macos/f3.png"),
+        ];
+        #[cfg(not(target_os = "macos"))]
+        let bytes: [&'static [u8]; 4] = [
+            include_bytes!("../icons/tray-anim/cat-mood/pant/win/f0.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/pant/win/f1.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/pant/win/f2.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/pant/win/f3.png"),
+        ];
+        bytes
+            .iter()
+            .map(|b| Image::from_bytes(*b).expect("内置喘气帧损坏"))
+            .collect()
+    })
+}
+
+fn arch_frames() -> &'static [Image<'static>] {
+    static FRAMES: OnceLock<Vec<Image<'static>>> = OnceLock::new();
+    FRAMES.get_or_init(|| {
+        #[cfg(target_os = "macos")]
+        let bytes: [&'static [u8]; 4] = [
+            include_bytes!("../icons/tray-anim/cat-mood/arch/macos/f0.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/arch/macos/f1.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/arch/macos/f2.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/arch/macos/f3.png"),
+        ];
+        #[cfg(not(target_os = "macos"))]
+        let bytes: [&'static [u8]; 4] = [
+            include_bytes!("../icons/tray-anim/cat-mood/arch/win/f0.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/arch/win/f1.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/arch/win/f2.png"),
+            include_bytes!("../icons/tray-anim/cat-mood/arch/win/f3.png"),
+        ];
+        bytes
+            .iter()
+            .map(|b| Image::from_bytes(*b).expect("内置炸毛帧损坏"))
+            .collect()
+    })
+}
+
 // ---- 持久化 ----
 
 /// 读主题；文件不存在 / 缺键 / 值不认识 → 默认剪刀
@@ -275,5 +349,50 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// 心情帧集（M20）：每个非悠闲心情都必须可解码、尺寸与主帧集一致、beats 不越界。
+    /// 换心情最常见的坑与换皮肤相同——资源路径写错（编译期 panic）或帧尺寸漂移。
+    #[test]
+    fn every_mood_has_decodable_frames() {
+        use prune_core::pet::PetMood;
+        let base = &IconTheme::Cat.frames()[0];
+        for mood in [PetMood::Pant, PetMood::Alert] {
+            let frames = super::mood_frames(mood);
+            assert!(frames.len() >= 2, "{mood:?} 帧数不足以构成动画");
+            for (i, frame) in frames.iter().enumerate() {
+                assert_eq!(
+                    frame.width(),
+                    frames[0].width(),
+                    "{mood:?} 第 {i} 帧宽度漂移"
+                );
+                assert_eq!(
+                    frame.height(),
+                    frames[0].height(),
+                    "{mood:?} 第 {i} 帧高度漂移"
+                );
+                assert!(frame.width() > 0, "{mood:?} 第 {i} 帧尺寸为 0");
+            }
+            // 与前跃帧集同尺寸：切换心情时 macOS 才不会把图标缩放跳变
+            assert_eq!(
+                frames[0].width(),
+                base.width(),
+                "{mood:?} 与前跃帧集宽度不一致"
+            );
+            assert_eq!(
+                frames[0].height(),
+                base.height(),
+                "{mood:?} 与前跃帧集高度不一致"
+            );
+            let beats = super::mood_beats(mood);
+            for &b in beats {
+                assert!(b < frames.len(), "{mood:?} 播放序列索引 {b} 越界");
+            }
+        }
+        // 悠闲 / 狂奔复用前跃帧集
+        assert!(
+            super::mood_frames(PetMood::Leisure).len() == IconTheme::Cat.frames().len(),
+            "悠闲应复用前跃帧集"
+        );
     }
 }

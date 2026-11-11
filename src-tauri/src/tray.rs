@@ -20,6 +20,8 @@ use crate::popover;
 
 use crate::sampler::MemState;
 use crate::tray_icon::{self, IconTheme};
+use prune_core::mem::PressureLevel;
+use prune_core::pet::{PetMood, PetMoodMachine};
 
 /// tray 图标唯一 ID
 pub const TRAY_ID: &str = "prune-tray";
@@ -60,6 +62,8 @@ static TITLE_NET: Mutex<Option<(f64, f64)>> = Mutex::new(None);
 static TITLE_MEM: Mutex<Option<u64>> = Mutex::new(None);
 /// 当前顶部图标主题（M11），启动时从 settings.json 加载
 static TRAY_THEME: AtomicU8 = AtomicU8::new(0);
+/// 宠物心情（M20）：watcher 每拍更新，动画循环逐拍读。Leisure=0
+static MOOD: AtomicU8 = AtomicU8::new(0);
 /// 最近设置的帧索引；相同帧跳过 set（往返节拍里 f1/f2 会出现两次，省 ~30% 主线程跳转）
 static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 /// 面板尺寸（与 tauri.conf.json 一致，popover 内容尺寸同源）
@@ -233,6 +237,11 @@ fn current_theme() -> IconTheme {
     IconTheme::from_u8(TRAY_THEME.load(Ordering::Relaxed))
 }
 
+/// 当前宠物心情（M20）。watcher 每拍更新，动画 / tooltip 随时读。
+fn current_mood() -> PetMood {
+    PetMood::from_u8(MOOD.load(Ordering::Relaxed))
+}
+
 /// 切换顶部图标：落盘 → 立即重发静态图 → 搬勾选态
 fn switch_theme(app: &AppHandle, theme: IconTheme) {
     if current_theme() != theme {
@@ -323,10 +332,21 @@ fn fresh_cpu_usage(app: &AppHandle) -> Option<f32> {
 /// 动画专用 CPU watcher：1 Hz 一拍，EMA 平滑（α≈0.4）。
 /// 独立 `sysinfo::System` 只刷 CPU——与采样主循环完全解耦，
 /// 这里挂了不影响采样，采样忙不影响图标的响应速度。
+///
+/// M20 起兼任**宠物状态观察**：同一拍把 CPU EMA + swap + 内核压力 + 磁盘余量
+/// 喂给 `PetMoodMachine`，结果存 `MOOD` 供动画循环换帧集。swap / 压力是子进程
+/// / sysctl 读数，2 s 一采（缓存值每拍都喂，避免观察机的退出计时被打断）；
+/// 磁盘 statvfs µs 级，10 s 一采。
 pub async fn run_cpu_watch() {
     let mut sys = sysinfo::System::new();
     // 首次 refresh 只是建基准（global_cpu_usage 此时恒 0），不能当读数用
     sys.refresh_cpu_usage();
+    let mut machine = PetMoodMachine::new();
+    let mut tick: u64 = 0;
+    // 慢变量的最近读数缓存（None = 还没采到 / 平台无此口径）
+    let mut last_swap_ratio: Option<f32> = None;
+    let mut last_pressure: Option<PressureLevel> = None;
+    let mut last_disk_free: Option<f32> = None;
     loop {
         tokio::time::sleep(std::time::Duration::from_millis(1000)).await;
         sys.refresh_cpu_usage();
@@ -341,6 +361,43 @@ pub async fn run_cpu_watch() {
         };
         FRESH_CPU.store(ema, Ordering::Relaxed);
         FRESH_CPU_VALID.store(true, Ordering::Relaxed);
+
+        // ── 宠物状态观察（M20）──
+        tick += 1;
+        if tick % 2 == 0 {
+            // swap：sysctl 子进程，2 s 一次（与灵动岛 MemMonitor 同频率）
+            if let Some((total, used, _)) = prune_core::swap::read_swapusage() {
+                last_swap_ratio = (total > 0)
+                    .then(|| used as f32 / total as f32 * 100.0)
+                    .or(last_swap_ratio);
+            }
+            if let Some(p) = prune_core::mem::system::read_pressure() {
+                last_pressure = Some(p.level);
+            }
+        }
+        if tick % 10 == 0 {
+            // 磁盘：statvfs µs 级，10 s 一次足够（慢性信号）
+            if let Some(v) = prune_core::disk::volume_info(&prune_core::paths::home_dir_or_root()) {
+                if v.total_bytes > 0 {
+                    last_disk_free = Some(v.user_available_bytes as f32 / v.total_bytes as f32);
+                }
+            }
+        }
+        let mood = machine.observe(
+            now_ms(),
+            Some(ema as f32 / 100.0),
+            last_swap_ratio,
+            last_pressure,
+            last_disk_free,
+        );
+        let prev = MOOD.swap(mood.as_u8(), Ordering::Relaxed);
+        if prev != mood.as_u8() {
+            eprintln!(
+                "[m20-pet] 心情变化: {:?} → {:?}",
+                PetMood::from_u8(prev),
+                mood
+            );
+        }
     }
 }
 
@@ -358,6 +415,26 @@ fn set_icon_frame(
     tray.set_icon_with_as_template(Some(icon), as_template)
 }
 
+/// 当前心情下应使用的帧集（M20）：Cat 皮 + Pant/Alert → 心情帧集；
+/// 其余组合 → 主题帧集。剪刀皮永远走自己的帧（它不是宠物）。
+fn frames_for(theme: IconTheme, mood: PetMood) -> &'static [tauri::image::Image<'static>] {
+    if theme == IconTheme::Cat && matches!(mood, PetMood::Pant | PetMood::Alert) {
+        tray_icon::mood_frames(mood)
+    } else {
+        theme.frames()
+    }
+}
+
+/// 心情帧集的节奏（M20）：喘气 ~250 ms/帧（1 s 一次呼吸循环），
+/// 炸毛 480 ms/帧（原地警戒的缓慢起伏）。悠闲 / 狂奔不走这里（CPU 节奏）。
+fn mood_beat_ms(mood: PetMood) -> u64 {
+    match mood {
+        PetMood::Pant => 250,
+        PetMood::Alert => 480,
+        _ => 480,
+    }
+}
+
 /// 切到指定帧（None = 回静态原图）。失败只记日志，不 panic、不中断循环；
 /// 相同帧跳过 set。
 fn set_frame(app: &AppHandle, frame: Option<usize>) {
@@ -365,14 +442,15 @@ fn set_frame(app: &AppHandle, frame: Option<usize>) {
         return;
     };
     let theme = current_theme();
+    let mood = current_mood();
     let target = frame.unwrap_or(FRAME_STATIC);
     if LAST_FRAME.load(Ordering::Relaxed) == target {
         return;
     }
-    // 切主题的瞬间 beats 还指向上一个主题的帧数，越界时静默跳过这一帧，
-    // 下一拍 current_theme 已经变了，不会卡在坏状态上
+    // 切主题 / 换心情的瞬间 beats 还指向上一个帧集，越界时静默跳过这一帧，
+    // 下一拍 current 已经变了，不会卡在坏状态上
     let icon = match frame {
-        Some(i) => match theme.frames().get(i) {
+        Some(i) => match frames_for(theme, mood).get(i) {
             Some(img) => img.clone(),
             None => return,
         },
@@ -392,23 +470,42 @@ fn set_frame(app: &AppHandle, frame: Option<usize>) {
 /// M21 的 1 Hz EMA watcher（`fresh_cpu_usage`），最快 1 s 跟手；逐帧读与
 /// 逐轮读等价，但切换主题/开关时能立刻跟上，不用等一轮跑完。
 pub async fn run_anim(app: AppHandle) {
+    let mut last_mood = current_mood();
     loop {
         if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) {
             set_frame(&app, None); // 关闭：回静态原图
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
             continue;
         }
+        // M20：心情变了必须强制重发——同索引指向的是另一套帧的图，
+        // 「同帧跳过」的快路径会把新心情卡在旧画面上
+        let mood = current_mood();
+        if mood != last_mood {
+            last_mood = mood;
+            LAST_FRAME.store(FRAME_DIRTY, Ordering::Relaxed);
+        }
         let theme = current_theme();
-        for &beat in theme.beats() {
-            // 关掉动画、或用户换了皮肤：立刻中断本轮，重新取主题
-            if !CPU_ANIM_ENABLED.load(Ordering::Relaxed) || current_theme() != theme {
+        let mood_frames = theme == IconTheme::Cat && matches!(mood, PetMood::Pant | PetMood::Alert);
+        let beats: &[usize] = if mood_frames {
+            tray_icon::mood_beats(mood)
+        } else {
+            theme.beats()
+        };
+        for &beat in beats {
+            // 关掉动画、换皮肤或换心情：立刻中断本轮，重新取帧集
+            if !CPU_ANIM_ENABLED.load(Ordering::Relaxed)
+                || current_theme() != theme
+                || current_mood() != mood
+            {
                 break;
             }
             set_frame(&app, Some(beat));
-            tokio::time::sleep(std::time::Duration::from_millis(anim_beat_ms(
-                fresh_cpu_usage(&app),
-            )))
-            .await;
+            let ms = if mood_frames {
+                mood_beat_ms(mood)
+            } else {
+                anim_beat_ms(fresh_cpu_usage(&app))
+            };
+            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
         }
     }
 }
@@ -426,6 +523,13 @@ pub fn update_tooltip(app: &AppHandle, usage: Option<f32>) {
         Some(u) => format!("Prune · CPU {u:.0}%"),
         None => "Prune".to_string(),
     };
+    // 心情词（M20）：只对猫皮生效——剪刀不是宠物，没有心情可标。
+    // 悠闲不标（正常态不值得占字符），与菜单栏数字的宽度纪律同源。
+    if current_theme() == IconTheme::Cat {
+        if let Some(word) = current_mood().label() {
+            tip.push_str(&format!(" · {word}"));
+        }
+    }
     if MENU_NUMBERS_ENABLED.load(Ordering::Relaxed) {
         if let Some(full) = cached_numbers_full() {
             tip.push_str(&full);
