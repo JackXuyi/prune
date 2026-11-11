@@ -20,6 +20,10 @@ interface IslandSettings {
   cpuTolerancePct: number;
   swapPct: number;
   memSustainSec: number;
+  /** 端口冲突保镖（M19）：关注端口新占用 / 多持有者 → 灵动岛提报 */
+  portGuard: boolean;
+  /** 局域网新面孔（M23）：邻居表出现新设备 → 灵动岛提报 */
+  lanWatch: boolean;
   maxPerHour: number;
 }
 
@@ -38,6 +42,8 @@ const DEFAULTS: IslandSettings = {
   cpuTolerancePct: 90,
   swapPct: 80,
   memSustainSec: 30,
+  portGuard: true,
+  lanWatch: true,
   maxPerHour: 6,
 };
 
@@ -118,7 +124,7 @@ export function SettingsBoard() {
                 )}
               </div>
               <p className="mt-1.5 text-[11px] leading-5 text-ink-dim">
-                CPU 持续偏高时从刘海里长出一条提报，6 秒后自行收回。悬停展开看是谁在烧。
+                CPU 持续偏高、内存紧张或端口被占用时从刘海里长出一条提报，6 秒后自行收回。悬停展开看是谁在烧。
               </p>
               {status?.available ? (
                 <p className="mt-1 text-[10px] text-ink-faint">
@@ -134,6 +140,52 @@ export function SettingsBoard() {
               checked={cfg.enabled}
               onChange={(v) => update({ enabled: v })}
               label="启用灵动岛"
+            />
+          </div>
+        </section>
+
+        <section
+          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+            disabled ? "opacity-40" : ""
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-medium">端口冲突保镖</span>
+                <span className="text-[10px] text-ink-faint">关注端口新占用 / 多持有者</span>
+              </div>
+              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
+                谁占了 3000、5173 这类开发端口，从刘海里直接告诉你，不用切到端口页。同一端口 10 分钟内不重复提醒。
+              </p>
+            </div>
+            <Switch
+              checked={cfg.portGuard}
+              onChange={(v) => update({ portGuard: v })}
+              label="启用端口冲突保镖"
+            />
+          </div>
+        </section>
+
+        <section
+          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+            disabled ? "opacity-40" : ""
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-medium">局域网新面孔</span>
+                <span className="text-[10px] text-ink-faint">只看邻居表，零主动探测</span>
+              </div>
+              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
+                有新设备连上 Wi-Fi 时从刘海里说一声。同一设备只提醒一次；换了网络会重新记住，不刷屏。
+              </p>
+            </div>
+            <Switch
+              checked={cfg.lanWatch}
+              onChange={(v) => update({ lanWatch: v })}
+              label="启用局域网新面孔"
             />
           </div>
         </section>

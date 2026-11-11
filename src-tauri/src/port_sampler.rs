@@ -81,6 +81,18 @@ impl PortState {
             .unwrap_or_else(|e| e.into_inner())
             .map(|t| t.elapsed())
     }
+
+    /// 距上一轮扫描多久了。端口冲突保镖（M19）用它判断「快照还新鲜吗」：
+    /// 新鲜就直接复用，不再起一轮 lsof（防双扫描）。
+    pub fn age(&self) -> Option<Duration> {
+        self.since_last()
+    }
+
+    /// 跨轮项目归属缓存（cwd 查询 20 ms/进程）。M19 的 30 s 守望轮共享这份
+    /// 缓存——不然每轮守望着都从冷缓存起步，新增进程全走一遍 cwd 查询。
+    pub fn project_cache(&self) -> &Mutex<net_host::ProjectCache> {
+        &self.cache
+    }
 }
 
 /// 30 s 定时器轮（仅在端口 tab 可见时推进）

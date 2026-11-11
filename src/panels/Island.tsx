@@ -55,7 +55,40 @@ interface MemPayload {
   top: TopProc[];
 }
 
-type AlertPayload = CpuPayload | MemPayload;
+/** 端口事件（M19）：关注端口新占用 / 同端口多持有者 */
+interface PortPayload {
+  kind: "port";
+  port: number;
+  /** 主展示进程名（占位空串 = 归属失败，UI 显示「未知进程」） */
+  comm: string;
+  pid: number | null;
+  /** 项目归属（cwd 推断）；null = 无项目线索 */
+  projectLabel: string | null;
+  /** 暴露面：any = 绑在全部网卡，UI 要提示「对外可达」 */
+  exposure: "any" | "interface" | "loopback" | "unknown";
+  /** 去重后的持有进程数 */
+  owners: number;
+  /** true = 同端口多持有者（冲突） */
+  conflict: boolean;
+  notchH?: number;
+}
+
+/** 局域网新面孔事件（M23）：邻居表里出现从未见过的 IP */
+interface LanPayload {
+  kind: "lan";
+  ip: string;
+  /** 展示名：hostname > vendor；null = 都没拿到（UI 兜底显示 IP） */
+  label: string | null;
+  /** 设备类型（serde 小写串，与 types/lan.ts 同口径） */
+  devKind: string;
+  /** 随机化 MAC → 厂商不可识别 */
+  randomizedMac: boolean;
+  /** 本轮超过 3 条时的余量（只落在最后一条） */
+  extra: number;
+  notchH?: number;
+}
+
+type AlertPayload = CpuPayload | MemPayload | PortPayload | LanPayload;
 
 /** 与 Rust `island_geo` 保持一致 */
 const COLLAPSED_W = 229;
@@ -67,6 +100,10 @@ const DEFAULT_NOTCH_H = 33;
 
 const ORANGE = "#FF9F0A";
 const RED = "#FF453A";
+/** 端口事件强调色：蓝，与 CPU/内存的橙/红区分（标签「端口」是第二识别通道） */
+const BLUE = "#0A84FF";
+/** 新面孔事件强调色：绿（第四种；标签「新面孔」是第二识别通道） */
+const GREEN = "#30D158";
 
 /** 出现后无人干预的存活时间 */
 const AUTO_HIDE_MS = 6000;
@@ -183,7 +220,11 @@ export function Island() {
   const h = expanded ? EXPANDED_H : COLLAPSED_H;
 
   const onOpen = () => {
-    fireAndForget(openMain(undefined, "stats"), "open_main");
+    // 端口 / 新面孔事件直达 ports tab：端口细节与局域网设备区（LanBoard）都在那里
+    fireAndForget(
+      openMain(undefined, data?.kind === "port" || data?.kind === "lan" ? "ports" : "stats"),
+      "open_main",
+    );
     hide();
   };
 
@@ -230,7 +271,7 @@ export function Island() {
           >
             {Math.round(data.avg)}%
           </CollapsedRow>
-        ) : (
+        ) : data.kind === "mem" ? (
           <CollapsedRow
             notchH={notchH}
             icon={<MemChip color={memColor(data.pressure)} />}
@@ -240,12 +281,34 @@ export function Island() {
           >
             {data.swapUsedGb != null ? `${data.swapUsedGb.toFixed(1)}G` : `${Math.round(data.swapRatioPct)}%`}
           </CollapsedRow>
+        ) : data.kind === "lan" ? (
+          <CollapsedRow
+            notchH={notchH}
+            icon={<WifiIcon color={GREEN} />}
+            label="新面孔"
+            accent={GREEN}
+          >
+            {data.label || data.ip}
+          </CollapsedRow>
+        ) : (
+          <CollapsedRow
+            notchH={notchH}
+            icon={<PlugIcon color={BLUE} />}
+            label={data.conflict ? "冲突" : "端口"}
+            accent={BLUE}
+          >
+            {`:${data.port}`}
+          </CollapsedRow>
         ))}
 
         {phase === "expanded" && data && (data.kind === "cpu" ? (
           <CpuExpanded data={data} notchH={notchH} />
-        ) : (
+        ) : data.kind === "mem" ? (
           <MemExpanded data={data} notchH={notchH} />
+        ) : data.kind === "lan" ? (
+          <LanExpanded data={data} notchH={notchH} />
+        ) : (
+          <PortExpanded data={data} notchH={notchH} />
         ))}
       </div>
     </div>
@@ -513,6 +576,92 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
   );
 }
 
+/** 端口事件展开态（M19）：端口大字 + 谁占的 + 项目归属 / 暴露面 / 持有者数 */
+function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
+  const dim = "rgba(255,255,255,0.5)";
+  const exposureWarn = data.exposure === "any";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: notchH,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        padding: "12px 18px 16px",
+        display: "flex",
+        flexDirection: "column",
+        color: "#fff",
+        animation: "island-fade 180ms ease-out",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <PlugIcon color={BLUE} />
+        <span
+          style={{
+            fontSize: 26,
+            fontWeight: 500,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+          }}
+        >
+          {`:${data.port}`}
+        </span>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+          {data.conflict
+            ? "同端口多个持有者"
+            : `被 ${data.comm || "未知进程"} 占用`}
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: dim,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {data.conflict && <>持有者 {data.owners} 个 · </>}
+        {exposureWarn && <span style={{ color: ORANGE }}>对外可达 · </span>}
+        点击打开端口页
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+        {data.projectLabel ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontSize: 11,
+              color: "rgba(255,255,255,0.72)",
+            }}
+          >
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: 250,
+              }}
+            >
+              {data.projectLabel}
+            </span>
+            <span style={{ fontVariantNumeric: "tabular-nums", color: BLUE }}>
+              项目
+            </span>
+          </div>
+        ) : (
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            无项目线索（GUI 应用或系统进程）
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Bolt() {
   return (
     <svg width="11" height="13" viewBox="0 0 11 13" fill="none" aria-hidden>
@@ -530,6 +679,131 @@ function MemChip({ color }: { color: string }) {
       <rect x="4.6" y="3.4" width="1.9" height="3.2" fill={color} />
       <rect x="7" y="3.4" width="1.6" height="3.2" fill={color} />
       <path d="M2.4 11.4v1.2M5.5 11.4v1.2M8.6 11.4v1.2" stroke={color} strokeWidth="1.1" />
+    </svg>
+  );
+}
+
+/** 局域网新面孔展开态（M23）：设备名 + 类型词 + 厂商线索，语气保持中性（不是「入侵」） */
+function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
+  const dim = "rgba(255,255,255,0.5)";
+  const name = data.label || data.ip;
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: notchH,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        padding: "12px 18px 16px",
+        display: "flex",
+        flexDirection: "column",
+        color: "#fff",
+        animation: "island-fade 180ms ease-out",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <WifiIcon color={GREEN} />
+        <span
+          style={{
+            fontSize: 20,
+            fontWeight: 500,
+            lineHeight: 1.1,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            maxWidth: 260,
+          }}
+        >
+          {name}
+        </span>
+        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>
+          加入了局域网
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: dim,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {data.extra > 0 && <>{`还有 ${data.extra} 台新设备 · `}</>}
+        点击查看局域网设备
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            fontSize: 11,
+            color: "rgba(255,255,255,0.72)",
+          }}
+        >
+          <span>{data.ip}</span>
+          <span style={{ color: GREEN }}>{KIND_LABEL[data.devKind] || "设备"}</span>
+        </div>
+        {data.randomizedMac && (
+          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+            随机化 MAC，厂商不可识别（手机私密地址是常态）
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 设备类型 → 中文词（与 Rust kind_str 的 serde lowercase 口径一一对应） */
+const KIND_LABEL: Record<string, string> = {
+  router: "路由器",
+  computer: "电脑",
+  phone: "手机",
+  tablet: "平板",
+  tv: "电视",
+  speaker: "音箱",
+  printer: "打印机",
+  nas: "NAS",
+  camera: "摄像头",
+  iot: "IoT 设备",
+  unknown: "未知设备",
+};
+
+/** 新面孔事件图标（M23）：Wi-Fi 弧线 + 实心圆点 */
+function WifiIcon({ color }: { color: string }) {
+  return (
+    <svg width="14" height="12" viewBox="0 0 14 12" fill="none" aria-hidden>
+      <path
+        d="M1.2 4.4a8.6 8.6 0 0 1 11.6 0"
+        stroke={color}
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <path
+        d="M3.6 6.9a5.2 5.2 0 0 1 6.8 0"
+        stroke={color}
+        strokeWidth="1.3"
+        strokeLinecap="round"
+      />
+      <circle cx="7" cy="9.6" r="1.3" fill={color} />
+    </svg>
+  );
+}
+
+/** 端口事件图标（M19）：插头 + 两根插脚 */
+function PlugIcon({ color }: { color: string }) {
+  return (
+    <svg width="12" height="13" viewBox="0 0 12 13" fill="none" aria-hidden>
+      <path d="M3 1v3.2M9 1v3.2" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
+      <path
+        d="M1.8 4.2h8.4v2.2a4.2 4.2 0 0 1-4.2 4.2 4.2 4.2 0 0 1-4.2-4.2V4.2Z"
+        stroke={color}
+        strokeWidth="1.1"
+      />
+      <path d="M6 10.6v1.8" stroke={color} strokeWidth="1.2" strokeLinecap="round" />
     </svg>
   );
 }

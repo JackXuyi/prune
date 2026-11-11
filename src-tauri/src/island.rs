@@ -18,10 +18,12 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl};
 use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, PanelBuilder, PanelLevel};
 
 use prune_core::island::{
-    CpuAlert, CpuMonitor, CpuThresholds, MemAlert, MemMonitor, MemThresholds, MemTrigger,
-    RateLimiter, CPU_COOLDOWN_MS, MEM_COOLDOWN_MS,
+    CpuAlert, CpuMonitor, CpuThresholds, LanWatchAlert, LanWatchMonitor, MemAlert, MemMonitor,
+    MemThresholds, MemTrigger, PortGuardAlert, PortGuardKind, PortGuardMonitor, RateLimiter,
+    CPU_COOLDOWN_MS, MEM_COOLDOWN_MS,
 };
 use prune_core::mem::PressureLevel;
+use prune_core::net::ports as net_ports;
 use prune_core::swap;
 
 use crate::island_geo::{self, Placement, ScreenGeom, WINDOW_H, WINDOW_W};
@@ -47,6 +49,8 @@ const K_CPU_SUSTAIN: &str = "island.cpu_sustain_sec";
 const K_CPU_TOLERANCE: &str = "island.cpu_tolerance_pct";
 const K_SWAP_PCT: &str = "island.swap_pct";
 const K_MEM_SUSTAIN: &str = "island.mem_sustain_sec";
+const K_PORT_GUARD: &str = "island.port_guard";
+const K_LAN_WATCH: &str = "island.lan_watch";
 const K_MAX_PER_HOUR: &str = "island.max_per_hour";
 
 /// 字节换算：岛上的读数口径用 GiB / MiB（与活动监视器一致）
@@ -99,6 +103,8 @@ struct Cfg {
     enabled: bool,
     cpu: CpuThresholds,
     mem: MemThresholds,
+    port_guard: bool,
+    lan_watch: bool,
     max_per_hour: u32,
 }
 
@@ -113,6 +119,8 @@ const DEFAULT_CFG: Cfg = Cfg {
         swap_pct: 80.0,
         sustain_sec: 30,
     },
+    port_guard: true,
+    lan_watch: true,
     max_per_hour: 6,
 };
 
@@ -140,6 +148,8 @@ fn read_cfg(app: &AppHandle) -> Cfg {
         max_per_hour: settings::get_u64(app, K_MAX_PER_HOUR)
             .unwrap_or(DEFAULT_CFG.max_per_hour as u64)
             .clamp(1, 30) as u32,
+        port_guard: settings::get_bool(app, K_PORT_GUARD).unwrap_or(DEFAULT_CFG.port_guard),
+        lan_watch: settings::get_bool(app, K_LAN_WATCH).unwrap_or(DEFAULT_CFG.lan_watch),
     }
 }
 
@@ -558,6 +568,50 @@ fn fire_mem(app: &AppHandle, alert: MemAlert, swap_used: Option<u64>) {
     deliver(app, payload);
 }
 
+/// 端口事件的 payload 组装 + 投递（M19）。判定结论全部在核心层算好，
+/// 这里只做枚举 → 字符串的翻译与格式转换。
+fn fire_port(app: &AppHandle, alert: PortGuardAlert) {
+    let Some(cached) = cached_place() else {
+        return;
+    };
+    let exposure = match alert.exposure {
+        prune_core::net::BindScope::Any => "any",
+        prune_core::net::BindScope::Interface => "interface",
+        prune_core::net::BindScope::Loopback => "loopback",
+        prune_core::net::BindScope::Unknown => "unknown",
+    };
+    let payload = serde_json::json!({
+        "kind": "port",
+        "port": alert.port,
+        "comm": alert.comm,
+        "pid": alert.pid,
+        "projectLabel": alert.project_label,
+        "exposure": exposure,
+        "owners": alert.owners,
+        "conflict": alert.kind == PortGuardKind::Conflict,
+        "notchH": cached.place.notch_h,
+    });
+    deliver(app, payload);
+}
+
+/// 新面孔事件的 payload 组装 + 投递（M23）。判定结论全部在核心层算好，
+/// 这里只做字段搬运与格式转换。
+fn fire_lan(app: &AppHandle, alert: LanWatchAlert) {
+    let Some(cached) = cached_place() else {
+        return;
+    };
+    let payload = serde_json::json!({
+        "kind": "lan",
+        "ip": alert.ip,
+        "label": alert.label,
+        "devKind": alert.kind,
+        "randomizedMac": alert.randomized_mac,
+        "extra": alert.extra,
+        "notchH": cached.place.notch_h,
+    });
+    deliver(app, payload);
+}
+
 /// 展示 + 广播。岛同时只显示一条：后到的 payload 直接覆盖前一条
 /// （前端收到 island://alert 会重置相位机），这就是 §12.3 的「抢占」——
 /// CPU 展示中内存触发、内存展示中 CPU 触发，都是后触发者覆盖前者。
@@ -718,6 +772,182 @@ pub fn spawn_loops(app: &AppHandle) {
     tauri::async_runtime::spawn(async move { hover_loop(hover).await });
     let sample = app.clone();
     tauri::async_runtime::spawn(async move { sample_loop(sample).await });
+    let guard = app.clone();
+    tauri::async_runtime::spawn(async move { port_guard_loop(guard).await });
+    let lan = app.clone();
+    tauri::async_runtime::spawn(async move { lan_watch_loop(lan).await });
+}
+
+// ───────────────────────── 局域网新面孔（M23） ─────────────────────────
+
+/// 守望节拍：60 s 一轮。数据源只有邻居表（arp / GetIpNetTable2）+ 默认网卡
+/// 信息，~百毫秒级，**零主动探测、零 lsof**（M18 §1 的「不是扫描器」定位）。
+/// 60 s × ~100 ms ≈ 0.17% 占空比，电池无感。
+const LAN_WATCH_TICK_SECS: u64 = 60;
+/// 新面孔事件独立预算：一天几条的量级，4/h 足够；不与其他事件共闸。
+const LAN_MAX_PER_HOUR: u32 = 4;
+
+/// 新面孔守望循环。判定在核心层（`LanWatchMonitor`：终身制已知集 +
+/// 网段指纹重置），这里只管节拍、数据源与频控。
+async fn lan_watch_loop(app: AppHandle) {
+    let mut tick = tokio::time::interval(Duration::from_secs(LAN_WATCH_TICK_SECS));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // 第一拍立即跑：尽快建基线（基线轮不弹，与端口保镖同纪律）
+
+    let mut monitor = LanWatchMonitor::new();
+    let mut limiter = RateLimiter::new(LAN_MAX_PER_HOUR);
+    let mut last_cfg = cfg();
+    loop {
+        tick.tick().await;
+
+        let current = cfg();
+        if current != last_cfg {
+            // 配置变化重建基线：重开开关的第一轮当作新起点，不补报中途错过的变化
+            monitor.reset();
+            limiter.reconfigure(LAN_MAX_PER_HOUR);
+            last_cfg = current;
+        }
+        if !current.enabled || !current.lan_watch {
+            continue;
+        }
+
+        let round = tauri::async_runtime::spawn_blocking(|| {
+            use prune_core::net::lan as lan_mod;
+
+            let Some(scope) = lan_mod::local_scope() else {
+                return None; // 未联网 / 无默认路由 / 平台不支持：安静跳过本拍
+            };
+            let gateway = prune_core::net::diag::default_gateway()
+                .and_then(|g| g.gateway.parse::<std::net::Ipv4Addr>().ok());
+            let nbrs = lan_mod::neighbors();
+            let mask: u32 = if scope.prefix == 0 {
+                0
+            } else {
+                u32::MAX << (32 - scope.prefix as u32)
+            };
+            let network = u32::from(scope.addr) & mask;
+            let cidr = format!("{}/{}", std::net::Ipv4Addr::from(network), scope.prefix);
+            let devices = lan_mod::merge(
+                &nbrs,
+                &[],
+                &[],
+                &[],
+                gateway,
+                Some(scope.addr),
+                Some((std::net::Ipv4Addr::from(network), scope.prefix)),
+            );
+            Some((cidr, devices))
+        })
+        .await
+        .ok()
+        .flatten();
+
+        let Some((cidr, devices)) = round else {
+            continue;
+        };
+        let now = now_ms();
+        for alert in monitor.observe(Some(&cidr), &devices) {
+            if limiter.allow(now) {
+                fire_lan(&app, alert);
+            } else {
+                eprintln!("[m23-lan] 新面孔事件被频控拦截 ip={}", alert.ip);
+            }
+        }
+    }
+}
+
+// ───────────────────────── 端口冲突保镖（M19） ─────────────────────────
+
+/// 守望节拍：30 s 一轮。端口变化频率比内存低两个数量级（M7 §5.1 的结论），
+/// 30 s 是「dev server 起来后多久想知道」与「常驻开销」的折中：
+/// 热扫 ~50 ms / 30 s = 0.17% 占空比。
+const PORT_GUARD_TICK_SECS: u64 = 30;
+/// 端口 tab 的快照比这新鲜就直接复用（PORT_INTERVAL_SECS=30 的定时轮保证它最多旧 30 s，
+/// 20 s 是保守线：拿到的快照肯定不比守望轮自己扫的旧）
+const PORT_SNAPSHOT_FRESH_MS: u64 = 20_000;
+/// 端口事件独立预算：这类事件天然稀疏（一天几条），6/h 绰绰有余。
+/// 不并进 sample_loop 的全局 Gates——跨循环共享闸需要静态重构，收益不值。
+const PORT_MAX_PER_HOUR: u32 = 6;
+
+/// 端口守望循环：关注端口空闲→被占、同端口多持有者 → 灵动岛提报。
+///
+/// 判定在核心层（`PortGuardMonitor`：基线 + 边沿检测 + 每端口冷却），
+/// 这里只管节拍、快照来源与频控。三条纪律：
+/// 1. 岛关着 / 端口保镖关着 → 整拍跳过，常驻开销 0；
+/// 2. 端口 tab 活跃且快照新鲜 → 复用 PortState，不起第二轮 lsof；
+/// 3. 自己扫时复用 PortState 的 ProjectCache（cwd 查询 20 ms/进程，缓存跨轮共享）。
+async fn port_guard_loop(app: AppHandle) {
+    let mut tick = tokio::time::interval(Duration::from_secs(PORT_GUARD_TICK_SECS));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+    // 第一拍立即跑：尽快建基线（基线轮不弹，S3）
+    tick.tick().await;
+
+    let mut monitor = PortGuardMonitor::new();
+    let mut limiter = RateLimiter::new(PORT_MAX_PER_HOUR);
+    let mut last_cfg = cfg();
+
+    loop {
+        tick.tick().await;
+
+        let current = cfg();
+        if current != last_cfg {
+            // 配置变化重建基线：重开开关的第一轮当作新起点，不补报中途错过的变化
+            monitor.reset();
+            limiter.reconfigure(PORT_MAX_PER_HOUR);
+            last_cfg = current;
+        }
+        if !current.enabled || !current.port_guard {
+            continue;
+        }
+
+        let snap = match port_snapshot_source(&app).await {
+            Some(s) => s,
+            None => continue,
+        };
+        let now = now_ms();
+        let alerts = monitor.observe(now, &snap.entries);
+        for alert in alerts {
+            if limiter.allow(now) {
+                fire_port(&app, alert);
+            } else {
+                // 预算吃满：放弃本条（冷却机制保证 10 分钟内同端口不会再攒出一条）
+                eprintln!("[m19-port] 端口事件被频控拦截 port={}", alert.port);
+            }
+        }
+    }
+}
+
+/// 取一轮端口聚合结果：优先复用端口 tab 的热快照，否则自己扫。
+async fn port_snapshot_source(app: &AppHandle) -> Option<prune_core::net::PortSnapshot> {
+    let state = app.try_state::<std::sync::Arc<crate::port_sampler::PortState>>()?;
+    // 端口 tab 活跃时的定时轮 30 s 一轮：快照比 20 s 新，说明刚扫过，直接复用
+    if let Some(age) = state.age() {
+        if age.as_millis() as u64 <= PORT_SNAPSHOT_FRESH_MS {
+            return state.snapshot();
+        }
+    }
+    let state_clone: std::sync::Arc<crate::port_sampler::PortState> = state.inner().clone();
+    let handle = app.clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        // Windows 的 iphlpapi 只给 pid：进程名从内存轮的全量进程表借（与 port_round 同源）
+        let names: Option<std::collections::HashMap<i32, String>> = handle
+            .try_state::<std::sync::Arc<crate::sampler::MemState>>()
+            .map(|ms| {
+                ms.processes
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .map(|p| (p.pid, p.name.clone()))
+                    .collect()
+            });
+        let mut cache = state_clone
+            .project_cache()
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        net_ports::scan_cached(names.as_ref(), &mut cache)
+    })
+    .await
+    .ok()
 }
 
 // ───────────────────────── 命令 ─────────────────────────
@@ -785,6 +1015,8 @@ pub struct IslandSettings {
     pub cpu_tolerance_pct: f64,
     pub swap_pct: f64,
     pub mem_sustain_sec: u64,
+    pub port_guard: bool,
+    pub lan_watch: bool,
     pub max_per_hour: u64,
 }
 
@@ -798,6 +1030,8 @@ pub fn island_settings_get(app: AppHandle) -> IslandSettings {
         cpu_tolerance_pct: c.cpu.tolerance_pct as f64,
         swap_pct: c.mem.swap_pct as f64,
         mem_sustain_sec: c.mem.sustain_sec,
+        port_guard: c.port_guard,
+        lan_watch: c.lan_watch,
         max_per_hour: c.max_per_hour as u64,
     }
 }
@@ -831,16 +1065,21 @@ pub fn island_settings_set(
             (K_CPU_TOLERANCE, serde_json::json!(cpu.tolerance_pct)),
             (K_SWAP_PCT, serde_json::json!(mem.swap_pct)),
             (K_MEM_SUSTAIN, serde_json::json!(mem.sustain_sec)),
+            (K_PORT_GUARD, serde_json::json!(settings.port_guard)),
+            (K_LAN_WATCH, serde_json::json!(settings.lan_watch)),
             (K_MAX_PER_HOUR, serde_json::json!(max_per_hour)),
         ],
     )?;
 
-    // 内存缓存立刻生效；sample_loop 下一拍发现 cfg 变了会自动清空判定状态
+    // 内存缓存立刻生效；sample_loop 下一拍发现 cfg 变了会自动清空判定状态，
+    // port_guard_loop 下一拍发现变了会重建端口基线
     if let Ok(mut guard) = CFG.lock() {
         *guard = Cfg {
             enabled: settings.enabled,
             cpu,
             mem,
+            port_guard: settings.port_guard,
+            lan_watch: settings.lan_watch,
             max_per_hour: max_per_hour as u32,
         };
     }
@@ -852,6 +1091,8 @@ pub fn island_settings_set(
         cpu_tolerance_pct: cpu.tolerance_pct as f64,
         swap_pct: mem.swap_pct as f64,
         mem_sustain_sec: mem.sustain_sec,
+        port_guard: settings.port_guard,
+        lan_watch: settings.lan_watch,
         max_per_hour,
     })
 }

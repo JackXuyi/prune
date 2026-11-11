@@ -402,9 +402,537 @@ pub const CPU_COOLDOWN_MS: u64 = 10 * 60 * 1000;
 /// 形势不太可能从「该报」变成「不该报」。
 pub const MEM_COOLDOWN_MS: u64 = CPU_COOLDOWN_MS;
 
+// ───────────────────────── 端口冲突保镖（M19） ─────────────────────────
+
+use crate::net::{BindScope, PortEntry};
+use std::collections::{HashMap, HashSet};
+
+/// 端口事件的冷却时间。与 CPU / 内存同量级：dev server「kill → 立刻重启」
+/// 是开发日常，没有这个冷却，每次重启都会弹一条「3000 又被占了」。
+pub const PORT_COOLDOWN_MS: u64 = CPU_COOLDOWN_MS;
+
+/// 端口事件类型。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PortGuardKind {
+    /// 关注端口从空闲变为被占（dev server 起来了 / 有东西抢了端口）
+    NewListen,
+    /// 同端口出现多个持有者（SO_REUSEPORT 双绑定 / 真冲突）
+    Conflict,
+}
+
+/// 一次端口事件提报。字段与 M7 的 `PortEntry` 同源，UI 不需要二次查询就能展开。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PortGuardAlert {
+    pub port: u16,
+    pub kind: PortGuardKind,
+    /// 主展示进程（第一个有 pid 的 binding）
+    pub comm: String,
+    pub pid: Option<i32>,
+    /// 项目归属（cwd 推断），None = 无项目线索
+    pub project_label: Option<String>,
+    /// 聚合暴露面（最宽者）——`Any` 要在 UI 里提示「对外可达」
+    pub exposure: BindScope,
+    /// 去重后的持有进程数；Conflict 时 >1
+    pub owners: usize,
+}
+
+/// 端口状态变化判定：**看变化量，不看存量**。
+///
+/// 与 CPU / 内存的关键差异：端口是离散事件（起来 / 停掉），没有「持续窗口」
+/// 的概念，所以不用达标率也不用连续计时，用的是**基线 + 边沿检测**：
+/// - 首轮只建基线：Prune 启动时机器上本来就有 20+ 个监听端口，全是存量，
+///   一条都不该弹（用户没「丢」任何东西）；
+/// - 之后每轮与基线做差：新增占用（且命中关注规则）→ `NewListen`；
+///   新增多持有者 → `Conflict`（优先于 NewListen，冲突比「有服务」更紧急）；
+/// - 端口转空闲即从集合移除（重新武装）；冷却表按端口隔离，防重启横跳。
+#[derive(Debug, Default)]
+pub struct PortGuardMonitor {
+    baseline_done: bool,
+    occupied: HashSet<u16>,
+    conflicts: HashSet<u16>,
+    cooldown: HashMap<u16, u64>,
+}
+
+impl PortGuardMonitor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 配置变更时调用：全部重新武装。基线也会重建——重开开关的第一轮
+    /// 当作「新的起点」，不补报中途错过的变化。
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn cooled(&self, now_ms: u64, port: u16) -> bool {
+        self.cooldown
+            .get(&port)
+            .map(|&t| now_ms.saturating_sub(t) >= PORT_COOLDOWN_MS)
+            .unwrap_or(true)
+    }
+
+    /// 投入一轮端口聚合结果，返回本拍要提报的事件。
+    ///
+    /// 只看 TCP：UDP 没有 LISTEN 语义，mDNS / 随机源端口的绑定抖动不值得报。
+    pub fn observe(&mut self, now_ms: u64, entries: &[PortEntry]) -> Vec<PortGuardAlert> {
+        // 本轮的占用 / 冲突全景（TCP）
+        let mut occupied = HashSet::new();
+        let mut conflicts = HashSet::new();
+        for e in entries {
+            if e.proto != crate::net::Proto::Tcp || e.listeners.is_empty() {
+                continue;
+            }
+            occupied.insert(e.port);
+            if e.owner_count() > 1 {
+                conflicts.insert(e.port);
+            }
+        }
+
+        // 首轮：只建基线。存量端口一条不报。
+        if !self.baseline_done {
+            self.baseline_done = true;
+            self.occupied = occupied;
+            self.conflicts = conflicts;
+            return Vec::new();
+        }
+
+        let mut alerts = Vec::new();
+        for e in entries {
+            if e.proto != crate::net::Proto::Tcp || e.listeners.is_empty() {
+                continue;
+            }
+            let newly_occupied = !self.occupied.contains(&e.port);
+            let newly_conflict = conflicts.contains(&e.port) && !self.conflicts.contains(&e.port);
+            // 冲突优先：一条端口同拍既是新占用又是冲突时，只报更有信息量的那个
+            let kind = if newly_conflict {
+                Some(PortGuardKind::Conflict)
+            } else if newly_occupied && e.watched {
+                Some(PortGuardKind::NewListen)
+            } else {
+                None
+            };
+            let Some(kind) = kind else { continue };
+            if !self.cooled(now_ms, e.port) {
+                continue;
+            }
+            self.cooldown.insert(e.port, now_ms);
+            let primary = e.primary();
+            alerts.push(PortGuardAlert {
+                port: e.port,
+                kind,
+                comm: primary.map(|p| p.comm.clone()).unwrap_or_default(),
+                pid: primary.and_then(|p| p.pid),
+                project_label: primary.and_then(|p| p.project_label.clone()),
+                exposure: e.exposure,
+                owners: e.owner_count(),
+            });
+        }
+
+        // 转空闲的端口：移出集合（重新武装）+ 过期冷却表清理
+        self.occupied = occupied;
+        self.conflicts = conflicts;
+        self.cooldown
+            .retain(|_, t| now_ms.saturating_sub(*t) < PORT_COOLDOWN_MS);
+
+        alerts
+    }
+}
+
+// ───────────────────────── 局域网新面孔（M23） ─────────────────────────
+
+use crate::net::lan::LanDevice;
+
+/// 一轮最多提报的新面孔数。超出部分合并进最后一条的 `extra`
+/// （绝静默截断——条数对得上用户才敢信）。
+pub const LAN_MAX_ALERTS_PER_ROUND: usize = 3;
+
+/// 一次新面孔提报。字段与 `LanDevice` 同源，UI 不需要二次查询。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LanWatchAlert {
+    pub ip: String,
+    /// 展示名：hostname > vendor > None（UI 兜底显示 IP）
+    pub label: Option<String>,
+    /// 设备类型（serde 小写串，直接进 payload）
+    pub kind: String,
+    /// 随机化 MAC → UI 提示「厂商不可识别」
+    pub randomized_mac: bool,
+    /// 本轮超过 [`LAN_MAX_ALERTS_PER_ROUND`] 的余量，只落在最后一条上
+    pub extra: u32,
+}
+
+/// 设备类型 → 稳定的展示串（与 serde rename_all = "lowercase" 同口径，
+/// 前端 payload 直接消费，不再做一层枚举翻译）。
+fn kind_str(k: crate::net::lan::DeviceKind) -> String {
+    use crate::net::lan::DeviceKind as K;
+    match k {
+        K::Router => "router",
+        K::Computer => "computer",
+        K::Phone => "phone",
+        K::Tablet => "tablet",
+        K::Tv => "tv",
+        K::Speaker => "speaker",
+        K::Printer => "printer",
+        K::Nas => "nas",
+        K::Camera => "camera",
+        K::Iot => "iot",
+        K::Unknown => "unknown",
+    }
+    .to_string()
+}
+
+/// 新面孔判定：**终身制已知集**。
+///
+/// 与 M19 端口保镖同构（基线 + 边沿检测），三处差异：
+/// 1. 身份键是 IP 而不是端口（M18 spec §9：随机化 MAC 让 MAC 键不可靠；
+///    DHCP 换址会误报一次、新机拿旧 IP 会漏报一次——接受，不猜）
+/// 2. 已知集**只进不出**：邻居表条目会因 expiry 消失又回来，出集会导致
+///    同一台设备反复弹「新面孔」；入集终身制保证同 IP 至多报一次
+/// 3. 网段指纹变化即整体重置：换了 Wi-Fi 后「全是新面孔」不是用户想听的
+///    故事，重建基线一条不弹
+#[derive(Debug, Default)]
+pub struct LanWatchMonitor {
+    baseline_done: bool,
+    /// 网段指纹（CIDR 串）。`None` = 还没见过任何网段
+    scope_seen: Option<String>,
+    known: HashSet<String>,
+}
+
+impl LanWatchMonitor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 配置变更时调用：整体重置（重开开关的第一轮当作新起点，不补报）。
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    /// 投入一轮邻居表合成结果（`cidr` = 本轮网段指纹，`None` = 读不到网段）。
+    ///
+    /// 只看 `online` 设备，跳过本机与网关；网关首轮进基线、之后永远是旧面孔，
+    /// 无需特判（is_gateway 设备同样入已知集）。
+    pub fn observe(&mut self, cidr: Option<&str>, devices: &[LanDevice]) -> Vec<LanWatchAlert> {
+        // 网段变了（或首次见到网段）：重建基线，本拍不报
+        if cidr != self.scope_seen.as_deref() {
+            self.scope_seen = cidr.map(str::to_string);
+            self.baseline_done = false;
+        }
+
+        // 基线轮：存量设备全部入集，一条不报
+        if !self.baseline_done {
+            self.baseline_done = true;
+            for d in devices {
+                self.known.insert(d.ip.clone());
+            }
+            return Vec::new();
+        }
+
+        let mut alerts = Vec::new();
+        for d in devices {
+            if !d.online || d.is_self || self.known.contains(&d.ip) {
+                continue;
+            }
+            self.known.insert(d.ip.clone());
+            if alerts.len() >= LAN_MAX_ALERTS_PER_ROUND {
+                // 超限的新面孔：计入最后一条的 extra，不静默丢弃
+                let last: &mut LanWatchAlert = alerts.last_mut().expect("alerts 非空");
+                last.extra += 1;
+                continue;
+            }
+            alerts.push(LanWatchAlert {
+                ip: d.ip.clone(),
+                label: d.hostname.clone().or(d.vendor.clone()),
+                kind: kind_str(d.kind),
+                randomized_mac: d.randomized_mac,
+                extra: 0,
+            });
+        }
+        alerts
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::net::{PortBinding, Proto};
+
+    // ---- M23 新面孔 ----
+
+    use crate::net::lan::{DeviceKind, NeighborState};
+
+    /// 造一台局域网设备（默认在线、非本机、非网关）
+    fn device(ip: &str) -> LanDevice {
+        LanDevice {
+            ip: ip.to_string(),
+            mac: None,
+            vendor: None,
+            hostname: None,
+            kind: DeviceKind::Unknown,
+            state: NeighborState::Reachable,
+            online: true,
+            services: vec![],
+            inbound: vec![],
+            is_gateway: false,
+            is_self: false,
+            randomized_mac: false,
+        }
+    }
+
+    const CIDR: &str = "192.168.0.0/23";
+
+    #[test]
+    fn lan_baseline_records_nothing() {
+        let mut m = LanWatchMonitor::new();
+        let alerts = m.observe(Some(CIDR), &[device("192.168.0.44"), device("192.168.1.1")]);
+        assert!(alerts.is_empty(), "基线轮一条不报");
+        // 下一轮同样的设备还是安静
+        assert!(m.observe(Some(CIDR), &[device("192.168.0.44")]).is_empty());
+    }
+
+    #[test]
+    fn lan_new_face_alerts_once() {
+        let mut m = LanWatchMonitor::new();
+        m.observe(Some(CIDR), &[device("192.168.0.44")]);
+        let alerts = m.observe(Some(CIDR), &[device("192.168.0.77")]);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].ip, "192.168.0.77");
+        assert_eq!(alerts[0].extra, 0);
+        // 终身制：同一 IP 消失再出现也不重报（邻居表 expiry 场景）
+        assert!(m.observe(Some(CIDR), &[device("192.168.0.77")]).is_empty());
+    }
+
+    #[test]
+    fn lan_offline_and_self_are_ignored() {
+        let mut m = LanWatchMonitor::new();
+        m.observe(Some(CIDR), &[]);
+        let mut offline = device("192.168.0.90");
+        offline.online = false;
+        let mut me = device("192.168.0.115");
+        me.is_self = true;
+        let alerts = m.observe(Some(CIDR), &[offline.clone(), me]);
+        assert!(alerts.is_empty(), "离线幽灵与本机都不报");
+        // 且不入已知集：离线设备真正上线时会报
+        offline.online = true;
+        let alerts = m.observe(Some(CIDR), &[offline]);
+        assert_eq!(alerts.len(), 1);
+    }
+
+    #[test]
+    fn lan_gateway_joins_baseline_not_alert() {
+        let mut m = LanWatchMonitor::new();
+        let mut gw = device("192.168.1.1");
+        gw.is_gateway = true;
+        m.observe(Some(CIDR), &[gw.clone()]);
+        // 网关一直在场：不报
+        assert!(m.observe(Some(CIDR), &[gw]).is_empty());
+    }
+
+    #[test]
+    fn lan_scope_change_rebaselines() {
+        let mut m = LanWatchMonitor::new();
+        m.observe(Some(CIDR), &[device("192.168.0.44")]);
+        // 换了 Wi-Fi：新网段里全是「新」设备 → 重置基线，一条不弹
+        let alerts = m.observe(Some("10.0.0.0/24"), &[device("10.0.0.5")]);
+        assert!(alerts.is_empty(), "网段变化必须重建基线");
+        // 之后新网段的新设备正常报
+        let alerts = m.observe(Some("10.0.0.0/24"), &[device("10.0.0.9")]);
+        assert_eq!(alerts.len(), 1);
+    }
+
+    #[test]
+    fn lan_round_cap_merges_extra() {
+        let mut m = LanWatchMonitor::new();
+        m.observe(Some(CIDR), &[]);
+        let flood: Vec<LanDevice> = (1..=5)
+            .map(|i| device(&format!("192.168.0.1{i}")))
+            .collect();
+        let alerts = m.observe(Some(CIDR), &flood);
+        assert_eq!(alerts.len(), LAN_MAX_ALERTS_PER_ROUND, "单轮只报 3 条");
+        assert_eq!(alerts[2].extra, 2, "余量合并进最后一条");
+        assert_eq!(alerts[0].extra, 0);
+    }
+
+    #[test]
+    fn lan_label_prefers_hostname_then_vendor() {
+        let mut m = LanWatchMonitor::new();
+        m.observe(Some(CIDR), &[]);
+        let mut d = device("192.168.0.77");
+        d.vendor = Some("Apple, Inc.".into());
+        let alerts = m.observe(Some(CIDR), &[d]);
+        assert_eq!(alerts[0].label.as_deref(), Some("Apple, Inc."));
+        let mut d2 = device("192.168.0.78");
+        d2.hostname = Some("nas.local".into());
+        d2.vendor = Some("Synology".into());
+        let alerts = m.observe(Some(CIDR), &[d2]);
+        assert_eq!(alerts[0].label.as_deref(), Some("nas.local"));
+        assert_eq!(alerts[0].kind, "unknown");
+    }
+
+    #[test]
+    fn lan_kind_string_matches_serde() {
+        // kind_str 与 LanDevice 的 serde rename_all = "lowercase" 口径一致
+        let k = crate::net::lan::DeviceKind::Nas;
+        assert_eq!(kind_str(k), "nas");
+        assert_eq!(kind_str(crate::net::lan::DeviceKind::Phone), "phone");
+    }
+
+    /// 造一条 TCP 监听 binding
+    fn bind(port: u16, pid: i32, comm: &str) -> PortBinding {
+        PortBinding {
+            port,
+            proto: Proto::Tcp,
+            scope: BindScope::Loopback,
+            addr: "127.0.0.1".into(),
+            v6: false,
+            pid: Some(pid),
+            comm: comm.into(),
+            start_time: 0,
+            project: None,
+            project_label: None,
+        }
+    }
+
+    /// 造一行 PortEntry
+    fn entry(port: u16, watched: bool, listeners: Vec<PortBinding>) -> PortEntry {
+        PortEntry {
+            port,
+            proto: Proto::Tcp,
+            exposure: BindScope::Loopback,
+            conns: Some(0),
+            listeners,
+            watched,
+            note: None,
+        }
+    }
+
+    fn observe(m: &mut PortGuardMonitor, now: u64, entries: &[PortEntry]) -> Vec<PortGuardAlert> {
+        m.observe(now, entries)
+    }
+
+    #[test]
+    fn baseline_round_is_silent() {
+        // Prune 启动时机器上已有 20+ 监听端口，全是存量：一条不弹
+        let mut m = PortGuardMonitor::new();
+        let entries = vec![entry(3000, true, vec![bind(3000, 1, "node")])];
+        assert!(observe(&mut m, 0, &entries).is_empty(), "首轮基线不应提报");
+    }
+
+    #[test]
+    fn new_occupied_watched_port_alerts() {
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        let entries = vec![entry(3000, true, vec![bind(3000, 42, "node")])];
+        let alerts = observe(&mut m, 1_000, &entries);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].kind, PortGuardKind::NewListen);
+        assert_eq!(alerts[0].port, 3000);
+        assert_eq!(alerts[0].comm, "node");
+    }
+
+    #[test]
+    fn unwatched_new_port_is_silent() {
+        // 随机高位内部 IPC（Cursor Helper 之类）不该弹
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        let entries = vec![entry(50272, false, vec![bind(50272, 7, "Cursor Helper")])];
+        assert!(observe(&mut m, 1_000, &entries).is_empty());
+    }
+
+    #[test]
+    fn occupied_port_staying_up_does_not_repeat() {
+        let mut m = PortGuardMonitor::new();
+        let entries = vec![entry(3000, true, vec![bind(3000, 42, "node")])];
+        observe(&mut m, 0, &entries); // 建基线（已占用）
+        assert!(
+            observe(&mut m, 30_000, &entries).is_empty(),
+            "持续占用不应重复报"
+        );
+    }
+
+    #[test]
+    fn freed_then_occupied_realerts_after_cooldown() {
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        let up = vec![entry(3000, true, vec![bind(3000, 42, "node")])];
+        assert!(observe(&mut m, 1_000, &up).len() == 1);
+        // 端口释放 → 从集合移除（重新武装）
+        observe(&mut m, 2_000, &[]);
+        // 冷却期内（< 10 min）再次占用：不弹
+        assert!(observe(&mut m, 60_000, &up).is_empty(), "冷却期内不应再报");
+        // 冷却过后再占用：弹
+        let alerts = observe(&mut m, 2_000, &[]);
+        assert!(alerts.is_empty());
+        let alerts = observe(&mut m, PORT_COOLDOWN_MS + 60_000, &up);
+        assert_eq!(alerts.len(), 1, "冷却过后应能再次触发");
+    }
+
+    #[test]
+    fn conflict_takes_precedence_and_alerts() {
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        // 两个进程同时 LISTEN 8080（SO_REUSEPORT / 冲突）
+        let entries = vec![entry(
+            8080,
+            true,
+            vec![bind(8080, 100, "node"), bind(8080, 200, "node")],
+        )];
+        let alerts = observe(&mut m, 1_000, &entries);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].kind, PortGuardKind::Conflict);
+        assert_eq!(alerts[0].owners, 2);
+    }
+
+    #[test]
+    fn conflict_on_prewatched_port_still_alerts() {
+        // 端口一直在占用（基线里就有），但**突然**出现第二个持有者 → 冲突必须报
+        let mut m = PortGuardMonitor::new();
+        let single = vec![entry(8080, true, vec![bind(8080, 100, "node")])];
+        observe(&mut m, 0, &single);
+        let dual = vec![entry(
+            8080,
+            true,
+            vec![bind(8080, 100, "node"), bind(8080, 200, "node")],
+        )];
+        let alerts = observe(&mut m, 1_000, &dual);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].kind, PortGuardKind::Conflict);
+    }
+
+    #[test]
+    fn udp_bindings_are_ignored() {
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        let mut udp = entry(5353, true, vec![bind(5353, 1, "mDNSResponder")]);
+        udp.proto = Proto::Udp;
+        assert!(
+            observe(&mut m, 1_000, &[udp]).is_empty(),
+            "UDP 绑定抖动不值得报"
+        );
+    }
+
+    #[test]
+    fn reset_rebuilds_baseline() {
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        let up = vec![entry(3000, true, vec![bind(3000, 42, "node")])];
+        assert!(observe(&mut m, 1_000, &up).len() == 1);
+        m.reset();
+        // reset 后第一轮是新基线：不补报
+        assert!(observe(&mut m, 2_000, &up).is_empty());
+    }
+
+    #[test]
+    fn alert_carries_project_label_and_exposure() {
+        let mut m = PortGuardMonitor::new();
+        observe(&mut m, 0, &[]);
+        let mut b = bind(3118, 99, "node");
+        b.project_label = Some("prune".into());
+        let mut e = entry(3118, true, vec![b]);
+        e.exposure = BindScope::Any;
+        let alerts = observe(&mut m, 1_000, &[e]);
+        assert_eq!(alerts[0].project_label.as_deref(), Some("prune"));
+        assert_eq!(alerts[0].exposure, BindScope::Any);
+    }
 
     fn th() -> CpuThresholds {
         CpuThresholds::default()
