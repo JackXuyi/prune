@@ -16,6 +16,7 @@ import { Badge } from "../primitives";
 import { HistoryTrack } from "./HistoryTrack";
 import { ProcTable } from "./ProcTable";
 import { ResourceTile } from "./ResourceTile";
+import { useI18n } from "../../i18n/store";
 import { buildAppSummary } from "../../lib/appSummary";
 import { writeClipboard } from "../../lib/clipboard";
 import { devAppDisk } from "../../lib/devFixture";
@@ -47,6 +48,7 @@ export function AppDetail({
   const processes = useMemStore((s) => s.processes);
   const netSample = useNetSpeedStore((s) => s.sample);
   const ports = usePortStore((s) => s.snapshot);
+  const { t, locale } = useI18n();
 
   const family = snapshot?.families.find((f) => f.name === familyName) ?? null;
   const members = useMemo(
@@ -107,6 +109,7 @@ export function AppDetail({
   const onCopy = async () => {
     if (!family) return;
     const text = buildAppSummary({
+      locale,
       family: familyName,
       bundlePath: exe ? exe.slice(0, exe.indexOf(".app") + 4) : null,
       processCount: family.processCount,
@@ -164,7 +167,7 @@ export function AppDetail({
   if (!snapshot) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-[11px] text-ink-faint">
-        正在采样…
+        {t("common.progress.sampling")}
       </div>
     );
   }
@@ -173,8 +176,8 @@ export function AppDetail({
       <div className="flex min-h-0 flex-1 flex-col">
         <TopBar onBack={onBack} />
         <EmptyState
-          title="这个应用已经不在运行"
-          note={`「${familyName}」的进程全部退出，详情页没有可显示的数据。`}
+          title={t("resources.detail.notRunningTitle")}
+          note={t("resources.detail.notRunningNote", { name: familyName })}
         />
       </div>
     );
@@ -203,12 +206,20 @@ export function AppDetail({
                   {familyName}
                 </h1>
                 <Badge tone={snapshot.deepAvailable ? "accent" : "warn"}>
-                  {snapshot.deepAvailable ? "footprint 口径" : "RSS 口径 · 不含换出"}
+                  {snapshot.deepAvailable
+                    ? t("resources.detail.badgeFootprint")
+                    : t("resources.detail.badgeRss")}
                 </Badge>
               </div>
               <p className="mt-0.5 truncate font-mono text-[10px] text-ink-faint">
-                {bundlePath ?? "无 .app（系统进程 / CLI）"} · {family.processCount} 进程 ·{" "}
-                {established == null ? "连接未扫" : `${established} 连接`}
+                {t("resources.detail.heroMeta", {
+                  path: bundlePath ?? t("resources.detail.pathNone"),
+                  procs: family.processCount,
+                  conns:
+                    established == null
+                      ? t("resources.detail.connsUnscanned")
+                      : t("resources.detail.conns", { n: established }),
+                })}
               </p>
               <div className="mt-2 flex flex-wrap items-center gap-1.5">
                 <button
@@ -217,7 +228,7 @@ export function AppDetail({
                   disabled={!bundlePath}
                   className="rounded-md border border-hairline bg-white/[0.04] px-2 py-1 text-[10px] text-ink-dim transition-colors hover:text-ink disabled:opacity-40"
                 >
-                  在 Finder 显示
+                  {t("common.action.revealAndSelect")}
                 </button>
                 <button
                   type="button"
@@ -228,15 +239,23 @@ export function AppDetail({
                   disabled={!members[0] || !onKillMenu}
                   className="rounded-md border border-danger/30 bg-danger/[0.08] px-2 py-1 text-[10px] text-danger transition-colors hover:bg-danger/[0.14] disabled:opacity-40"
                 >
-                  结束进程…
+                  {t("resources.detail.kill")}
                 </button>
                 <button
                   type="button"
                   onClick={() => void onCopy()}
                   className="rounded-md border border-[color-mix(in_srgb,var(--color-domain-cpu)_32%,transparent)] bg-[color-mix(in_srgb,var(--color-domain-cpu)_10%,transparent)] px-2 py-1 text-[10px] text-domain-cpu transition-colors hover:bg-[color-mix(in_srgb,var(--color-domain-cpu)_16%,transparent)]"
-                  title={copy === "fail" ? "复制失败：剪贴板不可用（详见控制台）" : "把当前读数与近 7 天走势粘成 Markdown"}
+                  title={
+                    copy === "fail"
+                      ? t("resources.detail.copyFailTip")
+                      : t("resources.detail.copyTip")
+                  }
                 >
-                  {copy === "ok" ? "✓ 已复制" : copy === "fail" ? "✗ 复制失败" : "复制摘要"}
+                  {copy === "ok"
+                    ? t("resources.detail.copyOk")
+                    : copy === "fail"
+                      ? t("resources.detail.copyFail")
+                      : t("resources.detail.copy")}
                 </button>
               </div>
             </div>
@@ -245,7 +264,7 @@ export function AppDetail({
           {/* 四联资源卡 */}
           <div className="grid grid-cols-4 gap-2.5">
             <ResourceTile
-              label="CPU"
+              label={t("resources.tile.cpu")}
               dotColor="var(--color-domain-cpu)"
               value={
                 cpuValue == null ? (
@@ -262,14 +281,14 @@ export function AppDetail({
                   values={cpuHist.current}
                   color="var(--color-domain-cpu)"
                   height={26}
-                  ariaLabel="近 10 分钟 CPU 走势"
+                  ariaLabel={t("resources.tile.cpuAria")}
                 />
               }
-              note="近 10 min · 10 s/点 · 单核口径"
-              hint="单核口径：100% = 占满一个核，多线程可超过 100%"
+              note={t("resources.tile.cpuNote")}
+              hint={t("resources.tile.cpuHint")}
             />
             <ResourceTile
-              label="内存"
+              label={t("resources.tile.mem")}
               dotColor="var(--color-info)"
               value={
                 <>
@@ -281,25 +300,41 @@ export function AppDetail({
                 mem > 0 ? (
                   <StackBar
                     height={5}
-                    ariaLabel={`内存 ${formatBytes(mem)}，其中换出 ${formatBytes(swap)}`}
+                    ariaLabel={t("resources.tile.memAria", {
+                      mem: formatBytes(mem),
+                      swap: formatBytes(swap),
+                    })}
                     segments={[
-                      { key: "rss", label: "常驻", value: Math.max(0, mem - swap), tone: "info" },
-                      { key: "swap", label: "换出", value: swap, tone: "warn" },
+                      {
+                        key: "rss",
+                        label: t("resources.tile.rssSeg"),
+                        value: Math.max(0, mem - swap),
+                        tone: "info",
+                      },
+                      { key: "swap", label: t("resources.tile.swapSeg"), value: swap, tone: "warn" },
                     ]}
                   />
                 ) : null
               }
-              note={`footprint 口径${swap > 0 ? ` · ${formatPercent(swapRatioValue ?? swap / Math.max(1, mem))} 在磁盘` : ""}`}
-              hint="footprint 含被换出到磁盘的部分；未深探的子进程按 RSS 计入（下界）"
+              note={
+                swap > 0
+                  ? t("resources.tile.memNoteSwap", {
+                      pct: formatPercent(swapRatioValue ?? swap / Math.max(1, mem)),
+                    })
+                  : t("resources.tile.memNote")
+              }
+              hint={t("resources.tile.memHint")}
             />
             <ResourceTile
-              label="磁盘"
+              label={t("resources.tile.disk")}
               dotColor="var(--color-accent)"
               value={
                 disk == null ? (
-                  <span className="text-[13px] text-ink-faint">{diskBusy ? "测量中…" : "未测量"}</span>
+                  <span className="text-[13px] text-ink-faint">
+                    {diskBusy ? t("common.progress.measuring") : t("resources.tile.diskUnmeasured")}
+                  </span>
                 ) : diskEmpty(disk) ? (
-                  <span className="text-[13px] text-ink-faint">不可读</span>
+                  <span className="text-[13px] text-ink-faint">{t("common.state.unavailable")}</span>
                 ) : (
                   formatBytes(diskTotal(disk))
                 )
@@ -308,32 +343,51 @@ export function AppDetail({
                 disk && !diskEmpty(disk) ? (
                   <StackBar
                     height={5}
-                    ariaLabel="磁盘三层构成"
+                    ariaLabel={t("resources.tile.diskAria")}
                     segments={[
-                      { key: "b", label: "本体", value: disk.bundle?.bytes ?? 0, tone: "accent" },
-                      { key: "c", label: "缓存", value: disk.cache?.bytes ?? 0, tone: "info" },
-                      { key: "d", label: "数据", value: disk.data?.bytes ?? 0, tone: "neutral" },
+                      {
+                        key: "b",
+                        label: t("resources.tile.bundleSeg"),
+                        value: disk.bundle?.bytes ?? 0,
+                        tone: "accent",
+                      },
+                      {
+                        key: "c",
+                        label: t("resources.tile.cacheSeg"),
+                        value: disk.cache?.bytes ?? 0,
+                        tone: "info",
+                      },
+                      {
+                        key: "d",
+                        label: t("resources.tile.dataSeg"),
+                        value: disk.data?.bytes ?? 0,
+                        tone: "neutral",
+                      },
                     ]}
                   />
                 ) : null
               }
               note={
                 disk
-                  ? `本体 ${disk.bundle ? formatBytes(disk.bundle.bytes) : "—"} · 缓存 ${disk.cache ? formatBytes(disk.cache.bytes) : "—"} · 数据 ${disk.data ? formatBytes(disk.data.bytes) : "—"}`
-                  : "进入页面按需测量（30 min 缓存）"
+                  ? t("resources.tile.diskNote", {
+                      bundle: disk.bundle ? formatBytes(disk.bundle.bytes) : "—",
+                      cache: disk.cache ? formatBytes(disk.cache.bytes) : "—",
+                      data: disk.data ? formatBytes(disk.data.bytes) : "—",
+                    })
+                  : t("resources.tile.diskNoteIdle")
               }
-              hint="du 名义大小之和，APFS 克隆会被重复计入；不等于删了能省这么多"
+              hint={t("resources.tile.diskHint")}
             />
             <ResourceTile
-              label="网速"
+              label={t("resources.tile.net")}
               dotColor="var(--color-domain-net)"
               value={
                 netSample == null
-                  ? "尚未采样"
+                  ? t("resources.netShort.notSampled")
                   : netSample.status !== "ok"
                     ? netSample.status === "warmup"
-                      ? "采样中…"
-                      : "不可读"
+                      ? t("resources.netShort.sampling")
+                      : t("resources.netShort.unreadable")
                     : net
                       ? `↓${formatSpeed(net.downBps)}`
                       : "—"
@@ -343,11 +397,15 @@ export function AppDetail({
                   values={netHist.current}
                   color="var(--color-domain-net)"
                   height={26}
-                  ariaLabel="近 60 秒下载走势"
+                  ariaLabel={t("resources.tile.netAria")}
                 />
               }
-              note={net ? `↑ ${formatSpeed(net.upBps)} · 1 s 差分 · 仅非回环` : "1 s 差分 · 仅非回环"}
-              hint="只在「应用」tab 可见时采样；切走不采，读数不会假装在动"
+              note={
+                net
+                  ? t("resources.tile.netNote", { up: formatSpeed(net.upBps) })
+                  : t("resources.tile.netNoteIdle")
+              }
+              hint={t("resources.tile.netHint")}
             />
           </div>
 
@@ -365,9 +423,11 @@ export function AppDetail({
           {/* 端口与连接 */}
           <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
             <div className="flex items-center gap-2">
-              <span className="text-[11px] font-medium text-ink">端口与连接</span>
+              <span className="text-[11px] font-medium text-ink">{t("resources.ports.title")}</span>
               <span className="text-[9.5px] text-ink-faint">
-                {established == null ? "连接数未扫" : `${established} 条 ESTABLISHED`}
+                {established == null
+                  ? t("resources.detail.connsUnscanned")
+                  : t("resources.ports.established", { n: established })}
               </span>
               <div className="grow" />
               {onOpenPorts && watched[0] ? (
@@ -376,14 +436,14 @@ export function AppDetail({
                   onClick={() => watched[0] && onOpenPorts(watched[0].port)}
                   className="flex items-center gap-1 text-[9.5px] text-ink-faint transition-colors hover:text-ink"
                 >
-                  去端口页 <ChevronRightIcon size={10} />
+                  {t("resources.ports.goToPorts")} <ChevronRightIcon size={10} />
                 </button>
               ) : null}
             </div>
             {!ports ? (
-              <p className="mt-1.5 text-[10px] text-ink-faint">端口尚未扫描，进入端口页扫一轮</p>
+              <p className="mt-1.5 text-[10px] text-ink-faint">{t("resources.ports.unscanned")}</p>
             ) : watched.length === 0 ? (
-              <p className="mt-1.5 text-[10px] text-ink-faint">这个应用当前没有监听端口</p>
+              <p className="mt-1.5 text-[10px] text-ink-faint">{t("resources.ports.none")}</p>
             ) : (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {watched.map((e) => {
@@ -418,7 +478,7 @@ export function AppDetail({
           {/* 工作区 */}
           {family.workspaces.length > 0 ? (
             <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
-              <div className="text-[11px] font-medium text-ink">工作区归属</div>
+              <div className="text-[11px] font-medium text-ink">{t("resources.workspace.title")}</div>
               <ul className="mt-1 space-y-1">
                 {family.workspaces.slice(0, 4).map((w) => (
                   <li key={w.path} className="flex items-baseline gap-2 text-[10px]">
@@ -426,7 +486,10 @@ export function AppDetail({
                       {w.path}
                     </span>
                     <span className="shrink-0 font-mono tabular-nums text-ink-faint">
-                      {w.processCount} 进程 · {formatBytes(w.footprint ?? w.rss)}
+                      {t("resources.workspace.line", {
+                        n: w.processCount,
+                        size: formatBytes(w.footprint ?? w.rss),
+                      })}
                     </span>
                   </li>
                 ))}
@@ -438,8 +501,9 @@ export function AppDetail({
           {leakItem ? <LeakEvidence item={leakItem} /> : null}
 
           <p className="pb-2 text-[9px] leading-relaxed text-ink-faint">
-            口径：CPU 单核 · 内存 footprint（含换出）· 磁盘 du 名义大小 · 网速 1 s 差分（仅非回环）·
-            历史为 RSS 小时聚合 · 上次深探 {formatRelative(snapshot.deepUpdatedAt ?? null)}
+            {t("resources.detail.footnote", {
+              when: formatRelative(snapshot.deepUpdatedAt ?? null, locale),
+            })}
           </p>
         </div>
       </div>
@@ -456,6 +520,7 @@ function TopBar({
   onRefresh?: () => void;
   busy?: boolean;
 }) {
+  const { t } = useI18n();
   return (
     <div className="flex h-11 shrink-0 items-center gap-2 border-b border-hairline px-4">
       <button
@@ -463,17 +528,17 @@ function TopBar({
         onClick={onBack}
         className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-accent transition-colors hover:bg-white/[0.06]"
       >
-        ← 返回应用
+        {t("resources.detail.back")}
       </button>
       <div className="flex-1" />
-      <span className="text-[9.5px] text-ink-faint">Esc 返回</span>
+      <span className="text-[9.5px] text-ink-faint">{t("resources.detail.esc")}</span>
       {onRefresh ? (
         <button
           type="button"
           onClick={onRefresh}
           disabled={busy}
           className="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink disabled:opacity-50"
-          title="重新测量磁盘三层"
+          title={t("resources.detail.refreshDiskTip")}
         >
           <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
         </button>

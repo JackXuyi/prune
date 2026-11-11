@@ -6,6 +6,7 @@
  */
 import { common } from "./namespaces/common";
 import { nav } from "./namespaces/nav";
+import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
 import { stats } from "./namespaces/stats";
 import { update } from "./namespaces/update";
@@ -13,6 +14,7 @@ import { update } from "./namespaces/update";
 export const zh = {
   common: common.zh,
   nav: nav.zh,
+  resources: resources.zh,
   settings: settings.zh,
   stats: stats.zh,
   update: update.zh,

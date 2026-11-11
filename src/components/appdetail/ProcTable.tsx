@@ -7,16 +7,18 @@
  */
 import { useMemo, useState } from "react";
 
+import { useI18n } from "../../i18n/store";
+import type { NoParamKey } from "../../i18n/types";
 import { formatBytes } from "../../lib/format";
 import type { ProcMem } from "../../types/mem";
 
 type SortKey = "mem" | "cpu" | "swapped" | "name";
 
-const COLUMNS: { key: SortKey; label: string; className: string }[] = [
-  { key: "name", label: "名称", className: "text-left" },
-  { key: "cpu", label: "CPU", className: "text-right" },
-  { key: "mem", label: "内存", className: "text-right" },
-  { key: "swapped", label: "换出", className: "text-right" },
+const COLUMNS: { key: SortKey; labelKey: NoParamKey; className: string }[] = [
+  { key: "name", labelKey: "resources.proc.colName", className: "text-left" },
+  { key: "cpu", labelKey: "resources.proc.colCpu", className: "text-right" },
+  { key: "mem", labelKey: "resources.proc.colMem", className: "text-right" },
+  { key: "swapped", labelKey: "resources.proc.colSwapped", className: "text-right" },
 ];
 
 export function ProcTable({
@@ -30,6 +32,7 @@ export function ProcTable({
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("mem");
   const [desc, setDesc] = useState(true);
+  const { t } = useI18n();
 
   const sorted = useMemo(() => {
     const val = (p: ProcMem): number | null => {
@@ -70,38 +73,45 @@ export function ProcTable({
   return (
     <section className="rounded-xl border border-hairline-soft bg-white/[0.02]">
       <div className="flex items-center gap-2 border-b border-hairline-soft px-3 py-2">
-        <span className="text-[11px] font-medium text-ink">进程明细</span>
+        <span className="text-[11px] font-medium text-ink">{t("resources.proc.title")}</span>
         <span className="font-mono text-[10px] tabular-nums text-ink-faint">
           {members.length}
         </span>
         <div className="grow" />
-        <span className="text-[9px] text-ink-faint">点行看内存明细 · 右键结束进程</span>
+        <span className="text-[9px] text-ink-faint">{t("resources.proc.hint")}</span>
       </div>
 
       <table className="w-full table-fixed border-collapse text-[10.5px]">
         <thead>
           <tr className="text-[9px] text-ink-faint">
-            {COLUMNS.map((c) => (
-              <th
-                key={c.key}
-                scope="col"
-                className={`px-2 py-1 font-normal ${c.className} ${
-                  c.key === "name" ? "w-[minmax(0,1fr)]" : "w-[68px]"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={() => pick(c.key)}
-                  className="transition-colors hover:text-ink-dim"
-                  title={`按${c.label}排序${c.key === sortKey ? "（再点切换升降序）" : ""}`}
+            {COLUMNS.map((c) => {
+              const label = t(c.labelKey);
+              return (
+                <th
+                  key={c.key}
+                  scope="col"
+                  className={`px-2 py-1 font-normal ${c.className} ${
+                    c.key === "name" ? "w-[minmax(0,1fr)]" : "w-[68px]"
+                  }`}
                 >
-                  {c.label}
-                  {c.key === sortKey ? <span className="ml-0.5">{desc ? "▾" : "▴"}</span> : null}
-                </button>
-              </th>
-            ))}
+                  <button
+                    type="button"
+                    onClick={() => pick(c.key)}
+                    className="transition-colors hover:text-ink-dim"
+                    title={
+                      c.key === sortKey
+                        ? t("resources.sortTipToggle", { label })
+                        : t("resources.sortTip", { label })
+                    }
+                  >
+                    {label}
+                    {c.key === sortKey ? <span className="ml-0.5">{desc ? "▾" : "▴"}</span> : null}
+                  </button>
+                </th>
+              );
+            })}
             <th scope="col" className="w-[minmax(0,1fr)] px-2 py-1 text-left font-normal">
-              工作区
+              {t("resources.proc.colWorkspace")}
             </th>
           </tr>
         </thead>
@@ -145,9 +155,7 @@ export function ProcTable({
         </tbody>
       </table>
       {sorted.some((p) => p.footprint == null) ? (
-        <p className="px-3 pb-2 pt-1 text-[9px] text-ink-faint">
-          * 该进程未完成 footprint 深探，显示 RSS（下界）
-        </p>
+        <p className="px-3 pb-2 pt-1 text-[9px] text-ink-faint">{t("resources.proc.rssNote")}</p>
       ) : null}
     </section>
   );

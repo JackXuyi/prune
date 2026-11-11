@@ -11,6 +11,8 @@ import { useMemo, useState } from "react";
 
 import { BarSeries, type BarDatum } from "../charts/BarSeries";
 import { EmptyState } from "../EmptyArt";
+import { useI18n } from "../../i18n/store";
+import type { NoParamKey } from "../../i18n/types";
 import { formatBytes } from "../../lib/format";
 import { aggregateDays, lastDays, lastHours } from "../../lib/useAppHistory";
 import type { DailyBucket, HistoryBucket } from "../../types/appHistory";
@@ -21,7 +23,11 @@ const CPU_COLOR = "var(--color-domain-cpu)";
 const MEM_COLOR = "var(--color-info)";
 const NET_COLOR = "var(--color-domain-net)";
 
-const RANGE_LABEL: Record<Range, string> = { "24h": "24 h", "7d": "7 天", "30d": "30 天" };
+const RANGE_LABEL: Record<Range, NoParamKey> = {
+  "24h": "resources.history.range24h",
+  "7d": "resources.history.range7d",
+  "30d": "resources.history.range30d",
+};
 
 export function HistoryTrack({
   rows,
@@ -36,6 +42,7 @@ export function HistoryTrack({
   error: string | null;
 }) {
   const [range, setRange] = useState<Range>("7d");
+  const { t } = useI18n();
 
   const view = useMemo(() => buildView(rows, daily, range), [rows, daily, range]);
 
@@ -43,12 +50,8 @@ export function HistoryTrack({
     return (
       <section className="rounded-xl border border-hairline-soft bg-white/[0.02] py-4">
         <EmptyState
-          title="还没有历史"
-          note={
-            error
-              ? `读取失败：${error}`
-              : "Prune 运行满一小时后，这里会出现 CPU / 内存 / 流量的历史走势"
-          }
+          title={t("resources.history.emptyTitle")}
+          note={error ? t("resources.history.emptyReadError", { err: error }) : t("resources.history.emptyNote")}
         />
       </section>
     );
@@ -57,7 +60,7 @@ export function HistoryTrack({
   return (
     <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
       <div className="flex items-center gap-2 text-[10px] text-ink-dim">
-        <span className="text-[11px] font-medium text-ink">历史走势</span>
+        <span className="text-[11px] font-medium text-ink">{t("resources.history.title")}</span>
         <div className="grow" />
         {(["30d", "7d", "24h"] as const).map((r) => (
           <button
@@ -71,7 +74,7 @@ export function HistoryTrack({
             }`}
             aria-pressed={range === r}
           >
-            {RANGE_LABEL[r]}
+            {t(RANGE_LABEL[r])}
           </button>
         ))}
         <span
@@ -80,39 +83,57 @@ export function HistoryTrack({
           }`}
           title={
             view.coverage != null && view.coverage < 0.6
-              ? "记录不完整：Prune 只在这段时间的一部分里运行，或后台流量采样被关闭"
-              : "覆盖 = 有记录的时段 / 该区间应有时段"
+              ? t("resources.history.coverageTipWarn")
+              : t("resources.history.coverageTip")
           }
         >
-          {view.coverage == null ? "覆盖 —" : `覆盖 ${Math.round(view.coverage * 100)}%`}
+          {view.coverage == null
+            ? t("resources.history.coverageNone")
+            : t("resources.history.coverage", { pct: Math.round(view.coverage * 100) })}
         </span>
       </div>
 
       <Track
-        label="CPU"
+        label={t("resources.history.cpu")}
         bars={view.cpu}
         color={CPU_COLOR}
-        right={view.cpuSummary}
+        right={
+          view.cpuPeak == null
+            ? t("resources.history.cpuSummaryEmpty")
+            : t("resources.history.cpuSummary", {
+                peak: `${Math.round(view.cpuPeak)}%`,
+                avg: `${Math.round(view.cpuAvg ?? 0)}%`,
+              })
+        }
         format={(v) => `${Math.round(v)}%`}
       />
       <Track
-        label="内存"
+        label={t("resources.history.mem")}
         bars={view.mem}
         color={MEM_COLOR}
-        right={view.memSummary}
+        right={
+          view.memPeak > 0
+            ? t("resources.history.memSummary", {
+                peak: formatBytes(view.memPeak),
+                today: view.todayRss != null ? formatBytes(view.todayRss) : "—",
+              })
+            : t("resources.history.memSummaryEmpty")
+        }
         format={(v) => formatBytes(v)}
       />
       <Track
-        label="流量"
+        label={t("resources.history.net")}
         bars={view.net}
         color={NET_COLOR}
-        right={view.netSummary}
+        right={t("resources.history.netSummary", {
+          down: formatBytes(view.netDown),
+          up: formatBytes(view.netUp),
+        })}
         format={(v) => formatBytes(v)}
       />
 
       <p className="mt-1.5 text-[9px] leading-snug text-ink-faint">
-        历史为 <span className="text-ink-dim">RSS</span> 口径（每 10 s 采样、按小时聚合、
-        保留 30 天），与上方 footprint 当前值不是同一口径，不能相减；灰虚线 = 该时段没有记录。
+        {t("resources.history.footnote")}
       </p>
     </section>
   );
@@ -131,6 +152,7 @@ function Track({
   right: string;
   format: (v: number) => string;
 }) {
+  const { t } = useI18n();
   return (
     <div className="mt-2 grid grid-cols-[30px_minmax(0,1fr)_132px] items-end gap-2">
       <span className="pb-[2px] text-[9px] text-ink-faint">{label}</span>
@@ -138,7 +160,11 @@ function Track({
         bars={bars}
         color={color}
         height={28}
-        ariaLabel={`${label} 历史：${bars.filter((b) => b.hasData).length}/${bars.length} 个时段有记录`}
+        ariaLabel={t("resources.history.trackAria", {
+          label,
+          n: bars.filter((b) => b.hasData).length,
+          total: bars.length,
+        })}
         formatValue={format}
       />
       <span className="pb-[1px] text-right font-mono text-[9px] tabular-nums text-ink-faint">
@@ -192,18 +218,16 @@ function buildView(rows: HistoryBucket[], daily: DailyBucket[], range: Range) {
   const netDown = inWindowDaily.reduce((s, r) => s + r.netDown, 0);
   const netUp = inWindowDaily.reduce((s, r) => s + r.netUp, 0);
 
+  // 只回原始数字：文案在组件层按 locale 拼（同一条轨道的中英文句子结构不同）
   return {
     ...bars,
     coverage,
-    cpuSummary:
-      cpuPeak == null
-        ? "峰值 — · 均值 —"
-        : `峰值 ${Math.round(cpuPeak)}% · 均值 ${Math.round(cpuAvg ?? 0)}%`,
-    memSummary:
-      memPeak > 0
-        ? `峰值 ${formatBytes(memPeak)} · 今日 ${todayRow?.rssAvg != null ? formatBytes(todayRow.rssAvg) : "—"}`
-        : "峰值 — · 今日 —",
-    netSummary: `↓ ${formatBytes(netDown)} · ↑ ${formatBytes(netUp)}`,
+    cpuPeak,
+    cpuAvg,
+    memPeak,
+    todayRss: todayRow?.rssAvg ?? null,
+    netDown,
+    netUp,
   };
 }
 

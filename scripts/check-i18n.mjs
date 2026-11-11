@@ -37,7 +37,6 @@ const ALLOW = [
  * 「这真是新的待迁文件，还是我又写了一句中文」。
  */
 const PENDING = [
-  "src/components/AppResourceGrid.tsx",
   "src/components/LanBoard.tsx",
   "src/components/LanDeviceCard.tsx",
   "src/components/LeakCard.tsx",
@@ -46,13 +45,9 @@ const PENDING = [
   "src/components/ProjectHealthCard.tsx",
   "src/components/ReclaimBoard.tsx",
   "src/components/Sparkline.tsx",
-  "src/components/appdetail/AppDetail.tsx",
-  "src/components/appdetail/HistoryTrack.tsx",
-  "src/components/appdetail/ProcTable.tsx",
   "src/components/charts/BarSeries.tsx",
   "src/components/charts/MeterBar.tsx",
   "src/components/charts/StackBar.tsx",
-  "src/lib/appSummary.ts",
   "src/lib/ipc.ts",
   "src/lib/uiText.ts",
   "src/panels/Island.tsx",

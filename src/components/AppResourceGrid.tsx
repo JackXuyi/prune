@@ -3,15 +3,13 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { CellBar } from "./CellBar";
 import { AppIcon } from "./AppIcon";
 import { ChevronRightIcon } from "./icons";
+import { useI18n } from "../i18n/store";
+import type { NoParamKey } from "../i18n/types";
 import { devBundles } from "../lib/devFixture";
 import { formatBytes } from "../lib/format";
 import { appBundles, isTauri } from "../lib/ipc";
 import { useAppIcons } from "../lib/useAppIcons";
-import {
-  BUNDLE_READONLY_HINT,
-  type BundleMap,
-  type BundleSize,
-} from "../types/appdisk";
+import { type BundleMap, type BundleSize } from "../types/appdisk";
 import { isExact, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
 import {
   connsOfPids,
@@ -33,13 +31,21 @@ const PROC_WARN = 20;
 type SortKey = "mem" | "cpu" | "procs" | "disk" | "ports" | "down";
 
 /** UI v4：排序 chip 带域色点——颜色即语义（§3.2），mem 蓝 / cpu 紫 / net 青 */
-const SORTS: { key: SortKey; label: string; dot?: string }[] = [
-  { key: "mem", label: "内存", dot: "var(--color-info)" },
-  { key: "cpu", label: "CPU", dot: "var(--color-domain-cpu)" },
-  { key: "procs", label: "进程" },
-  { key: "disk", label: "磁盘" },
-  { key: "ports", label: "端口" },
-  { key: "down", label: "下载", dot: "var(--color-domain-net)" },
+const SORTS: { key: SortKey; labelKey: NoParamKey; dot?: string }[] = [
+  { key: "mem", labelKey: "resources.sort.mem", dot: "var(--color-info)" },
+  { key: "cpu", labelKey: "resources.sort.cpu", dot: "var(--color-domain-cpu)" },
+  { key: "procs", labelKey: "resources.sort.procs" },
+  { key: "disk", labelKey: "resources.sort.disk" },
+  { key: "ports", labelKey: "resources.sort.ports" },
+  { key: "down", labelKey: "resources.sort.down", dot: "var(--color-domain-net)" },
+];
+
+/** 大户 spotlight 的四个维度：顺序固定，点一下就切到对应排序 */
+const SPOTS: { key: SortKey; labelKey: NoParamKey }[] = [
+  { key: "mem", labelKey: "resources.sort.mem" },
+  { key: "cpu", labelKey: "resources.sort.cpu" },
+  { key: "procs", labelKey: "resources.sort.procs" },
+  { key: "down", labelKey: "resources.sort.down" },
 ];
 
 interface Row {
@@ -99,6 +105,24 @@ function buildRows(
   });
 }
 
+/** 排序 / spotlight 取值一律走这里：同一个 key 在「排序」和「大户」里必须取同一个数 */
+function sortValue(key: SortKey, r: Row): number | null {
+  switch (key) {
+    case "mem":
+      return r.mem;
+    case "cpu":
+      return r.cpu;
+    case "procs":
+      return r.procs;
+    case "disk":
+      return r.disk?.bytes ?? null;
+    case "ports":
+      return r.ports.length;
+    case "down":
+      return r.net?.downBps ?? null;
+  }
+}
+
 /** 单核口径的短格式：卡片里放不下「188%（约 1.9 核）」 */
 function cpuShort(v: number | null): string {
   if (v == null || !Number.isFinite(v)) return "—";
@@ -146,6 +170,9 @@ export function AppResourceBoard({
   onOpenApp?: (family: string) => void;
 }) {
   const [sortKey, setSortKey] = useState<SortKey>("mem");
+  const { t } = useI18n();
+  const sortDef = SORTS.find((s) => s.key === sortKey) ?? SORTS[0];
+  const sortLabel = t(sortDef.labelKey);
   const [desc, setDesc] = useState(true);
   const [query, setQuery] = useState("");
   // ⌘F 聚焦搜索框（UX v3 §5.5）：主窗口全局派发 prune:focus-search
@@ -207,25 +234,9 @@ export function AppResourceBoard({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     const base = q ? rows.filter((r) => r.family.name.toLowerCase().includes(q)) : rows;
-    const value = (r: Row): number | null => {
-      switch (sortKey) {
-        case "mem":
-          return r.mem;
-        case "cpu":
-          return r.cpu;
-        case "procs":
-          return r.procs;
-        case "disk":
-          return r.disk?.bytes ?? null;
-        case "ports":
-          return r.ports.length;
-        case "down":
-          return r.net?.downBps ?? null;
-      }
-    };
     return [...base].sort((a, b) => {
-      const va = value(a);
-      const vb = value(b);
+      const va = sortValue(sortKey, a);
+      const vb = sortValue(sortKey, b);
       // 「没有数据」永远排在最后：不管升序还是降序，缺值都不该冒充最小值
       if (va == null && vb == null) return a.family.name.localeCompare(b.family.name);
       if (va == null) return 1;
@@ -286,7 +297,7 @@ export function AppResourceBoard({
       case "cpu":
         return `${Math.round(v)}%`;
       case "procs":
-        return `${v} 个进程`;
+        return t("resources.procsTitle", { n: v });
       default:
         return null;
     }
@@ -321,12 +332,13 @@ export function AppResourceBoard({
             onChange={(e) => {
               setQuery(e.target.value);
             }}
-            placeholder="搜索应用…"
+            placeholder={t("resources.searchPlaceholder")}
             className="w-[168px] rounded-md border border-hairline bg-white/[0.03] px-2 py-1 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
           />
-          <span className="ml-1 text-[10px] text-ink-faint">排序</span>
+          <span className="ml-1 text-[10px] text-ink-faint">{t("resources.sortLabel")}</span>
           {SORTS.map((s) => {
             const active = s.key === sortKey;
+            const label = t(s.labelKey);
             return (
               <button
                 key={s.key}
@@ -337,7 +349,7 @@ export function AppResourceBoard({
                     ? "bg-white/[0.09] text-ink"
                     : "text-ink-dim hover:bg-white/[0.05] hover:text-ink"
                 }`}
-                title={`按${s.label}排序${active ? "（再点切换升降序）" : ""}`}
+                title={active ? t("resources.sortTipToggle", { label }) : t("resources.sortTip", { label })}
               >
                 {s.dot ? (
                   <span
@@ -350,21 +362,23 @@ export function AppResourceBoard({
                     }}
                   />
                 ) : null}
-                {s.label}
+                {label}
                 {active ? <span className="ml-0.5 text-[9px]">{desc ? "▾" : "▴"}</span> : null}
               </button>
             );
           })}
           <div className="flex-1" />
           <span className="font-mono text-[10px] tabular-nums text-ink-faint">
-            显示 {visible.length} / {filtered.length}
+            {t("resources.showing", { shown: visible.length, total: filtered.length })}
           </span>
         </div>
 
         <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
           <span>
-            {filtered.length} 个应用 ·{" "}
-            <span className="font-mono tabular-nums text-ink-dim">{totalProcs}</span> 进程
+            {t("resources.appsCount", { n: filtered.length })} ·{" "}
+            <span className="font-mono tabular-nums text-ink-dim">
+              {t("resources.procsShort", { n: totalProcs })}
+            </span>
           </span>
           <span className="font-mono tabular-nums">
             ↓ {totalDown == null ? "—" : formatSpeed(totalDown)} · ↑{" "}
@@ -372,42 +386,37 @@ export function AppResourceBoard({
           </span>
           <span>
             {net == null
-              ? "网速尚未采样"
+              ? t("resources.netNotSampled")
               : net.status === "warmup"
-                ? "网速采样中…"
+                ? t("resources.netSampling")
                 : net.status === "unavailable"
-                  ? "网速不可读"
-                  : `网速 ${Math.round(net.intervalMs)} ms 差分 · 仅非回环`}
+                  ? t("resources.netUnreadable")
+                  : t("resources.netDiff", { ms: Math.round(net.intervalMs) })}
           </span>
           {benchText ? (
-            <span
-              title="卡内比例条的分母 = 该指标全体应用的最大值；Top1 满条，其余按差距缩短。切换排序后基准跟着换，跨排序的条长不可直接比较"
-            >
-              {SORTS.find((s) => s.key === sortKey)?.label}条形基准{" "}
+            <span title={t("resources.benchTip")}>
+              {t("resources.bench", { label: sortLabel })}{" "}
               <span className="font-mono tabular-nums text-ink-dim">{benchText}</span>
             </span>
           ) : null}
           {spotlight ? (
             <>
-              <span className="text-ink-faint/70">大户</span>
-              {[
-                { label: "内存", r: top((x) => x.mem) },
-                { label: "CPU", r: top((x) => x.cpu) },
-                { label: "进程", r: top((x) => x.procs) },
-                { label: "下载", r: top((x) => x.net?.downBps ?? null) },
-              ].map(({ label, r }) =>
-                r ? (
+              <span className="text-ink-faint/70">{t("resources.spotlight")}</span>
+              {SPOTS.map(({ key, labelKey }) => {
+                const r = top((x) => sortValue(key, x));
+                const label = t(labelKey);
+                return r ? (
                   <button
-                    key={label}
+                    key={key}
                     type="button"
-                    onClick={() => pickSort(label === "内存" ? "mem" : label === "CPU" ? "cpu" : label === "进程" ? "procs" : "down")}
+                    onClick={() => pickSort(key)}
                     className="rounded bg-white/[0.05] px-1.5 py-0.5 text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
-                    title={`切到${label}排序`}
+                    title={t("resources.spotlightTip", { label })}
                   >
                     {label} <span className="text-ink">{r.family.name}</span>
                   </button>
-                ) : null,
-              )}
+                ) : null;
+              })}
             </>
           ) : null}
         </div>
@@ -415,7 +424,7 @@ export function AppResourceBoard({
 
       {net?.status === "unavailable" ? (
         <div className="mx-5 mt-2 rounded-lg bg-warn/[0.08] px-3 py-1.5 text-[10.5px] leading-relaxed text-warn">
-          ⚠ 网速不可读：{net.note ?? "nettop 不可用"}。卡片里的网速行保持空白，不估算、不显示 0。
+          {t("resources.netWarn", { why: net.note ?? t("resources.netFallback") })}
         </div>
       ) : null}
 
@@ -442,14 +451,19 @@ export function AppResourceBoard({
             className="mt-3 w-full rounded-lg bg-white/[0.03] py-2 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
           >
             {showAll
-              ? "⌃ 收起，只看 Top 12"
-              : `⌄ 展开剩余 ${remaining} 个（第 13–${filtered.length} 名，仍按${SORTS.find((s) => s.key === sortKey)?.label}${desc ? "降序" : "升序"}）`}
+              ? t("resources.collapse")
+              : t("resources.expand", {
+                  n: remaining,
+                  last: filtered.length,
+                  label: sortLabel,
+                  order: desc ? t("resources.sortDesc") : t("resources.sortAsc"),
+                })}
           </button>
         ) : null}
 
         {filtered.length === 0 ? (
           <p className="px-1 py-6 text-[11px] text-ink-faint">
-            没有匹配「{query}」的应用。
+            {t("resources.noMatch", { query })}
           </p>
         ) : null}
       </div>
@@ -485,14 +499,15 @@ function ResourceCard({
 }) {
   const { family, mem, cpu, procs, disk, ports, exposed, conns, net } = row;
   const exact = isExact(family);
+  const { t } = useI18n();
 
   const netText =
     netStatus == null
-      ? "尚未采样"
+      ? t("resources.netShort.notSampled")
       : netStatus === "warmup"
-        ? "采样中…"
+        ? t("resources.netShort.sampling")
         : netStatus === "unavailable"
-          ? "不可读"
+          ? t("resources.netShort.unreadable")
           : net == null
             ? "—"
             : // 双向合并为一个短串：/s 只留一个尾缀（`↓3.8k ↑120 B/s`），完整读数在 hover 里
@@ -502,7 +517,7 @@ function ResourceCard({
     ? `${disk.partial ? "≥ " : ""}${formatBytes(disk.bytes)}`
     : // 首次进入还在批量测量：说「测量中…」而不是「—」（— 的含义是「没有 .app」）
       !bundleReady
-      ? "测量中…"
+      ? t("common.progress.measuring")
       : "—";
 
   return (
@@ -510,7 +525,7 @@ function ResourceCard({
       type="button"
       onClick={onOpen}
       disabled={!onOpen}
-      aria-label={onOpen ? `打开 ${family.name} 详情` : undefined}
+      aria-label={onOpen ? t("resources.ariaOpen", { name: family.name }) : undefined}
       className={`group col-span-1 flex w-full flex-col rounded-xl border border-hairline-soft bg-white/[0.02] text-left transition-colors hover:border-hairline hover:bg-white/[0.035] disabled:cursor-default disabled:hover:border-hairline-soft disabled:hover:bg-white/[0.02] ${
         dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"
       }`}
@@ -538,11 +553,11 @@ function ResourceCard({
               }`}
               title={
                 procs >= PROC_WARN
-                  ? `${procs} 个进程：Electron 家族常见，进程数多不等于占资源多`
-                  : `${procs} 个进程`
+                  ? t("resources.procsTitleWarn", { n: procs })
+                  : t("resources.procsTitle", { n: procs })
               }
             >
-              {procs} 进程
+              {t("resources.procsShort", { n: procs })}
             </span>
           </div>
 
@@ -555,16 +570,22 @@ function ResourceCard({
             <span
               title={
                 portsReady
-                  ? "只统计关注层端口；Electron 的内部 IPC 随机端口不计入"
-                  : "端口尚未扫描（「—」不代表没有占用）"
+                  ? t("resources.portsTip")
+                  : t("resources.portsUnscannedTip")
               }
             >
-              {!portsReady ? "端口未扫" : ports.length === 0 ? "— 端口" : `${ports.length} 端口`}
+              {!portsReady
+                ? t("resources.portsNotScanned")
+                : ports.length === 0
+                  ? t("resources.portsNone")
+                  : t("resources.portsShort", { n: ports.length })}
               {exposed > 0 ? <span className="ml-0.5 text-warn">●</span> : null}
             </span>
             <span>·</span>
-            <span title={portsReady ? "ESTABLISHED 连接数" : "端口尚未扫描，连接数未知"}>
-              {conns == null ? "— 连接" : `${conns.established} 连接`}
+            <span title={portsReady ? t("resources.connsTip") : t("resources.connsUnscannedTip")}>
+              {conns == null
+                ? t("resources.connsNone")
+                : t("resources.connsShort", { n: conns.established })}
             </span>
           </div>
         </div>
@@ -578,9 +599,9 @@ function ResourceCard({
           {/* UI v4 排行榜条：CPU 紫 + 内存蓝双 mini-bar，域色即语义（§3.2） */}
           <MetricRow
             dense={dense}
-            label="CPU"
+            label={t("resources.metric.cpu")}
             text={cpuShort(cpu)}
-            hint="单核口径，可超过 100%"
+            hint={t("resources.mesh.cpuHint")}
             textClass={cpu != null && cpu >= 100 ? "text-danger" : ""}
             bar={
               <CellBar
@@ -592,16 +613,16 @@ function ResourceCard({
           />
           <MetricRow
             dense={dense}
-            label="内存"
+            label={t("resources.metric.mem")}
             text={`${exact ? "" : "≈"}${formatBytes(mem)}`}
-            hint="footprint 口径，含被换出到磁盘的部分；未深探的子进程按 RSS 计入（下界）"
+            hint={t("resources.mesh.memHint")}
             bar={<CellBar ratio={denom.mem > 0 ? mem / denom.mem : 0} tone="mem" show={denom.mem > 0} />}
           />
           <MetricRow
             dense={dense}
-            label="磁盘"
+            label={t("resources.metric.disk")}
             text={diskText}
-            hint={`仅 .app 本体；${BUNDLE_READONLY_HINT}。缓存/数据在详情页按需测量`}
+            hint={t("resources.mesh.diskHint")}
             bar={
               <CellBar
                 ratio={denom.disk > 0 && disk ? disk.bytes / denom.disk : 0}
@@ -612,12 +633,15 @@ function ResourceCard({
           />
           {showNet ? (
             <MetricRow
-              label="网速"
+              label={t("resources.metric.net")}
               text={netText ?? "—"}
               hint={
                 net
-                  ? `下载 ${formatSpeed(net.downBps)} · 上传 ${formatSpeed(net.upBps)} · 1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大`
-                  : "1 s 差分的瞬时速率，仅非回环接口（localhost 转发不计入）；连接多不等于流量大"
+                  ? t("resources.mesh.netHintWith", {
+                      down: formatSpeed(net.downBps),
+                      up: formatSpeed(net.upBps),
+                    })
+                  : t("resources.mesh.netHint")
               }
               textClass="text-[10px]"
               bar={

@@ -39,10 +39,8 @@ export function diskEmpty(d: AppDisk): boolean {
   return !d.bundle && !d.cache && !d.data;
 }
 
-/** 缓存层可清理提示：只有这一层归存储域管，本体与数据都不提供删除入口 */
-export const CACHE_CLEAN_HINT = "可再生缓存，清理入口在「存储」tab";
-export const DATA_READONLY_HINT = "用户数据，不建议清理";
-export const BUNDLE_READONLY_HINT = "应用本体，卸载应用才会释放";
+/** 缓存层可清理提示：只有这一层归存储域管，本体与数据都不提供删除入口。
+ *  文案在 `resources.mesh.diskHint` 与 `resources.tile.diskHint`（i18n 化后不再有中文常量）。 */
 
 // ---------------------------------------------------------------- M10 批量本体
 
