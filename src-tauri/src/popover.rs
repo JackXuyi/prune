@@ -133,6 +133,23 @@ pub fn toggle(app: &AppHandle, panel: &WebviewWindow) {
     }
 }
 
+/// 供 tray.rs 双击图标调用：确保面板处于收起态（本来就没显示则 no-op）。
+///
+/// 不做 toggle 语义 —— 双击的第一击已经把面板弹出来了，这里只负责让它退场，
+/// 不必知道它此前是开是关。
+pub fn hide(panel: &WebviewWindow) {
+    let mut slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    match &mut *slot {
+        Slot::Ready(ui) => ui.0.hide(),
+        // 降级路径下就是普通窗口
+        Slot::Failed => {
+            let _ = panel.hide();
+        }
+        // 从未初始化过 → 面板从未显示过
+        Slot::Uninit => {}
+    }
+}
+
 impl PopoverUi {
     /// 一次性初始化：搬 webview + 建锚点窗口 + 建 popover
     fn init(app: &AppHandle) -> Result<Self, String> {
@@ -196,6 +213,14 @@ impl PopoverUi {
             anchor,
             _delegate: delegate,
         })
+    }
+
+    /// 收起（双击进主窗口时用）。delegate 会记 LAST_CLOSED_MS，
+    /// 顺带把 300 ms 内的重开请求一起抑制掉 —— 用户此时已经去了主窗口。
+    fn hide(&mut self) {
+        if self.popover.isShown() {
+            self.popover.close();
+        }
     }
 
     fn toggle(&mut self, app: &AppHandle) {

@@ -9,7 +9,7 @@
 //!
 //! 运行 `pnpm tauri dev` 后观察 stdout 的 `[m0-tray]` 日志，并目测面板落点。
 
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU8, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -88,11 +88,32 @@ const MARGIN: f64 = 8.0;
 const BLUR_GRACE_MS: u64 = 300;
 static PANEL_SHOWN_AT_MS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
+/// 双击判定窗口（毫秒）。
+///
+/// macOS 上 Tauri **不派发** `TrayIconEvent::DoubleClick`（该变体注明 Windows Only），
+/// 所以双击只能由「两次左键 Up 的间隔」自行判定。350 ms 的取值权衡：
+/// 系统默认双击阈值约 300 ms（用户在设置里可放宽到 900+），宁可窄一点也不误判——
+/// 用户「连点两下想重开面板」是真实高频动作，误判成双击会莫名弹出大窗口。
+const DOUBLE_CLICK_WINDOW_MS: u64 = 350;
+/// 最近一次左键 Up 的时刻（Unix 毫秒，0 = 没有上一次）
+static LAST_LEFT_CLICK_MS: AtomicU64 = AtomicU64::new(0);
+/// 最近一次「双击进主窗口」的时刻，用于 Windows 的 Click×2 + DoubleClick 去重
+static LAST_MAIN_OPEN_MS: AtomicU64 = AtomicU64::new(0);
+
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as u64)
         .unwrap_or(0)
+}
+
+/// 两次事件是否落在同一时间窗内（可测纯函数）。
+///
+/// `prev_ms == 0` 表示「没有上一次」，恒 false —— 让「应用刚启动的第一次点击」
+/// 不会被 `now - 0` 的巨值意外判成同窗。时钟回拨时 `saturating_sub` 得 0，
+/// 结果为 true（保守方向：最多多认一次双击）。
+fn within_window(prev_ms: u64, now_ms: u64, window_ms: u64) -> bool {
+    prev_ms != 0 && now_ms.saturating_sub(prev_ms) < window_ms
 }
 
 /// 右键菜单里「顶部图标」的勾选项句柄：切换主题后要把勾搬到新项上。
@@ -208,14 +229,35 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             }
         })
         .on_tray_icon_event(|tray, event| {
-            // 左键单击：弹出/收起面板（右键交给菜单）
-            if let TrayIconEvent::Click {
-                button: MouseButton::Left,
-                button_state: MouseButtonState::Up,
-                ..
-            } = event
-            {
-                toggle_panel(tray.app_handle());
+            let app = tray.app_handle();
+            match event {
+                // 左键：单击弹出/收起面板，双击直接进主窗口（右键交给菜单）
+                TrayIconEvent::Click {
+                    button: MouseButton::Left,
+                    button_state: MouseButtonState::Up,
+                    ..
+                } => {
+                    let now = now_ms();
+                    let prev = LAST_LEFT_CLICK_MS.swap(now, Ordering::Relaxed);
+                    if within_window(prev, now, DOUBLE_CLICK_WINDOW_MS) {
+                        // 第一击已经把面板弹出来了，这里先收起再开主窗口
+                        // （清零时间戳，避免三连击被算成第二次双击）
+                        LAST_LEFT_CLICK_MS.store(0, Ordering::Relaxed);
+                        open_main_from_tray(app);
+                    } else {
+                        toggle_panel(app);
+                    }
+                }
+                // Windows 会额外派发一个 DoubleClick（macOS 不会）：
+                // 与上面的间隔判定重复触发时由 open_main_from_tray 内部去重
+                TrayIconEvent::DoubleClick {
+                    button: MouseButton::Left,
+                    ..
+                } => {
+                    LAST_LEFT_CLICK_MS.store(0, Ordering::Relaxed);
+                    open_main_from_tray(app);
+                }
+                _ => {}
             }
         })
         .build(app)?;
@@ -769,6 +811,38 @@ fn toggle_panel(app: &AppHandle) {
     legacy_toggle(app, &panel);
 }
 
+/// 双击图标的落点：收起面板 + 打开主窗口。
+///
+/// 去重的必要性来自平台差异 —— Windows 一次双击会连发 `Click`×2 与 `DoubleClick`，
+/// 若不去重会在 350 ms 内重复定位 + focus 主窗口。macOS 只有 `Click`×2，
+/// 由 [`within_window`] 的间隔判定认双击。
+fn open_main_from_tray(app: &AppHandle) {
+    let now = now_ms();
+    let prev = LAST_MAIN_OPEN_MS.swap(now, Ordering::Relaxed);
+    if within_window(prev, now, DOUBLE_CLICK_WINDOW_MS) {
+        return;
+    }
+    close_panel(app);
+    show_main(app);
+}
+
+/// 收起面板（不做 toggle 语义）：双击进主窗口前清掉第一击弹出的那一层。
+fn close_panel(app: &AppHandle) {
+    let Some(panel) = app.get_webview_window(PANEL_LABEL) else {
+        return;
+    };
+    #[cfg(target_os = "macos")]
+    {
+        let _ = app.run_on_main_thread(move || {
+            popover::hide(&panel);
+        });
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = panel.hide();
+    }
+}
+
 /// 降级路径（M0 spike 原实现）：手动定位无边框窗口
 pub(crate) fn legacy_toggle(app: &AppHandle, panel: &WebviewWindow) {
     if panel.is_visible().unwrap_or(false) {
@@ -1062,5 +1136,20 @@ mod tests {
             .expect("有读数就必须有标题");
         assert_eq!(title, "↓123M");
         assert!(title.chars().count() <= super::TITLE_BUDGET_CHARS);
+    }
+
+    /// 双击判定（M25）：间隔窗内算同一次手势，没有「上一次」不算
+    #[test]
+    fn double_click_window() {
+        let w = super::DOUBLE_CLICK_WINDOW_MS;
+        // 典型双击：两击间隔 120 ms
+        assert!(super::within_window(1000, 1120, w));
+        // 手慢（系统把双击阈值调宽到 900 ms 的用户）仍会被认成两次单击 ——
+        // 宁可多弹一次面板，也不要在 350 ms 之外误开主窗口
+        assert!(!super::within_window(1000, 1000 + w, w));
+        // 首次点击（无上一次）
+        assert!(!super::within_window(0, 1_000_000, w));
+        // 时钟回拨：saturating_sub → 0，保守认成同窗，不会 panic
+        assert!(super::within_window(2000, 1000, w));
     }
 }

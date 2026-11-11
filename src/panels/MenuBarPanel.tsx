@@ -1,7 +1,7 @@
 import { useEffect, useState, type ReactNode } from "react";
 import { LeakBanner } from "../components/LeakCard";
 import { NetDirectionRow, StatsRow } from "../components/stats/StatsRow";
-import { formatRelative } from "../lib/format";
+import { formatBytes, formatRelative } from "../lib/format";
 import { fireAndForget, openMain } from "../lib/ipc";
 import {
   cpuReadout,
@@ -111,6 +111,7 @@ export function MenuBarPanel() {
 function StatsSection({ refreshNonce }: { refreshNonce: number }) {
   const snapshot = useMemStore((s) => s.snapshot);
   const report = useDiskStore((s) => s.report);
+  const scanning = useDiskStore((s) => s.scanning);
   const ports = usePortStore((s) => s.snapshot);
   const initPorts = usePortStore((s) => s.init);
   const netSample = useNetTotalStore((s) => s.sample);
@@ -132,6 +133,26 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
   const netDown = netDirectionReadout(netSample, netHistory, "down");
   const netUp = netDirectionReadout(netSample, netHistory, "up");
   const families = snapshot?.families.length ?? 0;
+
+  /**
+   * 主 CTA 的文案与强调度（M25）。
+   *
+   * 产品主张是「可回收 GB」（README 首屏主数字），但此前面板只把它当存储行的
+   * 副读数——用户看得到数字、找不到动作。这里把读数升成按钮，只给一个去处：
+   * 存储 tab 的清理流（dry-run → 确认 → 废纸篓）。
+   *
+   * 三个阶段都受「不造假事实」红线约束：没扫过就是「尚未深探」，扫出 0 就是
+   * 「暂无可回收」，绝不把 null 渲染成 0 GB。
+   */
+  const reclaim = report?.totals.reclaimable ?? null;
+  const hasReclaim = reclaim != null && reclaim > 0;
+  const cta = scanning
+    ? { label: "正在深探…", action: "看进度" }
+    : reclaim == null
+      ? { label: "尚未深探", action: "去扫描" }
+      : !hasReclaim
+        ? { label: "暂无可回收", action: "看明细" }
+        : { label: `可回收 ${formatBytes(reclaim)}`, action: "去清理" };
 
   return (
     <section>
@@ -156,20 +177,66 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
         <StatsRow title="端口" readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
       </div>
 
-      {/* 应用列表退化为一行入口：面板是「瞄一眼」，对比工作台在主窗口 */}
-      <button
-        type="button"
-        onClick={() => fireAndForget(openMain(undefined, "resources"), "open_main")}
-        className="group mt-1 flex w-full items-center gap-1 rounded-md px-1 py-1.5 text-left text-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
-      >
-        <span className="min-w-0 flex-1 truncate">
-          查看全部 {families} 个应用（CPU / 磁盘 / 网速对比）
-        </span>
-        <ChevronRightIcon
-          size={11}
-          className="shrink-0 transition-transform group-hover:translate-x-0.5"
-        />
-      </button>
+      {/* 底部一条：主 CTA（可回收 → 去清理）+ 应用入口。
+          两个目标分开成两个按钮，不做嵌套；高度沿用原入口的 30 px 预算，
+          面板 432 的贴合高度不变（算式见 tray.rs: PANEL_H）。 */}
+      <div className="mt-0.5 flex items-center gap-1">
+        <button
+          type="button"
+          onClick={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
+          title={`${cta.label} · 打开存储页`}
+          className={`group flex h-7 min-w-0 flex-1 items-center gap-1 rounded-lg border pl-2 pr-1.5 text-left transition-colors ${
+            hasReclaim
+              ? "border-accent/25 bg-accent/[0.10] hover:border-accent/45 hover:bg-accent/[0.16]"
+              : "border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]"
+          }`}
+        >
+          <span
+            className={`shrink-0 text-[11px] leading-none ${
+              hasReclaim ? "text-accent" : "text-ink-faint"
+            }`}
+          >
+            ⚡
+          </span>
+          <span
+            className={`min-w-0 truncate text-[11px] leading-none font-semibold ${
+              hasReclaim ? "text-accent" : "text-ink-dim"
+            }`}
+          >
+            {cta.label}
+          </span>
+          <span className="flex-1" />
+          <span
+            className={`shrink-0 text-[10px] leading-none ${
+              hasReclaim
+                ? "text-accent/75 group-hover:text-accent"
+                : "text-ink-faint group-hover:text-ink-dim"
+            }`}
+          >
+            {cta.action}
+          </span>
+          <ChevronRightIcon
+            size={11}
+            className={`shrink-0 transition-transform group-hover:translate-x-0.5 ${
+              hasReclaim ? "text-accent/75" : "text-ink-faint"
+            }`}
+          />
+        </button>
+
+        {/* 应用对比是主窗口的活，这里只留一个不抢焦点的入口 */}
+        <button
+          type="button"
+          onClick={() => fireAndForget(openMain(undefined, "resources"), "open_main")}
+          title="应用资源：按应用看进程 / CPU / 内存 / 磁盘 / 端口 / 网速"
+          className="group flex h-7 shrink-0 items-center gap-0.5 rounded-lg px-1.5 text-[10px] text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink-dim"
+        >
+          <span className="leading-none">应用 {families}</span>
+          <ChevronRightIcon
+            size={10}
+            className="shrink-0 transition-transform group-hover:translate-x-0.5"
+          />
+        </button>
+      </div>
     </section>
   );
 }
