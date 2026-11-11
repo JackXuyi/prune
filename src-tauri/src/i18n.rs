@@ -250,12 +250,15 @@ pub fn locale_set(app: AppHandle, locale: String) -> Result<LocalePayload, Strin
     // 托盘文案活在 Rust 进程里：不重建就是「主窗口英文、托盘中文」。
     // 菜单必须在主线程建，且 emit 必须排在重建之后 —— 因此放进同一个闭包
     let handle = app.clone();
+    // 闭包要的是 `'static`，而 `payload` 还要作为返回值 —— 先克隆一份给它，
+    // 闭包内直接用这份 owned 值（不要再 clone 一次）
+    let emit_payload = payload.clone();
     app.run_on_main_thread(move || {
         if let Err(e) = crate::tray::rebuild_menu(&handle) {
             // 菜单错语言比「语言切换失败」轻得多：只记日志，不回滚
             eprintln!("[i18n] 托盘菜单重建失败（保持旧语言）: {e}");
         }
-        if let Err(e) = handle.emit("locale://changed", payload.clone()) {
+        if let Err(e) = handle.emit("locale://changed", emit_payload) {
             eprintln!("[i18n] 语言变更事件广播失败（不影响已切换的界面）: {e}");
         }
     })
