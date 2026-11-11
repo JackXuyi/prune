@@ -6,8 +6,8 @@ import {
   netReadout,
   portReadout,
 } from "../lib/statsReadout";
+import { useI18n } from "../i18n/store";
 import { dayString } from "../lib/format";
-import { UI_TEXT } from "../lib/uiText";
 import { useVolumeInfo } from "../lib/useVolumeInfo";
 import { AreaChart } from "./charts/AreaChart";
 import { CountUp } from "./charts/CountUp";
@@ -53,6 +53,7 @@ export function StatsBoard({
   /** 头部「刷新」按钮的递增信号：变了就重取卷容量（内存/端口由各自 store 刷新） */
   refreshNonce: number;
 }) {
+  const { t, locale } = useI18n();
   const snapshot = useMemStore((s) => s.snapshot);
   const ports = usePortStore((s) => s.snapshot);
   const report = useDiskStore((s) => s.report);
@@ -78,14 +79,14 @@ export function StatsBoard({
     };
   }, [refreshNonce]);
 
-  const mem = memoryReadout(snapshot);
-  const cpu = cpuReadout(snapshot?.cpu);
-  const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known);
-  const port = portReadout(ports);
-  const net = netReadout(netSample, netHistory);
+  const mem = memoryReadout(snapshot, locale);
+  const cpu = cpuReadout(snapshot?.cpu, locale);
+  const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known, locale);
+  const port = portReadout(ports, locale);
+  const net = netReadout(netSample, netHistory, locale);
   // 方向读数（M16 v6）：下载 / 上传各一张卡，口径在 readout 层派生
-  const netDown = netDirectionReadout(netSample, netHistory, "down");
-  const netUp = netDirectionReadout(netSample, netHistory, "up");
+  const netDown = netDirectionReadout(netSample, netHistory, "down", locale);
+  const netUp = netDirectionReadout(netSample, netHistory, "up", locale);
 
   const totals = report?.totals ?? null;
 
@@ -121,19 +122,17 @@ export function StatsBoard({
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-baseline justify-between">
         <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">总览</h1>
-          <p className="mt-0.5 text-[11px] text-ink-faint">
-            可回收优先 · 点击卡片看明细 · 只读，不在这里做任何清理
-          </p>
+          <h1 className="text-[15px] font-semibold tracking-tight">{t("stats.title")}</h1>
+          <p className="mt-0.5 text-[11px] text-ink-faint">{t("stats.subtitle")}</p>
         </div>
-        <span className="text-[10px] text-ink-faint">{UI_TEXT.statsCadence}</span>
+        <span className="text-[10px] text-ink-faint">{t("common.hint.statsCadence")}</span>
       </div>
 
       {/* Hero：可回收环形仪表（GB 可行动，百分比可描述） */}
       <button
         type="button"
         onClick={() => onDrill("disk")}
-        title="点击进入「存储」查看分级明细与清理"
+        title={t("stats.hero.title")}
         className="group mt-4 flex w-full items-center gap-6 rounded-[18px] border border-accent/25 bg-accent/[0.05] px-6 py-4 text-left transition-colors hover:border-accent/45 hover:bg-accent/[0.08]"
       >
         <RingGauge
@@ -144,8 +143,14 @@ export function StatsBoard({
           className="prune-anim shrink-0"
           ariaLabel={
             totals
-              ? `可回收 ${formatBytes(totals.reclaimable)}：L1 ${formatBytes(totals.deadweight)}，L2 ${formatBytes(totals.l2)}，L3 ${formatBytes(totals.l3)}，L4 ${formatBytes(totals.l4)} 不计入`
-              : "可回收空间尚未扫描"
+              ? t("stats.hero.aria", {
+                  total: formatBytes(totals.reclaimable),
+                  l1: formatBytes(totals.deadweight),
+                  l2: formatBytes(totals.l2),
+                  l3: formatBytes(totals.l3),
+                  l4: formatBytes(totals.l4),
+                })
+              : t("stats.hero.ariaEmpty")
           }
         >
           {totals ? (
@@ -155,7 +160,7 @@ export function StatsBoard({
                 format={formatBytes}
                 className="font-mono text-[24px] leading-none tabular-nums text-ink"
               />
-              <span className="mt-1 text-[9.5px] text-ink-faint">可回收</span>
+              <span className="mt-1 text-[9.5px] text-ink-faint">{t("stats.hero.reclaimable")}</span>
             </span>
           ) : (
             <span className="font-mono text-[20px] text-ink-faint">—</span>
@@ -164,24 +169,24 @@ export function StatsBoard({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline justify-between gap-2">
-            <span className="text-[11px] font-medium tracking-wide text-accent">可回收空间构成</span>
+            <span className="text-[11px] font-medium tracking-wide text-accent">{t("stats.hero.breakdown")}</span>
             <span className="text-[10px] text-ink-faint transition-colors group-hover:text-ink-dim">
-              → 存储
+              {t("stats.hero.toStorage")}
             </span>
           </div>
           {totals ? (
             <>
               <div className="mt-2.5 grid grid-cols-2 gap-x-6 gap-y-1.5">
-                <LegendDot color="var(--color-accent)" label="L1 跨平台二进制" value={formatBytes(totals.deadweight)} />
-                <LegendDot color="var(--color-info)" label="L2 包管理器等缓存" value={formatBytes(totals.l2)} />
-                <LegendDot color="var(--color-warn)" label="L3 项目依赖 / 模拟器" value={formatBytes(totals.l3)} />
-                <LegendDot color="var(--color-danger)" label="L4 Docker · 只给命令不计入" value={formatBytes(totals.l4)} dim />
+                <LegendDot color="var(--color-accent)" label={t("stats.tier.l1")} value={formatBytes(totals.deadweight)} />
+                <LegendDot color="var(--color-info)" label={t("stats.tier.l2")} value={formatBytes(totals.l2)} />
+                <LegendDot color="var(--color-warn)" label={t("stats.tier.l3")} value={formatBytes(totals.l3)} />
+                <LegendDot color="var(--color-danger)" label={t("stats.tier.l4")} value={formatBytes(totals.l4)} dim />
               </div>
             </>
           ) : (
             <div className="mt-2.5 flex items-center gap-3">
               <p className="text-[11px] leading-relaxed text-ink-faint">
-                {diskScanning ? UI_TEXT.scanning : UI_TEXT.firstScanHint}
+                {diskScanning ? t("common.progress.scanning") : t("common.hint.firstScan")}
               </p>
               {!diskScanning ? (
                 <span
@@ -199,7 +204,7 @@ export function StatsBoard({
                   }}
                   className="shrink-0 rounded-md bg-white/[0.06] px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.1] hover:text-ink"
                 >
-                  {UI_TEXT.scanNow}
+                  {t("common.action.scanNow")}
                 </span>
               ) : null}
             </div>
@@ -210,8 +215,8 @@ export function StatsBoard({
       {/* 六张域卡：图标 + 大数字 + 微图表，口径 hover */}
       <div className="mt-3 grid grid-cols-2 gap-3">
         <DomainCard
-          title="内存"
-          caption="physicalUsed / 总量 · 含被压缩与换出的部分（footprint 口径）"
+          title={t("stats.card.memory")}
+          caption={t("stats.caption.memory")}
           color="var(--color-info)"
           icon={<MemoryCloudIcon size={14} />}
           readout={mem}
@@ -221,7 +226,10 @@ export function StatsBoard({
               <div>
                 <div className="flex items-baseline justify-between text-[10px] text-ink-faint">
                   <span>
-                    swap {formatBytes(swap.used)} / {formatBytes(swap.total)}
+                    {t("stats.swap.label", {
+                      used: formatBytes(swap.used),
+                      total: formatBytes(swap.total),
+                    })}
                   </span>
                   <span
                     className={`font-mono tabular-nums ${
@@ -238,15 +246,15 @@ export function StatsBoard({
                   tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
                   thresholds={[0.75, 0.9]}
                   height={4}
-                  label={`swap 已用 ${formatPercent(swapRatio)}，阈值刻度 75 与 90`}
+                  label={t("stats.swap.aria", { pct: formatPercent(swapRatio) })}
                 />
               </div>
             ) : null
           }
         />
         <DomainCard
-          title="CPU"
-          caption="整机每核平均（0–100%）· 与进程的单核口径不同，不能相减"
+          title={t("stats.card.cpu")}
+          caption={t("stats.caption.cpu")}
           color="var(--color-domain-cpu)"
           icon={<ChipIcon size={14} />}
           readout={cpu}
@@ -254,21 +262,21 @@ export function StatsBoard({
           chart={
             <div>
               <div className="flex items-baseline justify-between text-[10px] text-ink-faint">
-                <span>近 10 min · 10 s 一个点</span>
+                <span>{t("stats.cpuTrend.label")}</span>
               </div>
               <AreaChart
                 className="mt-1"
                 values={cpuHistory}
                 color="var(--color-domain-cpu)"
                 height={26}
-                ariaLabel="CPU 近 10 分钟走势"
+                ariaLabel={t("stats.cpuTrend.aria")}
               />
             </div>
           }
         />
         <DomainCard
-          title="硬盘"
-          caption="home 所在卷 · 已用 = 总量 − 用户可用（statvfs 粗略口径）"
+          title={t("stats.card.disk")}
+          caption={t("stats.caption.disk")}
           color="var(--color-accent)"
           icon={<DatabaseIcon size={14} />}
           readout={disk}
@@ -280,8 +288,8 @@ export function StatsBoard({
           }
         />
         <DomainCard
-          title="端口"
-          caption="去重后的监听端口 · 琥珀=对外暴露 / 绿=关注层 / 灰=其他，悬停看「端口 · 进程」"
+          title={t("stats.card.ports")}
+          caption={t("stats.caption.ports")}
           color="var(--color-warn)"
           icon={<PortJackIcon size={14} />}
           readout={port}
@@ -291,15 +299,15 @@ export function StatsBoard({
               <DotMatrix
                 items={portDots}
                 dot={9}
-                ariaLabel={`监听端口点阵：共 ${portEntries.length} 个`}
+                ariaLabel={t("stats.portsDotsAria", { n: portEntries.length })}
               />
             ) : null
           }
         />
         {/* 网络拆成两卡（M16 v6）：行数不变（3 行），574/592 高度算式原样成立 */}
         <DomainCard
-          title="下载"
-          caption="物理网卡合计 · 虚拟接口不计入，VPN 不会双计"
+          title={t("stats.card.down")}
+          caption={t("stats.caption.down")}
           color="var(--color-domain-net)"
           icon={<DownloadIcon size={14} />}
           readout={net}
@@ -307,8 +315,8 @@ export function StatsBoard({
           onOpen={() => onDrill("net")}
         />
         <DomainCard
-          title="上传"
-          caption="物理网卡合计 · 与下载各自刻度，量级常差 10 倍"
+          title={t("stats.card.up")}
+          caption={t("stats.caption.up")}
           color="var(--color-domain-cpu)"
           icon={<DownloadIcon size={14} className="rotate-180" />}
           readout={net}
@@ -321,8 +329,8 @@ export function StatsBoard({
       {cut && (
         <div className="mt-3 rounded-[18px] border border-hairline bg-white/[0.02] px-5 py-4">
           <div className="flex items-baseline justify-between">
-            <span className="text-[11px] font-medium tracking-wide text-ink-dim">剪除成绩单</span>
-            <span className="text-[10px] text-ink-faint">只记录你亲手剪掉的 · 本地留存两年</span>
+            <span className="text-[11px] font-medium tracking-wide text-ink-dim">{t("stats.scorecard.title")}</span>
+            <span className="text-[10px] text-ink-faint">{t("stats.scorecard.hint")}</span>
           </div>
           {cut.totalItems > 0 ? (
             <>
@@ -332,24 +340,26 @@ export function StatsBoard({
                   format={formatBytes}
                   className="font-mono text-[22px] leading-none tabular-nums text-ink"
                 />
-                <span className="text-[11px] text-ink-faint">{cutEquivalence(cut.totalBytes)}</span>
+                <span className="text-[11px] text-ink-faint">{cutEquivalence(cut.totalBytes, t)}</span>
               </div>
               <p className="mt-1 text-[10px] text-ink-faint">
                 {/* 口径：cut_log 一行 = 一个被剪掉的条目，所以这里是「项」不是「次」 */}
-                {cut.totalItems} 项已剪除
-                {cut.firstTs != null ? ` · 自 ${dayString(new Date(cut.firstTs * 1000))} 起` : ""}
+                {t("stats.scorecard.items", { n: cut.totalItems })}
+                {cut.firstTs != null
+                  ? t("stats.scorecard.since", { date: dayString(new Date(cut.firstTs * 1000)) })
+                  : ""}
               </p>
               {cut.top.length > 0 && (
                 <div className="mt-2.5 grid gap-1">
-                  {cut.top.slice(0, 3).map((t, i) => (
-                    <div key={t.label} className="flex items-baseline gap-2 text-[11px]">
+                  {cut.top.slice(0, 3).map((item, i) => (
+                    <div key={item.label} className="flex items-baseline gap-2 text-[11px]">
                       <span className="w-3 shrink-0 font-mono text-ink-faint">{i + 1}</span>
-                      <span className="truncate text-ink-dim">{t.label}</span>
+                      <span className="truncate text-ink-dim">{item.label}</span>
                       <span className="ml-auto shrink-0 font-mono tabular-nums text-ink">
-                        {formatBytes(t.bytes)}
+                        {formatBytes(item.bytes)}
                       </span>
                       <span className="w-9 shrink-0 text-right text-[10px] text-ink-faint">
-                        {t.count} 项
+                        {t("stats.scorecard.count", { n: item.count })}
                       </span>
                     </div>
                   ))}
@@ -358,34 +368,32 @@ export function StatsBoard({
             </>
           ) : (
             <div className="mt-2 flex items-center justify-between gap-3">
-              <p className="text-[11px] text-ink-faint">
-                还没有剪除记录 —— 去存储页挑一项缓存，完成第一次清理。
-              </p>
+              <p className="text-[11px] text-ink-faint">{t("stats.scorecard.empty")}</p>
               <button
                 type="button"
                 onClick={() => onDrill("disk")}
                 className="shrink-0 rounded-md bg-white/[0.06] px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.1] hover:text-ink"
               >
-                去存储
+                {t("stats.scorecard.goStorage")}
               </button>
             </div>
           )}
         </div>
       )}
 
-      <p className="mt-4 text-[10px] leading-relaxed text-ink-faint">{UI_TEXT.statsPrinciple}</p>
+      <p className="mt-4 text-[10px] leading-relaxed text-ink-faint">{t("common.hint.statsPrinciple")}</p>
     </div>
   );
 }
 
 /** 换算彩蛋：≥4 GB 用「高清电影」（4 GB/部），否则用「照片」（3 MB/张） */
-function cutEquivalence(totalBytes: number): string {
+function cutEquivalence(totalBytes: number, t: ReturnType<typeof useI18n>["t"]): string {
   const MOVIE = 4e9;
   const PHOTO = 3e6;
   if (totalBytes >= MOVIE) {
-    return `相当于 ${Math.max(1, Math.round(totalBytes / MOVIE))} 部高清电影`;
+    return t("stats.scorecard.movies", { n: Math.max(1, Math.round(totalBytes / MOVIE)) });
   }
-  return `相当于 ${Math.max(1, Math.round(totalBytes / PHOTO))} 张照片`;
+  return t("stats.scorecard.photos", { n: Math.max(1, Math.round(totalBytes / PHOTO)) });
 }
 
 function LegendDot({

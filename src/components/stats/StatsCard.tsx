@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { useI18n } from "../../i18n/store";
 import { formatPercent } from "../../lib/format";
 import type { Readout, Tone } from "../../lib/statsReadout";
 import { ChevronRightIcon } from "../icons";
@@ -77,6 +78,7 @@ export function StatsCard({
   /** 卡底图表位（总览 v3.1）：swap 阈值条 / 端口分组堆叠条等，不影响主读数排版 */
   footnote?: ReactNode;
 }) {
+  const { t } = useI18n();
   const shell =
     "flex min-h-[140px] flex-col rounded-xl border border-hairline-soft bg-white/[0.02] px-4 py-3.5";
   const content = body ?? (
@@ -131,7 +133,7 @@ export function StatsCard({
     <button
       type="button"
       onClick={onOpen}
-      title={`查看${title}明细`}
+      title={t("stats.readout.openDetail", { title })}
       className={`group text-left transition-colors hover:border-hairline hover:bg-white/[0.035] ${shell}`}
     >
       {inner}

@@ -1,3 +1,4 @@
+import { useI18n } from "../../i18n/store";
 import type { NetDirectionReadout } from "../../lib/statsReadout";
 import { Sparkline } from "../Sparkline";
 
@@ -14,6 +15,7 @@ import { Sparkline } from "../Sparkline";
  * 会误读成「该方向在该时刻达到峰值」；时间只在网络 tab 的会话峰值里出现。
  */
 export function NetDirectionReading({ readout }: { readout: NetDirectionReadout }) {
+  const { t } = useI18n();
   const ok = readout.status === "ok";
   const down = readout.dir === "down";
   const arrow = down ? "↓" : "↑";
@@ -24,15 +26,15 @@ export function NetDirectionReading({ readout }: { readout: NetDirectionReadout 
       <p className="text-[11px] leading-relaxed text-ink-faint">
         {readout.note ?? "—"}
         {down ? (
-          <span className="block">读不到和「没有流量」是两件事，这里不显示 0。</span>
+          <span className="block">{t("stats.net.unreadableNote")}</span>
         ) : null}
       </p>
     );
   }
 
   const tooltip = [
-    readout.peakText ? `本次会话峰值 ${arrow} ${readout.peakText}` : null,
-    readout.sessionText ? `会话累计 ${readout.sessionText}（自启动起）` : null,
+    readout.peakText ? t("stats.net.peakTooltip", { arrow, value: readout.peakText }) : null,
+    readout.sessionText ? t("stats.net.sessionTooltip", { value: readout.sessionText }) : null,
   ]
     .filter(Boolean)
     .join(" · ");
@@ -56,14 +58,14 @@ export function NetDirectionReading({ readout }: { readout: NetDirectionReadout 
           />
         ) : (
           <div className="flex h-[26px] items-center text-[9.5px] text-ink-faint/70">
-            走势积累中（每秒一个点）
+            {t("stats.net.trendWarmup")}
           </div>
         )}
       </div>
       <div className="mt-1 truncate text-[10px] leading-none text-ink-faint" dir="ltr">
         {readout.todayText != null
-          ? `近 5 min ${readout.avgText} · 今日 ${readout.todayText}`
-          : `近 5 min ${readout.avgText}`}
+          ? t("stats.net.m5Today", { value: readout.avgText, today: readout.todayText })
+          : t("stats.net.m5", { value: readout.avgText })}
       </div>
     </div>
   );

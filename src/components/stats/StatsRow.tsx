@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 
+import { useI18n } from "../../i18n/store";
 import { formatPercent } from "../../lib/format";
 import type { NetDirectionReadout, Readout } from "../../lib/statsReadout";
 import { Meter } from "../primitives";
@@ -27,6 +28,7 @@ export function StatsRow({
   readout: Readout;
   onOpen?: () => void;
 }) {
+  const { t } = useI18n();
   const ok = readout.status === "ok";
   // 有占比条时文字只剩约 180 px，取 2 条；没有占比条就整行给文字，取 3 条
   const subLimit = readout.ratio != null ? 2 : 3;
@@ -81,7 +83,7 @@ export function StatsRow({
             ok ? "text-ink-faint" : "text-ink-faint/70"
           }`}
         >
-          {ok ? subText : "点刷新可重扫一轮"}
+          {ok ? subText : t("stats.readout.refreshHint")}
         </span>
       </div>
     </button>
@@ -105,17 +107,18 @@ export function NetDirectionRow({
   readout: NetDirectionReadout;
   onOpen?: () => void;
 }) {
+  const { t } = useI18n();
   const ok = readout.status === "ok";
   const down = readout.dir === "down";
-  const title = down ? "下载" : "上传";
+  const title = t(down ? "stats.card.down" : "stats.card.up");
   const arrow = down ? "↓" : "↑";
   const arrowText = down ? "text-accent" : "text-info";
   const valueText = down ? "text-accent" : "text-info";
   const fullText = [
-    ok ? `近 5 min ${readout.avgText}` : null,
-    readout.todayText ? `今日 ${readout.todayText}` : null,
-    readout.peakText ? `峰值 ${readout.peakText}` : null,
-    readout.sessionText ? `会话累计 ${readout.sessionText}` : null,
+    ok ? t("stats.net.m5", { value: readout.avgText }) : null,
+    readout.todayText ? t("stats.net.today", { value: readout.todayText }) : null,
+    readout.peakText ? t("stats.net.peak", { value: readout.peakText }) : null,
+    readout.sessionText ? t("stats.net.session", { value: readout.sessionText }) : null,
     !ok ? (readout.note ?? "—") : null,
   ]
     .filter(Boolean)
@@ -165,12 +168,12 @@ export function NetDirectionRow({
                 />
               ) : (
                 <span className="block h-[14px] text-[9px] leading-[14px] text-ink-faint/70">
-                  走势积累中
+                  {t("stats.net.trendWarmupShort")}
                 </span>
               )}
             </span>
             <span className="min-w-0 flex-1 truncate text-[10px] leading-none text-ink-faint">
-              近 5 min {readout.avgText}
+              {t("stats.net.m5", { value: readout.avgText })}
             </span>
           </>
         ) : null}

@@ -9,7 +9,13 @@
  * - 读不到 = `unavailable`，不是 0
  * - 还没攒出基线 = `warmup`，不是 0
  * - `ok` 且数值为 0 = 真的没有，正常显示 0
+ *
+ * i18n（spec §2.6）：每个函数末尾接受 `locale`，缺省取当前界面语言。**不读
+ * `tGlobal`** —— 纯函数读全局会让「切语言后已生成的旧串」不更新。
  */
+import { i18nFor } from "../i18n";
+import { currentLocale } from "../i18n/store";
+import type { Locale } from "../i18n/types";
 import type { VolumeInfo } from "../types/disk";
 import type { CpuInfo, MemSnapshot, PressureLevel } from "../types/mem";
 import {
@@ -78,13 +84,17 @@ export interface NetDirectionReadout {
 
 // ---------------------------------------------------------------- 内存
 
-export function memoryReadout(snapshot: MemSnapshot | null): Readout {
-  if (!snapshot) return pending("采样中…");
+export function memoryReadout(
+  snapshot: MemSnapshot | null,
+  locale: Locale = currentLocale(),
+): Readout {
+  const { t } = i18nFor(locale);
+  if (!snapshot) return pending(t("stats.readout.sampling"));
 
   const total = snapshot.physicalTotal;
   const used = snapshot.physicalUsedBytes;
   // 旧快照缺 physicalUsedBytes：这是「还没读到」，不能拿 0 顶上
-  if (used == null || total <= 0) return pending("已用读数尚未就绪");
+  if (used == null || total <= 0) return pending(t("stats.readout.usedNotReady"));
 
   const ratio = used / total;
   const usedPart = splitBytes(used);
@@ -98,18 +108,22 @@ export function memoryReadout(snapshot: MemSnapshot | null): Readout {
     ratio,
     tone: loadTone(ratio),
     sub: compact([
-      `可用 ${formatBytes(snapshot.freeBytes)}`,
-      swapRatio != null ? `swap ${formatPercent(swapRatio)}` : null,
+      t("stats.readout.free", { size: formatBytes(snapshot.freeBytes) }),
+      swapRatio != null ? t("stats.readout.swap", { pct: formatPercent(swapRatio) }) : null,
     ]),
     status: "ok",
-    tag: snapshot.pressure ? pressureTag(snapshot.pressure.level) : undefined,
+    tag: snapshot.pressure ? pressureTag(snapshot.pressure.level, t) : undefined,
   };
 }
 
 // ---------------------------------------------------------------- CPU
 
-export function cpuReadout(cpu: CpuInfo | null | undefined): Readout {
-  if (!cpu || cpu.usage == null) return pending("采样中…（约 10 s）");
+export function cpuReadout(
+  cpu: CpuInfo | null | undefined,
+  locale: Locale = currentLocale(),
+): Readout {
+  const { t } = i18nFor(locale);
+  if (!cpu || cpu.usage == null) return pending(t("stats.readout.sampling10s"));
 
   const usage = cpu.usage;
   const ratio = Math.max(0, Math.min(1, usage / 100));
@@ -119,7 +133,7 @@ export function cpuReadout(cpu: CpuInfo | null | undefined): Readout {
     ratio,
     tone: loadTone(ratio),
     sub: compact([
-      `${cpu.cores} 核`,
+      t("stats.readout.cores", { n: cpu.cores }),
       cpu.load
         ? `load ${cpu.load.one.toFixed(2)} / ${cpu.load.five.toFixed(2)} / ${cpu.load.fifteen.toFixed(2)}`
         : null,
@@ -134,10 +148,12 @@ export function diskReadout(
   volume: VolumeInfo | null,
   reclaimable: number | null,
   known = true,
+  locale: Locale = currentLocale(),
 ): Readout {
-  if (!known) return pending("读取中…");
+  const { t } = i18nFor(locale);
+  if (!known) return pending(t("stats.readout.loading"));
   if (!volume || volume.totalBytes <= 0) {
-    return { ...pending("容量不可读（statvfs 失败）"), status: "unavailable" };
+    return { ...pending(t("stats.readout.volumeUnreadable")), status: "unavailable" };
   }
 
   const used = Math.max(0, volume.totalBytes - volume.userAvailableBytes);
@@ -153,8 +169,8 @@ export function diskReadout(
     tone: loadTone(ratio),
     sub: compact([
       // 可回收来自最近一次存储扫描，没扫过就整条不显示——不写「0」
-      reclaimable != null ? `可回收 ${formatBytes(reclaimable)}` : null,
-      `可用 ${formatBytes(volume.userAvailableBytes)}`,
+      reclaimable != null ? t("stats.readout.reclaimable", { size: formatBytes(reclaimable) }) : null,
+      t("stats.readout.free", { size: formatBytes(volume.userAvailableBytes) }),
     ]),
     status: "ok",
   };
@@ -162,9 +178,17 @@ export function diskReadout(
 
 // ---------------------------------------------------------------- 端口
 
-export function portReadout(ports: PortSnapshot | null): Readout {
+export function portReadout(
+  ports: PortSnapshot | null,
+  locale: Locale = currentLocale(),
+): Readout {
+  const { t } = i18nFor(locale);
   if (!ports) {
-    return { ...pending("尚未扫描"), status: "unavailable", note: "进入本页会自动扫一轮" };
+    return {
+      ...pending(t("common.state.notScanned")),
+      status: "unavailable",
+      note: t("common.state.notScannedHint"),
+    };
   }
 
   const entries = ports.entries;
@@ -175,14 +199,14 @@ export function portReadout(ports: PortSnapshot | null): Readout {
 
   return {
     main: String(entries.length),
-    unit: "个监听",
+    unit: t("stats.readout.portUnit"),
     ratio: null,
     tone: "neutral",
     sub: compact([
-      `关注 ${watched}`,
+      t("stats.readout.watched", { n: watched }),
       // 暴露面 > 0 才提；为 0 时不必占一行
-      exposed > 0 ? `对外暴露 ${exposed}` : null,
-      `活跃连接 ${conns}`,
+      exposed > 0 ? t("stats.readout.exposed", { n: exposed }) : null,
+      t("stats.readout.conns", { n: conns }),
       closeWait > 0 ? `CLOSE_WAIT ${closeWait}` : null,
     ]),
     status: "ok",
@@ -194,7 +218,9 @@ export function portReadout(ports: PortSnapshot | null): Readout {
 export function netReadout(
   sample: NetTotalSample | null,
   history: NetTotalPoint[],
+  locale: Locale = currentLocale(),
 ): NetReadout {
+  const { t } = i18nFor(locale);
   const downSeries = history.map((p) => p.downBps);
   const upSeries = history.map((p) => p.upBps);
   const avg = weightedAverage(history);
@@ -207,9 +233,9 @@ export function netReadout(
     avgUpText: `↑ ${formatSpeed(avg.upBps)}`,
   };
 
-  if (!sample) return { ...base, ...pending("采样中…") };
+  if (!sample) return { ...base, ...pending(t("stats.readout.sampling")) };
   if (sample.status === "warmup") {
-    return { ...base, ...pending("采样中…（首拍只建基线，约 2 s）") };
+    return { ...base, ...pending(t("stats.readout.warmup")) };
   }
   if (sample.status === "unavailable") {
     return {
@@ -220,7 +246,7 @@ export function netReadout(
       sub: [],
       status: "unavailable",
       tone: "neutral",
-      note: sample.note ?? "系统网卡计数器读不到",
+      note: sample.note ?? t("stats.readout.netNoCounter"),
     };
   }
 
@@ -233,11 +259,14 @@ export function netReadout(
     tone: "accent",
     status: "ok",
     sub: compact([
-      `近 5 min ${base.avgDownText} / ${base.avgUpText}`,
+      t("stats.readout.netAvg", { down: base.avgDownText, up: base.avgUpText }),
       sample.today
-        ? `今日 ↓ ${formatBytes(sample.today.downBytes)} ↑ ${formatBytes(sample.today.upBytes)}`
+        ? t("stats.readout.netToday", {
+            down: formatBytes(sample.today.downBytes),
+            up: formatBytes(sample.today.upBytes),
+          })
         : null,
-      sample.peakDownBps > 0 ? `峰值 ↓ ${formatSpeed(sample.peakDownBps)}` : null,
+      sample.peakDownBps > 0 ? t("stats.readout.netPeak", { speed: formatSpeed(sample.peakDownBps) }) : null,
     ]),
   };
 }
@@ -252,20 +281,18 @@ export function netDirectionReadout(
   sample: NetTotalSample | null,
   history: NetTotalPoint[],
   dir: NetDirection,
+  locale: Locale = currentLocale(),
 ): NetDirectionReadout {
+  const { t } = i18nFor(locale);
   const down = dir === "down";
   const series = history.map((p) => (down ? p.downBps : p.upBps));
   const avg = weightedAverage(history);
   const avgText = down ? formatSpeed(avg.downBps) : formatSpeed(avg.upBps);
   const bps = down ? (sample?.downBps ?? 0) : (sample?.upBps ?? 0);
   const today = sample?.today ?? null;
-  const todayText = today
-    ? formatBytes(down ? today.downBytes : today.upBytes)
-    : null;
+  const todayText = today ? formatBytes(down ? today.downBytes : today.upBytes) : null;
   const peakBps = down ? (sample?.peakDownBps ?? 0) : (sample?.peakUpBps ?? 0);
-  const sessionBytes = down
-    ? sample?.sessionDownBytes
-    : sample?.sessionUpBytes;
+  const sessionBytes = down ? sample?.sessionDownBytes : sample?.sessionUpBytes;
 
   const make = (
     main: string,
@@ -286,13 +313,11 @@ export function netDirectionReadout(
     note,
   });
 
-  if (!sample) return make("—", "", "warmup", "采样中…");
-  if (sample.status === "warmup") {
-    return make("—", "", "warmup", "采样中…（首拍只建基线，约 2 s）");
-  }
+  if (!sample) return make("—", "", "warmup", t("stats.readout.sampling"));
+  if (sample.status === "warmup") return make("—", "", "warmup", t("stats.readout.warmup"));
   if (sample.status === "unavailable") {
     // 读不到 ≠ 没有流量：不显示 0，main 用「—」+ 原因
-    return make("—", "", "unavailable", sample.note ?? "系统网卡计数器读不到");
+    return make("—", "", "unavailable", sample.note ?? t("stats.readout.netNoCounter"));
   }
   const speed = splitSpeed(bps);
   return make(speed.value, speed.unit, "ok");
@@ -324,14 +349,17 @@ function pending(note: string): Readout {
   return { main: "—", unit: "", ratio: null, sub: [], status: "warmup", tone: "neutral", note };
 }
 
-function pressureTag(level: PressureLevel): { text: string; tone: Tone } {
+function pressureTag(
+  level: PressureLevel,
+  t: ReturnType<typeof i18nFor>["t"],
+): { text: string; tone: Tone } {
   switch (level) {
     case "critical":
-      return { text: "紧张", tone: "danger" };
+      return { text: t("common.pressure.critical"), tone: "danger" };
     case "warning":
-      return { text: "警告", tone: "warn" };
+      return { text: t("common.pressure.warning"), tone: "warn" };
     default:
-      return { text: "正常", tone: "accent" };
+      return { text: t("common.pressure.normal"), tone: "accent" };
   }
 }
 
