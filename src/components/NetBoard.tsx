@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 
 import type { DayTraffic, IfaceRate, LayerProbe, NetTotalSample, NetTotalStatus } from "../types/net";
 import { formatBytes, formatClock, recentDays } from "../lib/format";
+import { i18nFor } from "../i18n";
+import { useI18n } from "../i18n/store";
+import type { Locale } from "../i18n/types";
 import { useMemStore } from "../stores/memStore";
 import { useNetDiagStore } from "../stores/netDiagStore";
 import { useNetSpeedStore } from "../stores/netStore";
@@ -37,6 +40,7 @@ import { TrackProgress, type TrackNode } from "./charts/TrackProgress";
 type NetSubPage = "monitor" | "diag";
 
 export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
+  const { t } = useI18n();
   const sample = useNetTotalStore((s) => s.sample);
   const history = useNetTotalStore((s) => s.history);
   const days = useNetTotalStore((s) => s.days);
@@ -53,11 +57,9 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">网络</h1>
+          <h1 className="text-[15px] font-semibold tracking-tight">{t("net.title")}</h1>
           <p className="mt-0.5 text-[11px] text-ink-faint">
-            {page === "monitor"
-              ? "系统口径的下载 / 上传速率 · 只算物理网卡（虚拟接口单列，避免与 VPN 重复计数）"
-              : "分层定位慢在哪：DNS → 路由器 → 出口 · 手动触发，不常驻"}
+            {page === "monitor" ? t("net.subMonitor") : t("net.subDiag")}
           </p>
         </div>
         <Segmented page={page} onChange={setPage} />
@@ -67,15 +69,14 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
         <>
       {status === "unavailable" ? (
         <p className="mt-3 rounded-lg bg-warn/[0.08] px-3 py-2 text-[11px] leading-relaxed text-warn">
-          不可读：{sample?.note ?? "系统网卡计数器读不到"}。这里不显示 0
-          —— 读不到和「没有流量」是两件事。
+          {t("net.unavailable", { why: sample?.note ?? t("net.unavailableFallback") })}
         </p>
       ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-8 border-b border-hairline-soft pb-4">
         <DirectionReading
           arrow="↓"
-          label="下载"
+          label={t("net.down")}
           tone="accent"
           chartColor="var(--color-domain-net)"
           status={status}
@@ -84,7 +85,7 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
         />
         <DirectionReading
           arrow="↑"
-          label="上传"
+          label={t("net.up")}
           tone="info"
           chartColor="var(--color-domain-cpu)"
           status={status}
@@ -96,18 +97,16 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
       <Aggregates sample={sample} avgDown={avg.downBps} avgUp={avg.upBps} />
 
       <section className="mt-4 border-b border-hairline-soft pb-4">
-        <SectionHead title="近 7 天" hint="下 / 上堆叠 · 缺失日灰显，不画成 0" />
+        <SectionHead title={t("net.days.title")} hint={t("net.days.hint")} />
         <DayBars days={days} count={TRAFFIC_DAYS} />
       </section>
 
       <section className="mt-4 border-b border-hairline-soft pb-4">
-        <SectionHead title="网卡" hint="物理口合计 = 上面的数字" />
+        <SectionHead title={t("net.iface.title")} hint={t("net.iface.hint")} />
         {status === "warmup" ? (
-          <p className="mt-2 text-[11px] text-ink-faint">采样中…（第一拍只建立基线，约 1–2 s）</p>
+          <p className="mt-2 text-[11px] text-ink-faint">{t("net.iface.warmup")}</p>
         ) : physical.length === 0 ? (
-          <p className="mt-2 text-[11px] text-ink-faint">
-            没有可用的物理网卡读数。断网时这里是 0 B/s，而不是「不可读」。
-          </p>
+          <p className="mt-2 text-[11px] text-ink-faint">{t("net.iface.empty")}</p>
         ) : (
           <ul className="mt-2 space-y-1.5">
             {physical.map((i) => (
@@ -120,11 +119,7 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
 
       <AppRanking netStatus={status} onOpenResources={onOpenResources} />
 
-      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">
-        口径：网卡计数器差分，排除回环与虚拟接口；「今日」为 Prune 运行期间累计（本地日期，
-        每分钟落库），未运行时段无法回填。按应用来自 nettop，与网卡口径不必相等
-        ——一份按网卡、一份按进程，差几个百分点属正常。
-      </p>
+      <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">{t("net.footnote")}</p>
         </>
       ) : (
         <DiagPage />
@@ -154,6 +149,7 @@ function DirectionReading({
   bps: number;
   values: number[];
 }) {
+  const { t } = useI18n();
   const { value, unit } = splitSpeed(bps);
   const valueTone = tone === "accent" ? "text-domain-net" : "text-domain-cpu";
   const ready = status !== "warmup";
@@ -164,7 +160,7 @@ function DirectionReading({
         <span className="text-[11px] tracking-wide text-ink-dim">
           <span className={tone === "accent" ? "text-accent" : "text-info"}>{arrow}</span> {label}
         </span>
-        <span className="text-[10px] text-ink-faint">各自刻度</span>
+        <span className="text-[10px] text-ink-faint">{t("net.ownScale")}</span>
       </div>
       <div className="mt-1 flex items-baseline gap-1.5">
         {status === "unavailable" ? (
@@ -177,7 +173,9 @@ function DirectionReading({
             <span className="text-[11px] text-ink-faint">{unit}</span>
           </>
         ) : (
-          <span className="text-[13px] leading-none text-ink-faint">采样中…</span>
+          <span className="text-[13px] leading-none text-ink-faint">
+            {t("common.progress.sampling")}
+          </span>
         )}
       </div>
       <div className="mt-2">
@@ -186,18 +184,22 @@ function DirectionReading({
             values={values}
             color={chartColor}
             height={52}
-            ariaLabel={`${label}近 5 分钟走势，每秒一个点`}
+            ariaLabel={t("net.chartAria", { label })}
           />
         ) : (
           <div className="flex h-[52px] items-center justify-center rounded-lg border border-dashed border-hairline-soft text-[10px] text-ink-faint">
-            走势积累中（每秒一个点）
+            {t("net.accumulating")}
           </div>
         )}
       </div>
       <div className="mt-1 flex items-center justify-between text-[9.5px] text-ink-faint">
-        <span>近 5 min</span>
+        <span>{t("net.last5min")}</span>
         <span>
-          {ready && bps === 0 ? "本拍无流量" : ready ? formatSpeed(bps) : "—"}
+          {ready && bps === 0
+            ? t("net.noTraffic")
+            : ready
+              ? formatSpeed(bps)
+              : "—"}
         </span>
       </div>
     </div>
@@ -215,43 +217,48 @@ function Aggregates({
   avgDown: number;
   avgUp: number;
 }) {
+  const { t } = useI18n();
   const ready = sample?.status === "ok";
   const today = sample?.today ?? null;
-  const missingPersist = (sample?.note ?? "").includes("未落库");
+  // note 只承载「必须让用户知道」的原因（连续落库失败才有值）。这里不再去匹配
+  // 后端中文串 —— 那是语言耦合，英文环境下会静默失效。
+  const missingPersist = (sample?.note ?? "") !== "";
 
   return (
     <div className="grid grid-cols-2 gap-x-8 gap-y-3 border-b border-hairline-soft py-4">
       <MiniStat
-        label="本次会话峰值"
+        label={t("net.agg.peak")}
         main={ready ? `↓ ${formatSpeed(sample.peakDownBps)}` : "—"}
         sub={
           ready
             ? `↑ ${formatSpeed(sample.peakUpBps)}${sample.peakAt ? ` · ${formatClock(sample.peakAt)}` : ""}`
-            : "还没有读数"
+            : t("net.agg.noReading")
         }
-        title="本次会话内单拍最大值，与走势窗口无关（否则「峰值」会随窗口缩水）"
+        title={t("net.agg.peakTitle")}
       />
       <MiniStat
-        label="近 5 min 平均"
+        label={t("net.agg.avg")}
         main={`↓ ${formatSpeed(avgDown)}`}
-        sub={`↑ ${formatSpeed(avgUp)} · 时间加权`}
-        title="按点间隔加权：采样抖动时简单平均会放大短间隔的尖峰"
+        sub={`↑ ${formatSpeed(avgUp)} · ${t("net.agg.avgSub")}`}
+        title={t("net.agg.avgTitle")}
       />
       <MiniStat
-        label="今日"
-        main={today ? `↓ ${formatBytes(today.downBytes)}` : "不可用"}
-        sub={
-          today ? `↑ ${formatBytes(today.upBytes)}` : "存储打不开，实时速率与会话累计照常"
-        }
-        title="Prune 运行期间累计：未运行的时段无法回填（系统计数器只给「开机至今」）"
+        label={t("net.agg.today")}
+        main={today ? `↓ ${formatBytes(today.downBytes)}` : t("net.agg.todayUnavailable")}
+        sub={today ? `↑ ${formatBytes(today.upBytes)}` : t("net.agg.todayNote")}
+        title={t("net.agg.todayTitle")}
         warn={missingPersist}
-        warnText="⚠ 未落库"
+        warnText={t("net.agg.notPersisted")}
       />
       <MiniStat
-        label="本次会话"
+        label={t("net.agg.session")}
         main={sample ? `↓ ${formatBytes(sample.sessionDownBytes)}` : "—"}
-        sub={sample ? `↑ ${formatBytes(sample.sessionUpBytes)} · 自启动起` : "还没有读数"}
-        title="自 Prune 启动以来：回答「这次开了多久用了多少」，不跨重启"
+        sub={
+          sample
+            ? `↑ ${formatBytes(sample.sessionUpBytes)} · ${t("net.agg.sessionSub")}`
+            : t("net.agg.noReading")
+        }
+        title={t("net.agg.sessionTitle")}
       />
     </div>
   );
@@ -293,13 +300,14 @@ function MiniStat({
  * 而 Prune 没运行的日子是「不知道」。底部同时标「已记录 N/7 天」。
  */
 function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
+  const { t } = useI18n();
   const labels = useMemo(() => recentDays(count), [count]);
   const map = useMemo(() => new Map(days.map((d) => [d.day, d])), [days]);
   const max = Math.max(
     1,
     ...labels.map((k) => {
-      const t = map.get(k);
-      return t ? t.downBytes + t.upBytes : 0;
+      const day = map.get(k);
+      return day ? day.downBytes + day.upBytes : 0;
     }),
   );
   const recorded = labels.filter((k) => map.has(k)).length;
@@ -310,21 +318,24 @@ function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
     <div className="mt-2">
       <div className="flex h-16 items-end gap-2">
         {labels.map((k) => {
-          const t = map.get(k);
-          const pct = t ? ((t.downBytes + t.upBytes) / max) * 100 : 0;
-          const upShare = t && t.downBytes + t.upBytes > 0 ? t.upBytes / (t.downBytes + t.upBytes) : 0;
-          const isToday = k === todayKey && t != null;
+          const day = map.get(k);
+          const pct = day ? ((day.downBytes + day.upBytes) / max) * 100 : 0;
+          const upShare =
+            day && day.downBytes + day.upBytes > 0
+              ? day.upBytes / (day.downBytes + day.upBytes)
+              : 0;
+          const isToday = k === todayKey && day != null;
           return (
             <div
               key={k}
               className="flex h-full min-w-0 flex-1 flex-col justify-end"
               title={
-                t
-                  ? `${k}${isToday ? "（今天）" : ""} · ↓ ${formatBytes(t.downBytes)} / ↑ ${formatBytes(t.upBytes)}`
-                  : `${k} · 没有记录（Prune 未运行）`
+                day
+                  ? `${k}${isToday ? t("net.days.todaySuffix") : ""} · ↓ ${formatBytes(day.downBytes)} / ↑ ${formatBytes(day.upBytes)}`
+                  : `${k} · ${t("net.days.noRecord")}`
               }
             >
-              {t ? (
+              {day ? (
                 <div
                   className="flex w-full flex-col overflow-hidden rounded-[2px]"
                   style={{
@@ -358,10 +369,13 @@ function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
       </div>
       <div className="mt-1 flex items-center justify-between text-[10px] text-ink-faint">
         <span>
-          <span className="text-accent">▮</span> 下载 <span className="text-info">▮</span> 上传 · 各日按 7 天内最大值
+          <span className="text-accent">▮</span> {t("net.down")}{" "}
+          <span className="text-info">▮</span> {t("net.up")} · {t("net.days.legendScale")}
         </span>
         <span>
-          已记录 <span className="font-mono tabular-nums text-ink-dim">{recorded}</span>/{count} 天
+          {t("net.days.recordedLabel")}{" "}
+          <span className="font-mono tabular-nums text-ink-dim">{recorded}</span>
+          {t("net.days.recordedSuffix", { total: count })}
         </span>
       </div>
     </div>
@@ -375,6 +389,7 @@ function maxRate(list: IfaceRate[]): number {
 }
 
 function IfaceRow({ iface, maxBps }: { iface: IfaceRate; maxBps: number }) {
+  const { t } = useI18n();
   return (
     <li className="flex items-center gap-3">
       <span className="w-[64px] shrink-0 truncate font-mono text-[11px] text-ink" title={iface.name}>
@@ -392,7 +407,10 @@ function IfaceRow({ iface, maxBps }: { iface: IfaceRate; maxBps: number }) {
           max={maxBps}
           tone={ifaceTotalBps(iface) > 0 ? "accent" : "neutral"}
           height={4}
-          label={`${iface.name} 合计 ${formatSpeed(ifaceTotalBps(iface))}`}
+          label={t("net.iface.totalAria", {
+            name: iface.name,
+            speed: formatSpeed(ifaceTotalBps(iface)),
+          })}
         />
       </span>
       <span className="w-[74px] shrink-0 text-right font-mono text-[10px] tabular-nums text-ink-faint">
@@ -404,6 +422,7 @@ function IfaceRow({ iface, maxBps }: { iface: IfaceRate; maxBps: number }) {
 
 /** 虚拟接口默认折叠：一排 `awdl0 0 B/s` 会抢走注意力，但信息不能丢 */
 function VirtualIfaces({ ifaces, maxBps }: { ifaces: IfaceRate[]; maxBps: number }) {
+  const { t, locale } = useI18n();
   const [open, setOpen] = useState(false);
   if (ifaces.length === 0) return null;
   const names = ifaces.map((i) => i.name).join(" · ");
@@ -418,8 +437,8 @@ function VirtualIfaces({ ifaces, maxBps }: { ifaces: IfaceRate[]; maxBps: number
       >
         <span className={`transition-transform ${open ? "rotate-90" : ""}`}>▸</span>
         <span>
-          虚拟接口 {ifaces.length} 个（{names}）
-          <span className="ml-1.5 text-ink-faint/80">不计入主数字，避免与物理口重复</span>
+          {t("net.iface.virtualCount", { n: ifaces.length, names })}
+          <span className="ml-1.5 text-ink-faint/80">{t("net.iface.virtualNote")}</span>
         </span>
       </button>
       {open ? (
@@ -441,11 +460,14 @@ function VirtualIfaces({ ifaces, maxBps }: { ifaces: IfaceRate[]; maxBps: number
                   max={maxBps}
                   tone="neutral"
                   height={3}
-                  label={`${i.name} 合计 ${formatSpeed(ifaceTotalBps(i))}`}
+                  label={t("net.iface.totalAria", {
+                    name: i.name,
+                    speed: formatSpeed(ifaceTotalBps(i)),
+                  })}
                 />
               </span>
               <span className="w-[52px] shrink-0 text-right text-[9.5px] text-ink-faint">
-                {ifaceKindLabel(i.kind)}
+                {ifaceKindLabel(i.kind, locale)}
               </span>
             </li>
           ))}
@@ -466,6 +488,7 @@ function AppRanking({
   netStatus: NetTotalStatus;
   onOpenResources: () => void;
 }) {
+  const { t } = useI18n();
   const processes = useMemStore((s) => s.processes);
   const netSample = useNetSpeedStore((s) => s.sample);
   const [expanded, setExpanded] = useState(false);
@@ -498,20 +521,22 @@ function AppRanking({
     : 1;
   const degraded =
     netSample == null
-      ? "采样中…（按应用需要 nettop，进入本 tab 后 1 s 内出数）"
+      ? t("net.apps.degradedWarmup")
       : netSample.status === "unavailable"
-        ? `按应用不可读：${netSample.note ?? "nettop 不可用"}（主数字与今日不受影响）`
+        ? t("net.apps.degradedUnavailable", {
+            why: netSample.note ?? t("net.apps.nettopMissing"),
+          })
         : netStatus === "unavailable"
-          ? "按应用暂时不可读"
+          ? t("net.apps.degradedOther")
           : null;
 
   return (
     <section className="mt-4">
-      <SectionHead title="按应用" hint="nettop · 仅非回环 · 按速率降序" />
+      <SectionHead title={t("net.apps.title")} hint={t("net.apps.hint")} />
       {degraded ? (
         <p className="mt-2 text-[11px] text-ink-faint">{degraded}</p>
       ) : rows.length === 0 ? (
-        <p className="mt-2 text-[11px] text-ink-faint">本拍没有应用在跑流量。</p>
+        <p className="mt-2 text-[11px] text-ink-faint">{t("net.apps.empty")}</p>
       ) : (
         <>
           <ul className="mt-2 space-y-0.5">
@@ -520,7 +545,7 @@ function AppRanking({
                 <button
                   type="button"
                   onClick={onOpenResources}
-                  title="在「应用资源」里看这个应用的完整画像"
+                  title={t("net.apps.detailTitle")}
                   className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.04]"
                 >
                   <span className="w-[76px] shrink-0 truncate text-[11.5px] text-ink" title={r.family}>
@@ -532,7 +557,10 @@ function AppRanking({
                       max={topBps}
                       tone="accent"
                       height={4}
-                      label={`${r.family} 合计 ${formatSpeed(r.speed.downBps + r.speed.upBps)}`}
+                      label={t("net.apps.totalAria", {
+                        name: r.family,
+                        speed: formatSpeed(r.speed.downBps + r.speed.upBps),
+                      })}
                     />
                   </span>
                   <span className="w-[92px] shrink-0 text-right font-mono text-[11px] tabular-nums text-accent">
@@ -551,7 +579,7 @@ function AppRanking({
               onClick={() => setExpanded((v) => !v)}
               className="mt-1 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
             >
-              {expanded ? "收起" : `▸ 其余 ${restCount} 个应用`}
+              {expanded ? t("net.apps.collapse") : t("net.apps.more", { n: restCount })}
             </button>
           ) : null}
         </>
@@ -570,15 +598,16 @@ function Segmented({
   page: NetSubPage;
   onChange: (p: NetSubPage) => void;
 }) {
+  const { t } = useI18n();
   const items: { key: NetSubPage; label: string }[] = [
-    { key: "monitor", label: "监测" },
-    { key: "diag", label: "诊断" },
+    { key: "monitor", label: t("net.subpage.monitor") },
+    { key: "diag", label: t("net.subpage.diag") },
   ];
   return (
     <div
       className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5"
       role="tablist"
-      aria-label="网络子页"
+      aria-label={t("net.subpage.aria")}
     >
       {items.map((it) => {
         const active = page === it.key;
@@ -612,6 +641,7 @@ function Segmented({
  * 手动触发，running 态禁用重复点击；failed 与「连不上路由器」严格区分。
  */
 function DiagPage() {
+  const { t, locale } = useI18n();
   const diag = useNetDiagStore((s) => s.diag);
   const running = useNetDiagStore((s) => s.running);
   const copied = useNetDiagStore((s) => s.copied);
@@ -622,8 +652,8 @@ function DiagPage() {
 
   useEffect(() => {
     if (!copied && !copyFailed) return;
-    const t = setTimeout(resetCopied, 1500);
-    return () => clearTimeout(t);
+    const timer = setTimeout(resetCopied, 1500);
+    return () => clearTimeout(timer);
   }, [copied, copyFailed, resetCopied]);
 
   const done = diag?.status === "done" && diag;
@@ -631,61 +661,57 @@ function DiagPage() {
   return (
     <>
       <div className="mt-4 flex items-center justify-between">
-        <span className="text-[10px] text-ink-faint">
-          一轮约 5 s · 探测失败显示失败，不显示 0
-        </span>
+        <span className="text-[10px] text-ink-faint">{t("net.diag.oneRound")}</span>
         <button
           type="button"
           onClick={() => void run()}
           disabled={running}
           className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] disabled:opacity-50"
         >
-          {running ? "诊断中…" : "开始诊断"}
+          {running ? t("common.progress.diagnosing") : t("net.diag.start")}
         </button>
       </div>
 
       {!diag || diag.status === "idle" ? (
-        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
-          没跑过诊断。点「开始诊断」探测 DNS、路由器、出口三层，
-          每层画一条横柱（中位数）并标出阈值刻度，最后给出一条主因结论。
-        </p>
+        <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">{t("net.diag.idle")}</p>
       ) : diag.status === "failed" ? (
         <p className="mt-3 rounded-lg bg-warn/[0.08] px-3 py-2 text-[11px] leading-relaxed text-warn">
-          无法诊断：{diag.note ?? "未知原因"}。这是探测机制本身失败，
-          与「连不上路由器」是两件事。
+          {t("net.diag.failed", { why: diag.note ?? t("net.diag.unknownWhy") })}
         </p>
       ) : running ? (
-        <p className="mt-3 text-[11px] text-ink-faint">
-          探测中…（DNS → 网关 → 出口 → portal，全程串行不出中间结论）
-        </p>
+        <p className="mt-3 text-[11px] text-ink-faint">{t("net.diag.running")}</p>
       ) : done ? (
         <>
           {/* UI v4（§6.5）诊断轨道：DNS → 网关 → 出口逐段点亮，先看「断在哪」再看细节 */}
           <section className="mt-3 rounded-xl border border-hairline-soft bg-white/[0.02] px-4 py-3.5">
-            <TrackProgress
-              ariaLabel="分层探测轨道：DNS → 路由器 → 出口"
-              nodes={diagTrackNodes(done)}
-            />
+            <TrackProgress ariaLabel={t("net.diag.trackAria")} nodes={diagTrackNodes(done, locale)} />
           </section>
           <section className="mt-4 space-y-5 border-b border-hairline-soft pb-4">
             <LayerChart
               name="DNS"
-              sub="解析 www.apple.com · 系统解析器（含缓存），低值不代表无 DNS 问题"
+              sub={t("net.diag.dnsSub")}
               probe={done.dns}
               threshold={DIAG_THRESHOLDS.dnsMs}
             />
             <LayerChart
-              name={done.gateway ? `路由器 ${done.gateway}` : "路由器"}
-              sub="网关 :80 连接耗时"
+              name={
+                done.gateway
+                  ? t("net.diag.routerWith", { gateway: done.gateway })
+                  : t("net.diag.router")
+              }
+              sub={t("net.diag.lanSub")}
               probe={done.lan}
               threshold={DIAG_THRESHOLDS.lanMs}
             />
             <LayerChart
-              name="出口"
+              name={t("net.diag.wanName")}
               sub={
                 done.jitterMs != null
-                  ? `1.1.1.1:443（被拦自动回退 223.5.5.5:443）· 抖动 ±${done.jitterMs.toFixed(1)} ms（阈值 ${DIAG_THRESHOLDS.jitterMs} ms）`
-                  : "1.1.1.1:443（被拦自动回退 223.5.5.5:443）连接耗时"
+                  ? t("net.diag.wanSubJitter", {
+                      jitter: done.jitterMs.toFixed(1),
+                      threshold: DIAG_THRESHOLDS.jitterMs,
+                    })
+                  : t("net.diag.wanSub")
               }
               probe={done.wan}
               threshold={DIAG_THRESHOLDS.wanLanGapMs}
@@ -693,23 +719,24 @@ function DiagPage() {
           </section>
 
           {done.captive === "suspected" ? (
-            <p className="mt-3 text-[11px] text-warn">
-              检测到疑似登录页（酒店 / 机场 Wi-Fi）——打开浏览器完成认证后重新诊断。
-            </p>
+            <p className="mt-3 text-[11px] text-warn">{t("net.diag.captive")}</p>
           ) : null}
 
           {done.verdict ? (
             <div className="mt-3 rounded-lg bg-white/[0.04] px-3 py-2.5">
-              <div className="text-[12px] font-medium text-ink">→ 主因：{done.verdict.label}</div>
+              <div className="text-[12px] font-medium text-ink">
+                {t("net.diag.verdict", { label: done.verdict.label })}
+              </div>
               <div className="mt-0.5 text-[10.5px] leading-relaxed text-ink-faint">
-                {done.verdict.advice}（规则：{done.verdict.rule}）
+                {t("net.diag.verdictRule", {
+                  advice: done.verdict.advice,
+                  rule: done.verdict.rule,
+                })}
               </div>
             </div>
           ) : null}
 
-          <p className="mt-2 text-[10px] text-ink-faint">
-            Wi-Fi 信号层 v2 提供，本版未含；阈值是经验值，全部标在柱图刻度上。
-          </p>
+          <p className="mt-2 text-[10px] text-ink-faint">{t("net.diag.scopeNote")}</p>
 
           <button
             type="button"
@@ -721,9 +748,13 @@ function DiagPage() {
                   ? "text-accent"
                   : "text-ink-faint hover:text-ink-dim"
             }`}
-            title="生成 Markdown 报告并复制到系统剪贴板，可粘贴给 AI 分析"
+            title={t("net.diag.copyTitle")}
           >
-            {copyFailed ? "✗ 复制失败" : copied ? "✓ 已复制" : "复制诊断报告"}
+            {copyFailed
+              ? `✗ ${t("common.action.copyFailed")}`
+              : copied
+                ? `✓ ${t("common.action.copied")}`
+                : t("net.diag.copy")}
           </button>
         </>
       ) : null}
@@ -737,15 +768,19 @@ function DiagPage() {
  * 诊断轨道节点：median null = 探测失败（红叉）；超阈值 = 该层是瓶颈（红叉 + 读数）；
  * 正常 = 绿勾 + 中位数。sub 一律给读数，让轨道自己说话。
  */
-function diagTrackNodes(done: {
-  dns: LayerProbe | null;
-  lan: LayerProbe | null;
-  wan: LayerProbe | null;
-}): TrackNode[] {
+function diagTrackNodes(
+  done: {
+    dns: LayerProbe | null;
+    lan: LayerProbe | null;
+    wan: LayerProbe | null;
+  },
+  locale: Locale,
+): TrackNode[] {
+  const { t } = i18nFor(locale);
   const node = (label: string, probe: LayerProbe | null, threshold: number): TrackNode => {
     const median = probe?.medianMs ?? null;
     if (median == null) {
-      return { label, sub: probe?.note ?? "探测失败", state: "fail" };
+      return { label, sub: probe?.note ?? t("net.diag.probeFailed"), state: "fail" };
     }
     return {
       label,
@@ -755,8 +790,8 @@ function diagTrackNodes(done: {
   };
   return [
     node("DNS", done.dns, DIAG_THRESHOLDS.dnsMs),
-    node("路由器", done.lan, DIAG_THRESHOLDS.lanMs),
-    node("出口", done.wan, DIAG_THRESHOLDS.wanLanGapMs),
+    node(t("net.diag.router"), done.lan, DIAG_THRESHOLDS.lanMs),
+    node(t("net.diag.wanName"), done.wan, DIAG_THRESHOLDS.wanLanGapMs),
   ];
 }
 
@@ -777,6 +812,7 @@ function LayerChart({
   probe: LayerProbe | null;
   threshold: number;
 }) {
+  const { t } = useI18n();
   const tone = probeTone(probe, threshold);
   const fill = tone === "danger" ? "bg-danger" : tone === "warn" ? "bg-warn" : "bg-accent";
   const text = tone === "danger" ? "text-danger" : tone === "warn" ? "text-warn" : "text-ink";
@@ -793,14 +829,14 @@ function LayerChart({
           <span className="ml-1.5 text-[9.5px] text-ink-faint">{sub}</span>
         </span>
         <span className={`shrink-0 font-mono text-[12px] tabular-nums ${text}`}>
-          {median != null ? `${median.toFixed(1)} ms` : probe?.note ?? "探测失败"}
+          {median != null
+            ? `${median.toFixed(1)} ms`
+            : (probe?.note ?? t("net.diag.probeFailed"))}
         </span>
       </div>
 
       {median == null ? (
-        <p className="mt-1.5 text-[10px] text-danger/80">
-          本层没有可用读数，柱图省略——「没有读数」和「0 ms」是两件事。
-        </p>
+        <p className="mt-1.5 text-[10px] text-danger/80">{t("net.layer.noReading")}</p>
       ) : (
         <>
           <div className="relative mt-2 h-2 rounded-full bg-white/[0.05]">
@@ -811,7 +847,7 @@ function LayerChart({
             <div
               className="absolute -inset-y-1 w-px bg-ink-faint/70"
               style={{ left: `${pct(threshold)}%` }}
-              title={`阈值 ${threshold} ms`}
+              title={t("net.layer.thresholdTick", { n: threshold })}
             />
           </div>
           {samples.length > 1 ? (
@@ -821,16 +857,19 @@ function LayerChart({
                   key={i}
                   className="absolute top-1/2 size-[5px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-ink-faint/60"
                   style={{ left: `${pct(s)}%` }}
-                  title={`样本 ${i + 1}：${s.toFixed(1)} ms`}
+                  title={t("net.layer.sample", { index: i + 1, n: s.toFixed(1) })}
                 />
               ))}
             </div>
           ) : null}
           <div className="mt-0.5 flex items-baseline justify-between text-[9.5px] text-ink-faint">
             <span>
-              {samples.length} 次样本 · 中位数 {median.toFixed(1)} ms
+              {t("net.layer.samplesMedian", {
+                count: samples.length,
+                median: median.toFixed(1),
+              })}
             </span>
-            <span>阈值 {threshold} ms（竖刻度）</span>
+            <span>{t("net.layer.thresholdFoot", { n: threshold })}</span>
           </div>
           {probe?.note ? (
             <p className="mt-1 text-[9.5px] leading-relaxed text-warn">{probe.note}</p>
@@ -849,6 +888,7 @@ function LayerChart({
  * 隐藏优于「不可用」占位），不是显示一个灰按钮。
  */
 function SpeedCard() {
+  const { t, locale } = useI18n();
   const capability = useNetDiagStore((s) => s.capability);
   const speed = useNetDiagStore((s) => s.speed);
   const speedRunning = useNetDiagStore((s) => s.speedRunning);
@@ -863,26 +903,24 @@ function SpeedCard() {
   return (
     <section className="mt-5 border-t border-hairline-soft pt-4">
       <div className="flex items-center justify-between">
-        <SectionHead title="测速 & 负载响应" hint="系统 networkQuality · 约 30 s" />
+        <SectionHead title={t("net.speed.title")} hint={t("net.speed.hint")} />
         <button
           type="button"
           onClick={() => void runSpeed()}
           disabled={speedRunning}
           className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] disabled:opacity-50"
         >
-          {speedRunning ? "测速中…" : "开始测速"}
+          {speedRunning ? t("common.progress.speedTesting") : t("net.speed.start")}
         </button>
       </div>
 
       {speedRunning ? (
-        <p className="mt-2 text-[11px] text-ink-faint">
-          测速中…（期间网络会被占满，下载 / 上传 / 负载下延迟各测一段）
-        </p>
+        <p className="mt-2 text-[11px] text-ink-faint">{t("net.speed.runningNote")}</p>
       ) : speed ? (
         <div className="mt-2.5 space-y-2.5">
           <div>
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] text-ink-dim">下载</span>
+              <span className="text-[11px] text-ink-dim">{t("net.down")}</span>
               <span className="font-mono text-xs tabular-nums text-ink">
                 {formatMbps(speed.downBps)}
               </span>
@@ -893,12 +931,12 @@ function SpeedCard() {
               max={GIGABIT_BPS}
               tone="accent"
               height={5}
-              label={`下载 ${formatMbps(speed.downBps)}，参考千兆带宽`}
+              label={t("net.speed.barAriaDown", { speed: formatMbps(speed.downBps) })}
             />
           </div>
           <div>
             <div className="flex items-baseline justify-between gap-2">
-              <span className="text-[11px] text-ink-dim">上传</span>
+              <span className="text-[11px] text-ink-dim">{t("net.up")}</span>
               <span className="font-mono text-xs tabular-nums text-ink">
                 {formatMbps(speed.upBps)}
               </span>
@@ -909,39 +947,35 @@ function SpeedCard() {
               max={GIGABIT_BPS}
               tone="info"
               height={5}
-              label={`上传 ${formatMbps(speed.upBps)}，参考千兆带宽`}
+              label={t("net.speed.barAriaUp", { speed: formatMbps(speed.upBps) })}
             />
           </div>
-          <p className="text-[10px] text-ink-faint">
-            条形参考 = 千兆带宽的实际可用值（约 940 Mbps，已扣协议开销）；
-            2.5G / 万兆网卡会顶满，此时以数字为准。
-          </p>
+          <p className="text-[10px] text-ink-faint">{t("net.speed.gigabit")}</p>
           <div className="flex items-baseline justify-between gap-3">
             <span className="text-[11px] text-ink-dim">
-              RPM · 负载下响应度
+              {t("net.speed.rpm")}
               <span className="ml-1.5 text-[9.5px] text-ink-faint">
-                base_rtt {speed.baseRttMs.toFixed(0)} ms
+                {t("net.speed.baseRtt", { n: speed.baseRttMs.toFixed(0) })}
               </span>
             </span>
             <span className="flex shrink-0 items-center gap-1.5">
               <span className="font-mono text-[13px] tabular-nums text-ink">
                 {speed.rpm.toFixed(0)}
               </span>
-              <Badge tone={rpmTone(speed.rpmLevel)}>{rpmLevelLabel(speed.rpmLevel)}</Badge>
+              <Badge tone={rpmTone(speed.rpmLevel)}>
+                {rpmLevelLabel(speed.rpmLevel, locale)}
+              </Badge>
             </span>
           </div>
           <p
             className="text-[10px] leading-relaxed text-ink-faint"
-            title="RPM 是 Apple 的「负载下响应度」：满速下载/上传时连接的响应能力，直接对应视频会议会不会卡"
+            title={t("net.speed.rpmTitle")}
           >
-            RPM 是 Apple 的「负载下响应度」：满速传输时还能保持多少响应，直接对应视频会议会不会卡。
-            与 WhyFi 的 Cloudflare 口径不同，属 Apple 官方标准。
+            {t("net.speed.rpmNote")}
           </p>
         </div>
       ) : (
-        <p className="mt-2 text-[11px] text-ink-faint">
-          没跑过测速。点「开始测速」拿吞吐与 RPM（bufferbloat 官方口径），约 30 s。
-        </p>
+        <p className="mt-2 text-[11px] text-ink-faint">{t("net.speed.idle")}</p>
       )}
     </section>
   );

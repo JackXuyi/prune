@@ -1,4 +1,7 @@
 /** 与 prune-core::net::lan 一一对应（camelCase）。改这里必须同步 Rust 侧。 */
+import { i18nFor } from "../i18n";
+import { currentLocale } from "../i18n/store";
+import type { Locale, NoParamKey } from "../i18n/types";
 
 export type NeighborState =
   | "reachable"
@@ -65,26 +68,44 @@ export interface LanProgress {
   total: number;
 }
 
-export const LAN_PHASE_LABEL: Record<LanProgress["phase"], string> = {
-  discover: "正在发现服务（mDNS / SSDP）",
-  probe: "正在探测网段",
-  neighbors: "正在读取邻居表",
-  merge: "正在合成结果",
-};
+/**
+ * 阶段文案的 key（渲染时才 `t()`，不在模块加载期固化语言）。
+ *
+ * 存 key 而不是文案：模块常量若存中文，切换语言后它不会跟着变 ——
+ * 这正是「切了语言还有旧串」的典型来源。
+ */
+export const LAN_PHASE_KEY = {
+  discover: "lan.phase.discover",
+  probe: "lan.phase.probe",
+  neighbors: "lan.phase.neighbors",
+  merge: "lan.phase.merge",
+} as const satisfies Record<LanProgress["phase"], NoParamKey>;
 
-export function kindLabel(kind: DeviceKind): string {
-  const map: Record<DeviceKind, string> = {
-    router: "路由器",
-    computer: "电脑",
-    phone: "手机",
-    tablet: "平板",
-    tv: "电视",
-    speaker: "音箱",
-    printer: "打印机",
-    nas: "NAS",
-    camera: "摄像头",
-    iot: "IoT",
-    unknown: "未知",
-  };
-  return map[kind];
+/** 设备类型展示词（查不到 hostname 时它就是主标题） */
+export function kindLabel(kind: DeviceKind, locale: Locale = currentLocale()): string {
+  const { t } = i18nFor(locale);
+  switch (kind) {
+    case "router":
+      return t("lan.kind.router");
+    case "computer":
+      return t("lan.kind.computer");
+    case "phone":
+      return t("lan.kind.phone");
+    case "tablet":
+      return t("lan.kind.tablet");
+    case "tv":
+      return t("lan.kind.tv");
+    case "speaker":
+      return t("lan.kind.speaker");
+    case "printer":
+      return t("lan.kind.printer");
+    case "nas":
+      return t("lan.kind.nas");
+    case "camera":
+      return t("lan.kind.camera");
+    case "iot":
+      return t("lan.kind.iot");
+    default:
+      return t("lan.kind.unknown");
+  }
 }

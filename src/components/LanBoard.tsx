@@ -4,6 +4,7 @@ import { EmptyState } from "./EmptyArt";
 import { LanDeviceCard, LanDeviceDetailModal } from "./LanDeviceCard";
 import { ChevronRightIcon, RefreshIcon } from "./icons";
 import { formatClock } from "../lib/format";
+import { useI18n } from "../i18n/store";
 import { phaseText, useLanStore } from "../stores/lanStore";
 import type { LanDevice } from "../types/lan";
 
@@ -19,6 +20,7 @@ import type { LanDevice } from "../types/lan";
 type LanFilter = "all" | "online" | "inbound";
 
 export function LanBoard() {
+  const { t, locale } = useI18n();
   const snapshot = useLanStore((s) => s.snapshot);
   const scanning = useLanStore((s) => s.scanning);
   const progress = useLanStore((s) => s.progress);
@@ -37,16 +39,14 @@ export function LanBoard() {
     const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
     return (
       <div className="mt-6">
-        <p className="text-[11.5px] text-ink-dim">{phaseText(progress)}</p>
+        <p className="text-[11.5px] text-ink-dim">{phaseText(progress, locale)}</p>
         <div className="mt-2 h-1 w-full max-w-[420px] overflow-hidden rounded-full bg-white/[0.06]">
           <div
             className="h-full rounded-full bg-accent/70 transition-[width] duration-300"
             style={{ width: `${pct}%` }}
           />
         </div>
-        <p className="mt-2 text-[10.5px] text-ink-faint">
-          一轮约 30 秒（mDNS 发现窗口）。期间不会访问任何设备上的服务。
-        </p>
+        <p className="mt-2 text-[10.5px] text-ink-faint">{t("lan.scanningNote")}</p>
       </div>
     );
   }
@@ -54,8 +54,8 @@ export function LanBoard() {
   if (!snapshot) {
     return (
       <EmptyState
-        title="还没有扫描过局域网"
-        note="只探测本网段设备（TCP connect + mDNS / SSDP），不访问设备上的任何服务。首次扫描 macOS 会请求本地网络授权。"
+        title={t("lan.empty.neverScannedTitle")}
+        note={t("lan.empty.neverScannedNote")}
         action={
           <div className="mt-1 flex flex-col items-center gap-1.5">
             <button
@@ -63,7 +63,7 @@ export function LanBoard() {
               onClick={() => void scan()}
               className="flex items-center gap-1.5 rounded-full bg-accent/15 px-3.5 py-1.5 text-[11.5px] font-medium text-accent transition-colors hover:bg-accent/25"
             >
-              扫描局域网
+              {t("lan.scan")}
             </button>
           </div>
         }
@@ -94,7 +94,7 @@ export function LanBoard() {
   const exposedHint =
     exposed.length > 0
       ? `${exposed.slice(0, 4).join(" / ")}${exposed.length > 4 ? " …" : ""}`
-      : "我对同网段开放 0 个端口";
+      : t("lan.metric.noExposed");
 
   return (
     <div className="mt-4">
@@ -112,30 +112,30 @@ export function LanBoard() {
 
       {devices.length === 0 ? (
         <EmptyState
-          title="本轮没有发现设备"
-          note="探测完成才是这个结论——不是没扫。如果邻居表为空，说明本机最近没有与网段内设备通信过。"
+          title={t("lan.empty.noDevicesTitle")}
+          note={t("lan.empty.noDevicesNote")}
         />
       ) : (
         <>
           {/* 筛选条 + 重扫（plan §5：单选 chips，与端口页搜索语义独立） */}
           <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1" role="tablist" aria-label="设备筛选">
+            <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.filter.aria")}>
               <FilterChip
                 active={filter === "all"}
                 onClick={() => setFilter("all")}
-                label="全部"
+                label={t("lan.filter.all")}
                 count={devices.length}
               />
               <FilterChip
                 active={filter === "online"}
                 onClick={() => setFilter("online")}
-                label="在线"
+                label={t("lan.filter.online")}
                 count={onlineCount}
               />
               <FilterChip
                 active={filter === "inbound"}
                 onClick={() => setFilter("inbound")}
-                label="连了我"
+                label={t("lan.filter.inbound")}
                 count={inboundCount}
                 dim={inboundCount === 0}
               />
@@ -143,64 +143,78 @@ export function LanBoard() {
             <button
               type="button"
               onClick={() => void scan()}
-              title="重新扫描一轮（约 30 秒）"
+              title={t("lan.rescanTitle")}
               className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.05] px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
             >
-              <RefreshIcon size={10} /> 重扫
+              <RefreshIcon size={10} /> {t("lan.rescan")}
             </button>
           </div>
 
           {/* 指标卡 ×3（plan §3：核心安全信号从摘要行提权） */}
           <div className="mt-3 grid grid-cols-3 gap-2.5">
             <MetricCard
-              label="在线设备"
+              label={t("lan.metric.online")}
               value={String(onlineCount)}
-              unit={`/ ${devices.length} 台`}
+              unit={t("lan.metric.onlineUnit", { n: devices.length })}
               hint={
                 snapshot.scanned > 0
-                  ? `探测 ${snapshot.scanned}/${snapshot.total}`
-                  : "只读邻居表"
+                  ? t("lan.metric.probed", {
+                      scanned: snapshot.scanned,
+                      total: snapshot.total,
+                    })
+                  : t("lan.metric.neighborsOnly")
               }
             />
             <MetricCard
-              label="对我开放的端口"
+              label={t("lan.metric.exposed")}
               value={String(exposed.length)}
-              unit="个"
+              unit={t("lan.metric.exposedUnit")}
               tone={exposed.length > 0 ? "warn" : undefined}
               hint={exposedHint}
             />
             <MetricCard
-              label="扫描耗时"
+              label={t("lan.metric.elapsed")}
               value={(snapshot.scanMs / 1000).toFixed(1)}
-              unit="s"
+              unit={t("lan.metric.elapsedUnit")}
               hint={formatClock(snapshot.at)}
             />
           </div>
 
           {randomMacCount > 0 ? (
             <p className="mt-2 rounded-lg bg-white/[0.03] px-3 py-2 text-[10.5px] leading-relaxed text-ink-dim">
-              {randomMacCount} 台设备使用随机化 MAC——无法识别厂商，跨轮次聚合以
-              IP 为准。
+              {t("lan.randomMacNote", { n: randomMacCount })}
             </p>
           ) : null}
 
           {filter === "inbound" ? (
             connectedMe.length > 0 ? (
-              <DeviceSection title="连了我的设备" devices={connectedMe} onSelect={setSelected} />
+              <DeviceSection
+                title={t("lan.section.inbound")}
+                devices={connectedMe}
+                onSelect={setSelected}
+              />
             ) : (
               <EmptyState
-                title="没有设备主动连过我"
-                note="入站连接（ESTABLISHED 且对端在网段内）为零。可能只是没有长期服务与这台机器保持连接——不代表本轮扫描没跑。"
+                title={t("lan.empty.noInboundTitle")}
+                note={t("lan.empty.noInboundNote")}
               />
             )
           ) : (
             <>
-              <DeviceSection title="本机与网关" devices={pinned} onSelect={setSelected} />
-              <DeviceSection title="在线设备" devices={onlineOthers} onSelect={setSelected} />
+              <DeviceSection
+                title={t("lan.section.pinned")}
+                devices={pinned}
+                onSelect={setSelected}
+              />
+              <DeviceSection
+                title={t("lan.section.online")}
+                devices={onlineOthers}
+                onSelect={setSelected}
+              />
               {filter === "online" && onlineCount === 0 ? (
                 <EmptyState
-                  title="没有在线设备"
-                  note="扫描过了才是这个结论——邻居表里只有离线记录。"
+                  title={t("lan.empty.noOnlineTitle")}
+                  note={t("lan.empty.noOnlineNote")}
                 />
               ) : null}
               {offline.length > 0 ? (
@@ -214,9 +228,9 @@ export function LanBoard() {
                       size={11}
                       className={`shrink-0 transition-transform ${showOffline ? "rotate-90" : ""}`}
                     />
-                    已离线 {offline.length} 台
+                    {t("lan.offline.toggle", { n: offline.length })}
                     <span className="text-[9.5px] text-ink-faint/80">
-                      点击展开 · 置灰展示，不占用首屏
+                      {t("lan.offline.hint")}
                     </span>
                   </button>
                   {showOffline ? (
@@ -242,9 +256,11 @@ export function LanBoard() {
           )}
 
           <p className="mt-3.5 text-[10px] text-ink-faint">
-            {devices.length} 台设备 · 扫描 {(snapshot.scanMs / 1000).toFixed(1)} s ·{" "}
-            {formatClock(snapshot.at)} · 本轮快照语义：跨轮次的「同一台设备」以 IP 为准（随机
-            MAC 换网就换，聚合键不做 MAC 承诺）
+            {t("lan.footer", {
+              devices: devices.length,
+              seconds: (snapshot.scanMs / 1000).toFixed(1),
+              clock: formatClock(snapshot.at),
+            })}
           </p>
         </>
       )}

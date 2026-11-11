@@ -93,10 +93,14 @@ export function currentLocale(): Locale {
  * 无 React 上下文的最小出口。**只允许 store 层造 toast / 错误文案时用**；
  * `src/lib/**` 的纯函数禁止 import（会造成「切语言后旧串不更新」，
  * 而且测试语言不可控）—— 门禁脚本会拦。
+ *
+ * 类型直接取 `I18n["t"]`（而不是 `Parameters<I18n["t"]>`）：后者在重载函数上
+ * 只会取最后一个签名，带参 key 全被当成 `WithParamKey`，`tGlobal("…noParam")`
+ * 与 `tGlobal("…withParam", {err})` 都会报错。
  */
-export function tGlobal(...args: Parameters<I18n["t"]>) {
-  return i18nFor(currentLocale()).t(...args);
-}
+export const tGlobal: I18n["t"] = ((key: string, params?: Record<string, string | number>) =>
+  i18nFor(currentLocale()).t(key as never, params as never)) as I18n["t"];
+
 
 /** 让组件在切语言时重渲染的最小钩子（只取 locale 引用） */
 export function useLocale(): Locale {

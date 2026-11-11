@@ -6,8 +6,11 @@
  */
 import { common } from "./namespaces/common";
 import { disk } from "./namespaces/disk";
+import { lan } from "./namespaces/lan";
 import { memory } from "./namespaces/memory";
 import { nav } from "./namespaces/nav";
+import { net } from "./namespaces/net";
+import { ports } from "./namespaces/ports";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
 import { stats } from "./namespaces/stats";
@@ -16,8 +19,11 @@ import { update } from "./namespaces/update";
 export const zh = {
   common: common.zh,
   disk: disk.zh,
+  lan: lan.zh,
   memory: memory.zh,
   nav: nav.zh,
+  net: net.zh,
+  ports: ports.zh,
   resources: resources.zh,
   settings: settings.zh,
   stats: stats.zh,

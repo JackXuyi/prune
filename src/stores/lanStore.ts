@@ -2,8 +2,11 @@ import { listen } from "@tauri-apps/api/event";
 import { create } from "zustand";
 
 import { isTauri, lanScan, lanSnapshot } from "../lib/ipc";
+import { i18nFor } from "../i18n";
+import { currentLocale } from "../i18n/store";
+import type { Locale } from "../i18n/types";
 import type { LanProgress, LanSnapshot } from "../types/lan";
-import { LAN_PHASE_LABEL } from "../types/lan";
+import { LAN_PHASE_KEY } from "../types/lan";
 
 /**
  * 局域网设备 store（m18-lan-devices-spec.md §10 / §11）。
@@ -66,12 +69,18 @@ export const useLanStore = create<LanStore>((set, get) => ({
   },
 }));
 
-/** 阶段文案：progress 事件驱动，阶段间空档显示最后已知阶段 */
-export function phaseText(p: LanProgress | null): string {
-  if (!p) return "正在准备…";
-  const label = LAN_PHASE_LABEL[p.phase];
+/**
+ * 阶段文案：progress 事件驱动，阶段间空档显示最后已知阶段。
+ *
+ * `locale` 显式传入（默认取当前语言）：这个函数在 store 层也被调用，
+ * 而 store 不订阅语言变化，所以组件侧必须把 `locale` 带进来才会跟着切。
+ */
+export function phaseText(p: LanProgress | null, locale: Locale = currentLocale()): string {
+  const { t } = i18nFor(locale);
+  if (!p) return t("lan.phase.preparing");
+  const label = t(LAN_PHASE_KEY[p.phase]);
   if (p.phase === "probe" && p.total > 1) {
-    return `${label}（${p.done}/${p.total}）`;
+    return t("lan.phase.withProgress", { label, done: p.done, total: p.total });
   }
   return label;
 }

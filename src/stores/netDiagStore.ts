@@ -1,6 +1,7 @@
 import { create } from "zustand";
 
 import { devNetDiag, devSpeedResult } from "../lib/devFixture";
+import { tGlobal } from "../i18n/store";
 import { isTauri, netDiagCapability, netDiagCopyReport, netDiagRun, netDiagSpeedRun } from "../lib/ipc";
 import type { NetDiag, NetDiagCapability, SpeedResult } from "../types/net";
 
@@ -95,7 +96,7 @@ export const useNetDiagStore = create<NetDiagStore>((set, get) => ({
         diag: {
           at: Math.floor(Date.now() / 1000),
           status: "failed",
-          note: `诊断失败：${String(e)}`,
+          note: tGlobal("net.diag.failNote", { err: String(e) }),
           dns: null,
           lan: null,
           wan: null,
@@ -119,7 +120,8 @@ export const useNetDiagStore = create<NetDiagStore>((set, get) => ({
       set({ speed });
     } catch (e) {
       // 测速失败保持原值：宁可显示稍旧的读数，也不清成 0
-      console.warn("[net-diag] 测速失败", e);
+      // dev 日志保持英文：它不是 UI 文案，也不该出现在门禁的中文扫描里
+      console.warn("[net-diag] speed test failed", e);
     } finally {
       set({ speedRunning: false });
     }
@@ -134,7 +136,7 @@ export const useNetDiagStore = create<NetDiagStore>((set, get) => ({
         await netDiagCopyReport();
         set({ copied: true, copyFailed: false });
       } catch (e) {
-        console.warn("[net-diag] 复制报告失败", e);
+        console.warn("[net-diag] copy report failed", e);
         set({ copied: false, copyFailed: true });
       }
       return;
@@ -148,5 +150,6 @@ export const useNetDiagStore = create<NetDiagStore>((set, get) => ({
 }));
 
 function buildDevReport(): string {
-  return "# Prune 网络诊断报告\n\n（开发态示例）";
+  // 开发态占位：真正的报告由 Rust 侧生成（report.rs）
+  return "# Prune network diagnosis\n\n(dev sample)";
 }

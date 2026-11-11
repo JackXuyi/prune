@@ -124,7 +124,7 @@ export function AppDetail({
       net,
       netStatus: netSample?.status ?? null,
       netNote: netSample?.note ?? null,
-      ports: watched.map((e) => ({ port: e.port, label: exposureMeta(e.exposure).label })),
+      ports: watched.map((e) => ({ port: e.port, label: exposureMeta(e.exposure, locale).label })),
       history: history.rows,
       leak: snapshot?.leaks?.items.find((i) => i.family === familyName) ?? null,
       topProcs: members.slice(0, 3).map((m) => ({ name: m.name, bytes: m.footprint ?? m.rss })),
@@ -447,7 +447,7 @@ export function AppDetail({
             ) : (
               <div className="mt-1.5 flex flex-wrap gap-1.5">
                 {watched.map((e) => {
-                  const meta = exposureMeta(e.exposure);
+                  const meta = exposureMeta(e.exposure, locale);
                   const color =
                     meta.tone === "warn"
                       ? "var(--color-warn)"

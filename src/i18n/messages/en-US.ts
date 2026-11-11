@@ -8,8 +8,11 @@
 import type { Messages } from "../types";
 import { common } from "./namespaces/common";
 import { disk } from "./namespaces/disk";
+import { lan } from "./namespaces/lan";
 import { memory } from "./namespaces/memory";
 import { nav } from "./namespaces/nav";
+import { net } from "./namespaces/net";
+import { ports } from "./namespaces/ports";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
 import { stats } from "./namespaces/stats";
@@ -18,8 +21,11 @@ import { update } from "./namespaces/update";
 export const en = {
   common: common.en,
   disk: disk.en,
+  lan: lan.en,
   memory: memory.en,
   nav: nav.en,
+  net: net.en,
+  ports: ports.en,
   resources: resources.en,
   settings: settings.en,
   stats: stats.en,

@@ -1,4 +1,7 @@
 /** 与 prune-core::net 的 serde 结构一一对应（camelCase）。改这里必须同步 Rust 侧。 */
+import { i18nFor } from "../i18n";
+import { currentLocale } from "../i18n/store";
+import type { Locale } from "../i18n/types";
 
 export type Proto = "tcp" | "udp";
 
@@ -105,29 +108,46 @@ export function invisibleCount(c: Coverage): number {
   return Math.max(0, c.listenTotal - c.attributed);
 }
 
-/** 暴露面的展示文案与色调。不猜：unknown 不给结论 */
-export function exposureMeta(scope: BindScope): {
+/**
+ * 暴露面的展示文案与色调。不猜：unknown 不给结论。
+ *
+ * `locale` 必须显式传（门禁禁止纯函数读全局）：切语言时组件重渲染会重新调用，
+ * 不会留下旧语言的字符串。
+ */
+export function exposureMeta(
+  scope: BindScope,
+  locale: Locale = currentLocale(),
+): {
   label: string;
   tone: "warn" | "neutral" | "info";
   hint: string;
 } {
+  const { t } = i18nFor(locale);
   switch (scope) {
     case "any":
       return {
-        label: "全部网卡",
+        label: t("net.exposure.any"),
         tone: "warn",
-        hint: "绑定在 * / 0.0.0.0，同网段的其他设备可以连进来",
+        hint: t("net.exposure.hintAny"),
       };
     case "interface":
       return {
-        label: "指定网卡",
+        label: t("net.exposure.interface"),
         tone: "info",
-        hint: "绑定在某个具体网卡地址，局域网内可达",
+        hint: t("net.exposure.hintInterface"),
       };
     case "loopback":
-      return { label: "仅本机", tone: "neutral", hint: "127.0.0.1 / ::1，只有本机进程能连" };
+      return {
+        label: t("net.exposure.loopback"),
+        tone: "neutral",
+        hint: t("net.exposure.hintLoopback"),
+      };
     default:
-      return { label: "未知", tone: "neutral", hint: "地址解析失败，不对暴露面下结论" };
+      return {
+        label: t("net.exposure.unknown"),
+        tone: "neutral",
+        hint: t("net.exposure.hintUnknown"),
+      };
   }
 }
 
@@ -337,16 +357,17 @@ export interface NetTotalSample {
 }
 
 /** 网卡类型的展示文案（虚拟口那一行必须自带「不计入」的解释） */
-export function ifaceKindLabel(kind: IfaceKind): string {
+export function ifaceKindLabel(kind: IfaceKind, locale: Locale = currentLocale()): string {
+  const { t } = i18nFor(locale);
   switch (kind) {
     case "tunnel":
-      return "隧道";
+      return t("net.kind.tunnel");
     case "virtual":
-      return "虚拟";
+      return t("net.kind.virtual");
     case "loopback":
-      return "回环";
+      return t("net.kind.loopback");
     default:
-      return "物理";
+      return t("net.kind.physical");
   }
 }
 
@@ -460,18 +481,20 @@ export const DIAG_THRESHOLDS = {
   dnsMs: 300,
 } as const;
 
-/** Apple RPM 分级 → 中文（自造公式不做，只做文案映射） */
-export function rpmLevelLabel(level: string): string {
+/** Apple RPM 分级 → 展示词（自造公式不做，只做文案映射） */
+export function rpmLevelLabel(level: string, locale: Locale = currentLocale()): string {
+  const { t } = i18nFor(locale);
   switch (level) {
     case "Poor":
-      return "很差";
+      return t("net.speed.level.poor");
     case "Low":
-      return "较差";
+      return t("net.speed.level.low");
     case "Medium":
-      return "尚可";
+      return t("net.speed.level.medium");
     case "Good":
-      return "良好";
+      return t("net.speed.level.good");
     default:
+      // 未知分级原样透传（Apple 改了分级也不该显示成空白）
       return level || "—";
   }
 }

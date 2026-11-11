@@ -37,10 +37,6 @@ const ALLOW = [
  * 「这真是新的待迁文件，还是我又写了一句中文」。
  */
 const PENDING = [
-  "src/components/LanBoard.tsx",
-  "src/components/LanDeviceCard.tsx",
-  "src/components/NetBoard.tsx",
-  "src/components/PortList.tsx",
   "src/components/Sparkline.tsx",
   "src/components/charts/BarSeries.tsx",
   "src/components/charts/MeterBar.tsx",
@@ -50,14 +46,10 @@ const PENDING = [
   "src/panels/Island.tsx",
   "src/panels/MenuBarPanel.tsx",
   "src/stores/diskStore.ts",
-  "src/stores/lanStore.ts",
   "src/stores/memStore.ts",
-  "src/stores/netDiagStore.ts",
   "src/stores/netTotalStore.ts",
   "src/stores/portStore.ts",
   "src/types/appdisk.ts",
-  "src/types/lan.ts",
-  "src/types/net.ts",
 ];
 
 const CJK = /[\u4e00-\u9fff]/;

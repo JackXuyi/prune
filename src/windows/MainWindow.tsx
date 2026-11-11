@@ -1030,7 +1030,7 @@ function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void 
         ) : (
           <ul className="flex flex-wrap gap-1.5">
             {listenPorts.map((e) => {
-              const exposure = exposureMeta(e.exposure);
+              const exposure = exposureMeta(e.exposure, i18n.locale);
               return (
                 <li key={`${e.port}-${e.proto}`}>
                   <Badge tone={exposure.tone} title={`${exposure.label} · ${exposure.hint}`}>

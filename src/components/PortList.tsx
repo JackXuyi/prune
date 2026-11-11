@@ -7,6 +7,7 @@ import { DotMatrix } from "./charts/DotMatrix";
 import { EmptyState } from "./EmptyArt";
 import { LanBoard } from "./LanBoard";
 import { formatClock } from "../lib/format";
+import { useI18n } from "../i18n/store";
 import { usePortStore } from "../stores/portStore";
 import {
   canKillOwner,
@@ -30,6 +31,7 @@ export function PortBoard({
   onOpenProcess: (pid: number) => void;
   onKill: (binding: PortBinding, port: number, x: number, y: number) => void;
 }) {
+  const { t } = useI18n();
   const snapshot = usePortStore((s) => s.snapshot);
   const loading = usePortStore((s) => s.loading);
   const error = usePortStore((s) => s.error);
@@ -90,11 +92,9 @@ export function PortBoard({
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold tracking-tight">端口</h1>
+          <h1 className="text-[15px] font-semibold tracking-tight">{t("ports.title")}</h1>
           <p className="mt-0.5 text-[11px] text-ink-faint">
-            {page === "ports"
-              ? "按端口反查持有进程 · 关注层是开发服务与数据库端口 · 内部 IPC 默认折叠"
-              : "同网段设备与暴露面 · 手动触发，进入分段不扫描（首次扫描 macOS 会请求本地网络授权）"}
+            {page === "ports" ? t("ports.subPorts") : t("ports.subLan")}
           </p>
         </div>
         <div className="flex shrink-0 items-center gap-2">
@@ -103,7 +103,7 @@ export function PortBoard({
               ref={searchRef}
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder="端口 / 进程 / 项目"
+              placeholder={t("ports.searchPlaceholder")}
               spellCheck={false}
               className="w-44 rounded-md border border-hairline bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
             />
@@ -128,47 +128,46 @@ export function PortBoard({
       ) : null}
       {invisible > 0 ? (
         <p className="mt-3 rounded-lg bg-warn/[0.07] px-3 py-2 text-[11px] leading-relaxed text-warn">
-          内核报告 {snapshot?.coverage.listenTotal} 个监听，其中 {invisible} 个无法归属到进程
-          （没有权限时 lsof 会跳过别的用户的进程）。Prune 不会提权；需要时请手动执行{" "}
-          <code className="font-mono text-[10.5px]">sudo lsof -nP -iTCP -sTCP:LISTEN</code>。
+          {t("ports.invisibleLead", {
+            total: snapshot?.coverage.listenTotal ?? 0,
+            invisible,
+          })}{" "}
+          <code className="font-mono text-[10.5px]">sudo lsof -nP -iTCP -sTCP:LISTEN</code>
+          {t("ports.invisibleTail")}
         </p>
       ) : null}
 
       {/* TIME_WAIT：会占端口但没有任何进程持有——不渲染成「被占用」，也不给结束入口 */}
       {snapshot?.timeWait ? (
         <p className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-ink-dim">
-          另有{" "}
-          <span className="font-mono tabular-nums text-ink">{snapshot.timeWait}</span>{" "}
-          个 TIME_WAIT 连接
-          {snapshot.timeWaitPorts.length > 0 ? (
-            <>
-              （涉及端口{" "}
-              <span className="font-mono text-[10.5px] text-ink">
-                {snapshot.timeWaitPorts.slice(0, 8).join(" / ")}
-                {snapshot.timeWaitPorts.length > 8 ? " …" : ""}
-              </span>
-              ）
-            </>
-          ) : null}
-          。它们在内核保留期内仍会让新服务拿到 EADDRINUSE，但没有任何进程持有，约 2 分钟后自动消失——
-          这不是漏查。
+          {t("ports.timeWait", {
+            n: snapshot.timeWait,
+            ports:
+              snapshot.timeWaitPorts.length > 0
+                ? t("ports.timeWaitPorts", {
+                    ports:
+                      snapshot.timeWaitPorts.slice(0, 8).join(" / ") +
+                      (snapshot.timeWaitPorts.length > 8 ? " …" : ""),
+                  })
+                : "",
+          })}
         </p>
       ) : null}
 
       {loading && !snapshot ? (
-        <p className="mt-4 text-[11px] text-ink-faint">正在扫描监听端口…</p>
+        <p className="mt-4 text-[11px] text-ink-faint">{t("ports.scanning")}</p>
       ) : !snapshot ? (
-        <p className="mt-4 text-[11px] text-ink-faint">
-          还没有扫描结果。点右上角「刷新」扫一轮——这不代表没有端口占用。
-        </p>
+        <p className="mt-4 text-[11px] text-ink-faint">{t("ports.emptyNeverScanned")}</p>
       ) : filtered.length === 0 ? (
         entries.length === 0 ? (
           <EmptyState
-            title="很干净，没有监听端口 ✂️"
-            note="当前用户可见范围内没有进程监听端口。扫描过了才是这个结论——不是没扫。"
+            title={t("ports.emptyCleanTitle")}
+            note={t("ports.emptyCleanNote")}
           />
         ) : (
-          <p className="mt-4 text-[11px] text-ink-faint">{`没有匹配「${query}」的端口。`}</p>
+          <p className="mt-4 text-[11px] text-ink-faint">
+            {t("ports.noMatch", { query })}
+          </p>
         )
       ) : (
         <>
@@ -177,39 +176,51 @@ export function PortBoard({
           {allEntries.length > 0 ? (
             <div className="mt-3">
               <div className="flex items-baseline justify-between">
-                <span className="text-[11px] font-medium text-ink-dim">端口仪表盘</span>
+                <span className="text-[11px] font-medium text-ink-dim">{t("ports.board.title")}</span>
                 <span className="text-[10px] text-ink-faint">
-                  关注 {watchedOnly} · 对外 {exposedOnly} · 其他 {otherN}（已折叠）
+                  {t("ports.board.summary", {
+                    watched: watchedOnly,
+                    exposed: exposedOnly,
+                    other: otherN,
+                  })}
                 </span>
               </div>
               <DotMatrix
                 className="mt-2"
-                ariaLabel={`端口点阵：关注层 ${watchedOnly}，对外暴露 ${exposedOnly}，其他 ${otherN}`}
+                ariaLabel={t("ports.board.dotAria", {
+                  watched: watchedOnly,
+                  exposed: exposedOnly,
+                  other: otherN,
+                })}
                 items={allEntries.map((e) => {
                   const p = primaryOf(e);
                   return {
                     tone: e.exposure === "any" ? "warn" : e.watched ? "accent" : "neutral",
-                    title: `${e.port} · ${p ? p.comm : "内核持有"}`,
+                    title: `${e.port} · ${p ? p.comm : t("ports.board.kernelOwned")}`,
                   };
                 })}
               />
               <StackBar
                 className="mt-2.5"
-                ariaLabel={`端口分组：关注层 ${watchedOnly}，对外暴露 ${exposedOnly}，其他 ${otherN}`}
+                ariaLabel={t("ports.board.barAria", {
+                  watched: watchedOnly,
+                  exposed: exposedOnly,
+                  other: otherN,
+                })}
                 segments={[
-                  { key: "w", label: "关注层", value: watchedOnly, tone: "accent" },
-                  { key: "e", label: "对外暴露", value: exposedOnly, tone: "warn" },
-                  { key: "o", label: "其他", value: otherN, tone: "neutral" },
+                  { key: "w", label: t("ports.board.segWatched"), value: watchedOnly, tone: "accent" },
+                  { key: "e", label: t("ports.board.segExposed"), value: exposedOnly, tone: "warn" },
+                  { key: "o", label: t("ports.board.segOther"), value: otherN, tone: "neutral" },
                 ]}
               />
             </div>
           ) : null}
           <div className="mt-3 grid grid-cols-[74px_78px_minmax(0,1fr)_minmax(0,1.05fr)_54px] items-center gap-2.5 border-b border-hairline-soft px-2 pb-2 text-[10px] text-ink-faint">
-            <span>端口</span>
-            <span>暴露面</span>
-            <span>进程</span>
-            <span>项目</span>
-            <span className="text-right">连接</span>
+            <span>{t("ports.col.port")}</span>
+            <span>{t("ports.col.exposure")}</span>
+            <span>{t("ports.col.process")}</span>
+            <span>{t("ports.col.project")}</span>
+            <span className="text-right">{t("ports.col.conns")}</span>
           </div>
           <ul>
             {visible.map((e) => (
@@ -233,10 +244,8 @@ export function PortBoard({
                   size={11}
                   className={`shrink-0 text-ink-faint transition-transform ${showFolded ? "rotate-90" : ""}`}
                 />
-                其他 {folded.length} 个端口
-                <span className="text-[10px] text-ink-faint">
-                  · 应用内部 IPC / 系统服务，通常不是你的服务
-                </span>
+                {t("ports.folded", { n: folded.length })}
+                <span className="text-[10px] text-ink-faint">{t("ports.foldedNote")}</span>
               </button>
               {showFolded ? (
                 <ul>
@@ -254,8 +263,12 @@ export function PortBoard({
           ) : null}
 
           <p className="mt-3 text-[10px] text-ink-faint">
-            {snapshot.entries.length} 个端口 · 关注 {snapshot.entries.filter((e) => e.watched).length}{" "}
-            · 扫描 {snapshot.scanMs} ms · {formatClock(snapshot.at)}
+            {t("ports.footer", {
+              ports: snapshot.entries.length,
+              watched: snapshot.entries.filter((e) => e.watched).length,
+              ms: snapshot.scanMs,
+              clock: formatClock(snapshot.at),
+            })}
           </p>
         </>
       )}
@@ -275,12 +288,17 @@ function PortSubTabs({
   page: PortSubPage;
   onChange: (p: PortSubPage) => void;
 }) {
+  const { t } = useI18n();
   const items: { key: PortSubPage; label: string }[] = [
-    { key: "ports", label: "端口" },
-    { key: "lan", label: "局域网" },
+    { key: "ports", label: t("ports.subpage.ports") },
+    { key: "lan", label: t("ports.subpage.lan") },
   ];
   return (
-    <div className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5" role="tablist" aria-label="端口子页">
+    <div
+      className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5"
+      role="tablist"
+      aria-label={t("ports.subpage.aria")}
+    >
       {items.map((it) => {
         const active = page === it.key;
         return (
@@ -313,9 +331,10 @@ function PortRow({
   onOpenProcess: (pid: number) => void;
   onKill: (binding: PortBinding, port: number, x: number, y: number) => void;
 }) {
+  const { t, locale } = useI18n();
   const primary = primaryOf(entry);
   const owners = ownersOf(entry);
-  const exposure = exposureMeta(entry.exposure);
+  const exposure = exposureMeta(entry.exposure, locale);
   const system = owners.length > 0 && owners.every((b) => isSystemProcess(b.comm));
   const killable = primary != null && canKillOwner(primary);
   const url = localUrl(entry.port);
@@ -332,11 +351,7 @@ function PortRow({
           e.preventDefault();
           onKill(primary, entry.port, e.clientX, e.clientY);
         }}
-        title={
-          killable
-            ? "双击查看该进程明细 · 右键结束进程"
-            : "该端口由系统进程或内核持有，不提供结束入口"
-        }
+        title={killable ? t("ports.row.hintKillable") : t("ports.row.hintLocked")}
         className="grid grid-cols-[74px_78px_minmax(0,1fr)_minmax(0,1.05fr)_54px] items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.04]"
       >
         <span className="flex items-baseline gap-1">
@@ -354,15 +369,15 @@ function PortRow({
 
         <span className="min-w-0">
           <span className="block truncate text-[11.5px] text-ink">
-            {primary ? primary.comm : "内核持有"}
+            {primary ? primary.comm : t("ports.row.kernelOwned")}
             {primary?.pid != null ? (
               <span className="ml-1.5 font-mono text-[10px] text-ink-faint">{primary.pid}</span>
             ) : null}
           </span>
           <span className="mt-0.5 flex items-center gap-1.5 text-[10px] text-ink-faint">
-            {owners.length > 1 ? <span>{owners.length} 个持有者</span> : null}
+            {owners.length > 1 ? <span>{t("ports.row.owners", { n: owners.length })}</span> : null}
             {dual ? <span>IPv4+IPv6</span> : null}
-            {system ? <span className="text-ink-faint">系统</span> : null}
+            {system ? <span className="text-ink-faint">{t("ports.row.system")}</span> : null}
           </span>
         </span>
 

@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { CopyIcon, DeviceKindIcon } from "./icons";
 import { writeClipboard } from "../lib/clipboard";
+import { useI18n } from "../i18n/store";
 import { kindLabel, type LanDevice } from "../types/lan";
 
 /**
@@ -12,6 +13,30 @@ import { kindLabel, type LanDevice } from "../types/lan";
  * 展示原则：hostname 命中 → 设备名为主标题；查不到 → 回退类型名，不编造。
  * 「连了我」命中时卡片加 warn 描边，安全信号前置。
  */
+/**
+ * 设备身份的展示三件套（主标题 / 副标题 / 状态）。
+ *
+ * 卡片与详情弹窗共用同一套推导：两处各写一遍必然漂移，而这里恰恰是
+ * 「查不到就回退类型名、不编造」这条规则的唯一落点。
+ */
+function useIdentity(d: LanDevice) {
+  const { t, locale } = useI18n();
+  const hostname = d.hostname?.replace(/\.local\.?$/, "") ?? null;
+  const title = d.isSelf
+    ? t("lan.card.self")
+    : d.isGateway
+      ? t("lan.card.gateway")
+      : (hostname ?? kindLabel(d.kind, locale));
+  const subtitle = d.vendor ?? (d.randomizedMac ? t("lan.card.randomMac") : null);
+  const state = !d.online
+    ? t("lan.card.stateOffline")
+    : d.state === "stale"
+      ? t("lan.card.stateStale")
+      : t("lan.card.stateOnline");
+  const dot = !d.online ? "bg-ink-faint" : d.state === "stale" ? "bg-warn" : "bg-accent";
+  return { t, locale, hostname, title, subtitle, state, dot };
+}
+
 export function LanDeviceCard({
   d,
   dimmed = false,
@@ -21,26 +46,14 @@ export function LanDeviceCard({
   dimmed?: boolean;
   onSelect: (d: LanDevice) => void;
 }) {
-  const hostname = d.hostname?.replace(/\.local\.?$/, "") ?? null;
-  const title = d.isSelf
-    ? "本机"
-    : d.isGateway
-      ? "网关"
-      : (hostname ?? kindLabel(d.kind));
-  const subtitle = d.vendor ?? (d.randomizedMac ? "随机 MAC" : null);
-  const state = !d.online ? "不可达" : d.state === "stale" ? "最近在线" : "在线";
-  const dot = !d.online
-    ? "bg-ink-faint"
-    : d.state === "stale"
-      ? "bg-warn"
-      : "bg-accent";
+  const { t, title, subtitle, state, dot } = useIdentity(d);
   const { tile, icon } = tileTone(d);
   const hasInbound = d.inbound.length > 0;
 
   return (
     <div
       onClick={() => onSelect(d)}
-      title="点击查看设备详情"
+      title={t("lan.card.openTitle")}
       className={`cursor-pointer rounded-[10px] border bg-white/[0.03] px-3 py-2.5 transition-colors ${
         hasInbound
           ? "border-warn/[0.4] hover:bg-warn/[0.04]"
@@ -60,12 +73,12 @@ export function LanDeviceCard({
             </span>
             {d.isSelf ? (
               <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] text-accent">
-                自己
+                {t("lan.card.badgeSelf")}
               </span>
             ) : null}
             {d.isGateway ? (
               <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] text-accent">
-                上联
+                {t("lan.card.badgeUplink")}
               </span>
             ) : null}
           </span>
@@ -88,8 +101,10 @@ export function LanDeviceCard({
         </span>
         {hasInbound ? (
           <span className="rounded-md bg-warn/[0.12] px-1.5 py-0.5 text-[10px] font-medium text-warn">
-            连了我 {d.inbound.slice(0, 2).join(" / ")}
-            {d.inbound.length > 2 ? " …" : ""}
+            {t("lan.card.inbound", {
+              ports:
+                d.inbound.slice(0, 2).join(" / ") + (d.inbound.length > 2 ? " …" : ""),
+            })}
           </span>
         ) : null}
         {d.services.slice(0, 2).map((s) => (
@@ -140,6 +155,7 @@ export function LanDeviceDetailModal({
   d: LanDevice;
   onClose: () => void;
 }) {
+  const { t, locale, hostname, title, subtitle, state, dot } = useIdentity(d);
   const [copied, setCopied] = useState<"ip" | "mac" | null>(null);
 
   useEffect(() => {
@@ -150,19 +166,6 @@ export function LanDeviceDetailModal({
     return () => window.removeEventListener("keydown", onKey);
   }, [onClose]);
 
-  const hostname = d.hostname?.replace(/\.local\.?$/, "") ?? null;
-  const title = d.isSelf
-    ? "本机"
-    : d.isGateway
-      ? "网关"
-      : (hostname ?? kindLabel(d.kind));
-  const subtitle = d.vendor ?? (d.randomizedMac ? "随机 MAC" : null);
-  const state = !d.online ? "不可达" : d.state === "stale" ? "最近在线" : "在线";
-  const dot = !d.online
-    ? "bg-ink-faint"
-    : d.state === "stale"
-      ? "bg-warn"
-      : "bg-accent";
   const stateTone = !d.online
     ? "text-ink-faint"
     : d.state === "stale"
@@ -191,7 +194,7 @@ export function LanDeviceDetailModal({
       <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
         <div
           role="dialog"
-          aria-label={`设备详情：${title}`}
+          aria-label={t("lan.card.detailAria", { title })}
           onClick={(e) => e.stopPropagation()}
           onContextMenu={(e) => e.stopPropagation()}
           className="w-[320px] rounded-xl border border-hairline bg-surface-raised p-4 shadow-2xl shadow-black/50"
@@ -210,12 +213,12 @@ export function LanDeviceDetailModal({
                 </span>
                 {d.isSelf ? (
                   <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] text-accent">
-                    自己
+                    {t("lan.card.badgeSelf")}
                   </span>
                 ) : null}
                 {d.isGateway ? (
                   <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] text-accent">
-                    上联
+                    {t("lan.card.badgeUplink")}
                   </span>
                 ) : null}
               </div>
@@ -233,28 +236,28 @@ export function LanDeviceDetailModal({
 
           {/* 字段明细 */}
           <dl className="mt-3.5 space-y-2 border-t border-hairline-soft pt-3 text-[11px]">
-            <DetailRow label="IP 地址">
+            <DetailRow label={t("lan.field.ip")}>
               <span className="flex items-center gap-1.5">
                 <span className="font-mono tabular-nums text-ink">{d.ip}</span>
                 <CopyBtn
-                  label={copied === "ip" ? "已复制" : "复制"}
+                  label={copied === "ip" ? t("lan.modal.copied") : t("lan.modal.copy")}
                   onClick={() => void copy(d.ip, "ip")}
                 />
               </span>
             </DetailRow>
-            <DetailRow label="MAC 地址">
+            <DetailRow label={t("lan.field.mac")}>
               {d.mac ? (
                 <span className="flex items-center gap-1.5">
                   <span className="font-mono tabular-nums text-ink">
                     {d.mac}
                     {d.randomizedMac ? (
                       <span className="ml-1 font-sans text-[9.5px] text-ink-faint">
-                        随机
+                        {t("lan.field.macRandom")}
                       </span>
                     ) : null}
                   </span>
                   <CopyBtn
-                    label={copied === "mac" ? "已复制" : "复制"}
+                    label={copied === "mac" ? t("lan.modal.copied") : t("lan.modal.copy")}
                     onClick={() => {
                       const mac = d.mac;
                       if (mac) void copy(mac, "mac");
@@ -262,25 +265,25 @@ export function LanDeviceDetailModal({
                   />
                 </span>
               ) : (
-                <span className="text-ink-faint">查不到（邻居表无记录）</span>
+                <span className="text-ink-faint">{t("lan.field.macMissing")}</span>
               )}
             </DetailRow>
-            <DetailRow label="厂商">
+            <DetailRow label={t("lan.field.vendor")}>
               <span className={d.vendor ? "text-ink" : "text-ink-faint"}>
-                {d.vendor ?? "未知"}
+                {d.vendor ?? t("lan.field.vendorUnknown")}
               </span>
             </DetailRow>
-            <DetailRow label="设备类型">
-              <span className="text-ink">{kindLabel(d.kind)}</span>
+            <DetailRow label={t("lan.field.kind")}>
+              <span className="text-ink">{kindLabel(d.kind, locale)}</span>
             </DetailRow>
-            <DetailRow label="主机名">
+            <DetailRow label={t("lan.field.hostname")}>
               <span
                 className={hostname ? "font-mono text-ink" : "text-ink-faint"}
               >
-                {hostname ?? "未广播（mDNS 无记录）"}
+                {hostname ?? t("lan.field.hostnameMissing")}
               </span>
             </DetailRow>
-            <DetailRow label="发现的服务">
+            <DetailRow label={t("lan.field.services")}>
               {d.services.length > 0 ? (
                 <span className="flex flex-wrap justify-end gap-1">
                   {d.services.map((s) => (
@@ -293,37 +296,34 @@ export function LanDeviceDetailModal({
                   ))}
                 </span>
               ) : (
-                <span className="text-ink-faint">未发现</span>
+                <span className="text-ink-faint">{t("lan.field.servicesNone")}</span>
               )}
             </DetailRow>
-            <DetailRow label="入站连接">
+            <DetailRow label={t("lan.field.inbound")}>
               {hasInbound ? (
                 <span className="font-mono tabular-nums text-warn">
                   {d.inbound.join(" / ")}
                 </span>
               ) : (
-                <span className="text-ink-faint">无</span>
+                <span className="text-ink-faint">{t("lan.field.inboundNone")}</span>
               )}
             </DetailRow>
           </dl>
 
           {d.randomizedMac ? (
             <p className="mt-3 rounded-lg bg-white/[0.03] px-2.5 py-1.5 text-[10px] leading-relaxed text-ink-faint">
-              随机化 MAC：设备为防跟踪轮换硬件地址，厂商识别与跨轮次聚合（以 IP
-              为准）均受影响。
+              {t("lan.modal.randomMacNote")}
             </p>
           ) : null}
 
           <div className="mt-3 flex items-center justify-between">
-            <p className="text-[9.5px] text-ink-faint">
-              Esc 或点空白处关闭 · 数据来自本轮扫描快照
-            </p>
+            <p className="text-[9.5px] text-ink-faint">{t("lan.modal.footer")}</p>
             <button
               type="button"
               onClick={onClose}
               className="rounded-full bg-white/[0.06] px-3 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.1] hover:text-ink"
             >
-              关闭
+              {t("lan.modal.close")}
             </button>
           </div>
         </div>
