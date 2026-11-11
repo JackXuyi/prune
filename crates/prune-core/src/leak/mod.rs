@@ -13,6 +13,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::mem::ProcMem;
 
+pub mod cases;
+pub use cases::{CaseBook, CaseStatus, LeakCase};
+
 /// 默认判定窗口：30 min
 pub const WINDOW_SECS: i64 = 1800;
 /// GC 语言（Node / Java / Go）窗口翻倍：60 min

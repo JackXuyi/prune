@@ -180,6 +180,28 @@ export interface LeakReport {
   note: string | null;
 }
 
+/** 悬案卷宗的状态（M22）。命名只描述观察到的事实，不下结论 */
+export type CaseStatus = "open" | "cleared" | "relapsed";
+
+/** 一件悬案的档案（M22）：判定引擎逐轮快照串成有状态的案件 */
+export interface LeakCase {
+  /** 案件编号 `CASE-{MMDD}-{序号}` */
+  id: string;
+  name: string;
+  family: string;
+  pid: number;
+  startTime: number;
+  /** 立案时间（Unix 秒） */
+  firstSeen: number;
+  lastSeen: number;
+  /** 侦查期最大净增长（字节） */
+  growthPeak: number;
+  growthLatest: number;
+  status: CaseStatus;
+  /** 仅已归档时有值（Unix 秒） */
+  closedAt: number | null;
+}
+
 /** 某家族里命中的进程（家族行徽标用） */
 export function leaksOfFamily(report: LeakReport | null | undefined, family: string): LeakItem[] {
   return (report?.items ?? []).filter((i) => i.family === family);

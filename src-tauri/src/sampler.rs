@@ -21,7 +21,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use prune_core::db::{HourlyDelta, HourlyRow, Store};
-use prune_core::leak::{self, LeakReport};
+use prune_core::leak::{self, CaseBook as LeakCaseBook, LeakReport};
 use prune_core::mem::process::Scanner;
 use prune_core::mem::system::{self, SystemMem};
 use prune_core::mem::workspace;
@@ -206,6 +206,8 @@ pub struct MemState {
     deep_updated_at: Mutex<Option<i64>>,
     /// B5 泄漏嫌疑判定结果（M3）。只在深探落库后重算
     leaks: Mutex<LeakReport>,
+    /// M22 悬案卷宗：把逐轮嫌疑串成有状态的案件（离场结案 / 复发 / 归档）
+    cases: Mutex<LeakCaseBook>,
     /// 最近两轮耗时（ms），供性能预算校验
     pub last_fast_ms: Mutex<u64>,
     pub last_deep_ms: Mutex<u64>,
@@ -238,6 +240,7 @@ impl MemState {
             deep_available: Mutex::new(true),
             deep_updated_at: Mutex::new(None),
             leaks: Mutex::new(leaks),
+            cases: Mutex::new(LeakCaseBook::new()),
             last_fast_ms: Mutex::new(0),
             last_deep_ms: Mutex::new(0),
             cpu_hist: Mutex::new(VecDeque::with_capacity(CPU_HISTORY_CAP)),
@@ -252,6 +255,15 @@ impl MemState {
 
     fn lock_ws(&self) -> std::sync::MutexGuard<'_, HashMap<i32, WsRow>> {
         self.workspaces.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// 悬案卷宗快照（M22）：侦查中的在前，已归档在后
+    pub fn cases(&self) -> Vec<prune_core::leak::LeakCase> {
+        self.cases
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .cases()
+            .to_vec()
     }
 
     /// 查询序列（无库时返回空表，UI 显示「暂无历史」而不是报错）
@@ -538,7 +550,15 @@ pub async fn deep_round(app: &AppHandle) -> Result<(), String> {
                     .map(|n| format!(" · ⚠️ {n}"))
                     .unwrap_or_default()
             );
-            *probe_state.leaks.lock().unwrap_or_else(|e| e.into_inner()) = report;
+            *probe_state.leaks.lock().unwrap_or_else(|e| e.into_inner()) = report.clone();
+
+            // M22 悬案卷宗：用本轮命中 + 全量进程表推进案件簿（离场 / 复发判定）
+            {
+                let alive: std::collections::HashSet<(i32, u64)> =
+                    merged.iter().map(|p| (p.pid, p.start_time)).collect();
+                let mut book = probe_state.cases.lock().unwrap_or_else(|e| e.into_inner());
+                book.update(&report.items, &alive, ts);
+            }
         }
 
         let snapshot = assemble(&probe_state, &merged, probe_state.last_cpu());

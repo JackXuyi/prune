@@ -437,6 +437,13 @@ pub struct CutReportDto {
     pub top: Vec<CutTop>,
 }
 
+/// 悬案卷宗（M22）：泄漏嫌疑的案件簿快照。侦查中的在前，已归档在后。
+/// 案件簿在内存中，Prune 重启即清零（档案描述「这一段试用期」）。
+#[tauri::command]
+pub fn leak_cases(state: State<'_, Arc<MemState>>) -> Vec<prune_core::leak::LeakCase> {
+    state.cases().to_vec()
+}
+
 // ---------------------------------------------------------------- 应用图标（D1）
 
 /// 前端一次请求的图标上限：首屏 12 + 一屏滚动余量足够，防止误传 348 个把 IPC 拖长

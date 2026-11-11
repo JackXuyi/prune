@@ -67,6 +67,7 @@ pub fn run() {
             commands::reclaim_children,
             commands::reclaim_execute,
             commands::cut_report,
+            commands::leak_cases,
             commands::port_snapshot,
             commands::port_refresh,
             commands::port_set_active,

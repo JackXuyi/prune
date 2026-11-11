@@ -5,7 +5,7 @@ import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimRepo
 import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
-import type { MemSnapshot, Point, ProcMem } from "../types/mem";
+import type { LeakCase, MemSnapshot, Point, ProcMem } from "../types/mem";
 import type {
   DayTraffic,
   NetDiag,
@@ -42,6 +42,11 @@ export function memProcesses(): Promise<ProcMem[]> {
 
 export function memHistory(pid: number, minutes: number): Promise<Point[]> {
   return invoke<Point[]>("mem_history", { pid, minutes });
+}
+
+/** 悬案卷宗快照（M22）：侦查中的在前，已归档在后。案件簿在内存，重启即清零 */
+export function leakCases(): Promise<LeakCase[]> {
+  return invoke<LeakCase[]>("leak_cases");
 }
 
 export function memRefresh(): Promise<void> {
