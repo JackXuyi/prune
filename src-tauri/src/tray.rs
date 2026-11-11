@@ -10,7 +10,7 @@
 //! 运行 `pnpm tauri dev` 后观察 stdout 的 `[m0-tray]` 日志，并目测面板落点。
 
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicU8, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, RwLock};
 use tauri::menu::{CheckMenuItem, IsMenuItem, Menu, MenuItem, PredefinedMenuItem, Submenu};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Manager, PhysicalPosition, Position, Rect, WebviewWindow, WindowEvent};
@@ -20,6 +20,7 @@ use crate::popover;
 
 use crate::sampler::MemState;
 use crate::tray_icon::{self, IconTheme};
+use prune_core::locale::Locale;
 use prune_core::mem::PressureLevel;
 use prune_core::pet::{PetMood, PetMoodMachine};
 
@@ -119,8 +120,138 @@ fn within_window(prev_ms: u64, now_ms: u64, window_ms: u64) -> bool {
 /// 右键菜单里「顶部图标」的勾选项句柄：切换主题后要把勾搬到新项上。
 ///
 /// 菜单项本身是 Arc 包的内核句柄，克隆成本低；这里持有它只为了 `set_checked`。
+///
+/// `themes` 用 `RwLock` 是因为切语言要重建菜单：`manage` 只允许在 `create()` 里调
+/// 一次（重复 `manage` 同类型在 Tauri 2 会覆盖，旧句柄悬空），所以重建只能替换
+/// 内部这个 `Vec`。
 struct TrayMenuState {
-    themes: Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>,
+    themes: RwLock<Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>>,
+}
+
+/// 托盘菜单文案。
+///
+/// 用结构体而不是 `t("tray.open_main")` 字符串查表：Rust 没有 TS 那种模板类型，
+/// 字段名拼错只能运行时发现；结构体能保证漏字段编译失败。
+pub struct TrayText {
+    pub open_main: &'static str,
+    pub check_update: &'static str,
+    pub cpu_anim: &'static str,
+    pub menu_numbers: &'static str,
+    pub icon_theme: &'static str,
+    pub quit: &'static str,
+}
+
+pub const TRAY_ZH: TrayText = TrayText {
+    open_main: "打开主窗口",
+    check_update: "检查更新",
+    cpu_anim: "CPU 动画",
+    menu_numbers: "菜单栏网速",
+    icon_theme: "顶部图标",
+    quit: "退出 Prune",
+};
+
+pub const TRAY_EN: TrayText = TrayText {
+    open_main: "Open Main Window",
+    check_update: "Check for Updates",
+    cpu_anim: "CPU Animation",
+    menu_numbers: "Menu Bar Speed",
+    icon_theme: "Tray Icon",
+    quit: "Quit Prune",
+};
+
+pub fn tray_text(l: Locale) -> &'static TrayText {
+    match l {
+        Locale::Zh => &TRAY_ZH,
+        Locale::En => &TRAY_EN,
+    }
+}
+
+/// 组装菜单（create 与 rebuild 共用，保证菜单项 id 逐字一致）。
+///
+/// **必须在主线程调用**：macOS 的 NSMenu 只在主线程安全。
+fn build_menu(
+    app: &AppHandle,
+    locale: Locale,
+) -> tauri::Result<(Menu<tauri::Wry>, Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>)> {
+    let text = tray_text(locale);
+    // 勾选态从当前原子量读，不从 settings 重读 —— 本次会话可能改过但还没落盘
+    let anim_on = CPU_ANIM_ENABLED.load(Ordering::Relaxed);
+    let numbers_on = MENU_NUMBERS_ENABLED.load(Ordering::Relaxed);
+    let theme = current_theme();
+
+    let open_main = MenuItem::with_id(app, "open-main", text.open_main, true, None::<&str>)?;
+    let check_update =
+        MenuItem::with_id(app, MENU_CHECK_UPDATE, text.check_update, true, None::<&str>)?;
+    let cpu_anim = CheckMenuItem::with_id(
+        app,
+        MENU_TOGGLE_CPU_ANIM,
+        text.cpu_anim,
+        true,
+        anim_on,
+        None::<&str>,
+    )?;
+    // 菜单栏网速：set_title 只有 macOS 生效，Windows 上置灰避免「点了没反应」
+    let menu_numbers = CheckMenuItem::with_id(
+        app,
+        MENU_TOGGLE_MENU_NUMBERS,
+        text.menu_numbers,
+        cfg!(target_os = "macos"),
+        numbers_on && cfg!(target_os = "macos"),
+        None::<&str>,
+    )?;
+
+    // 顶部图标子菜单：一项一套皮肤，勾选态表达当前选择
+    let mut theme_items: Vec<(IconTheme, CheckMenuItem<tauri::Wry>)> = Vec::new();
+    for t in IconTheme::ALL {
+        let item = CheckMenuItem::with_id(
+            app,
+            format!("{MENU_ICON_PREFIX}{}", t.id()),
+            t.label(locale),
+            true,
+            t == theme,
+            None::<&str>,
+        )?;
+        theme_items.push((t, item));
+    }
+    let theme_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = theme_items
+        .iter()
+        .map(|(_, item)| item as &dyn IsMenuItem<tauri::Wry>)
+        .collect();
+    let icon_menu =
+        Submenu::with_id_and_items(app, MENU_ICON_THEME, text.icon_theme, true, &theme_refs)?;
+
+    let quit = MenuItem::with_id(app, "quit", text.quit, true, None::<&str>)?;
+    let menu = Menu::with_items(
+        app,
+        &[
+            &open_main,
+            &check_update,
+            &PredefinedMenuItem::separator(app)?,
+            &cpu_anim,
+            &menu_numbers,
+            &icon_menu,
+            &PredefinedMenuItem::separator(app)?,
+            &quit,
+        ],
+    )?;
+    Ok((menu, theme_items))
+}
+
+/// 重建菜单（切语言时调用）。**必须在主线程执行**（见 [`build_menu`]）。
+///
+/// 失败只 log，不回滚语言：菜单错语言比「语言切换失败」轻得多。
+pub fn rebuild_menu(app: &AppHandle) -> tauri::Result<()> {
+    let locale = crate::i18n::current(app);
+    let (menu, items) = build_menu(app, locale)?;
+    if let Some(tray) = app.tray_by_id(TRAY_ID) {
+        tray.set_menu(Some(menu))?;
+    }
+    // on_menu_event 绑在 tray 上（见 create），换菜单不需要重绑
+    if let Some(state) = app.try_state::<TrayMenuState>() {
+        *state.themes.write().unwrap_or_else(|e| e.into_inner()) = items;
+    }
+    eprintln!("[i18n] 托盘菜单已重建: {locale:?}");
+    Ok(())
 }
 
 pub fn create(app: &AppHandle) -> tauri::Result<()> {
@@ -136,65 +267,10 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     // create 里刚设置静态原图，与哨兵一致，避免动画首轮重复 set
     LAST_FRAME.store(FRAME_STATIC, Ordering::Relaxed);
 
-    let open_main = MenuItem::with_id(app, "open-main", "打开主窗口", true, None::<&str>)?;
-    let check_update = MenuItem::with_id(app, MENU_CHECK_UPDATE, "检查更新", true, None::<&str>)?;
-    let cpu_anim = CheckMenuItem::with_id(
-        app,
-        MENU_TOGGLE_CPU_ANIM,
-        "CPU 动画",
-        true,
-        anim_on,
-        None::<&str>,
-    )?;
-    // 菜单栏网速：set_title 只有 macOS 生效，Windows 上置灰避免「点了没反应」。
-    // 名字叫「网速」而不是「数字」——菜单栏实际只放得下下载速度，
-    // 上传/内存随 tooltip 一起给（见 compose_numbers / compose_full）
-    let menu_numbers = CheckMenuItem::with_id(
-        app,
-        MENU_TOGGLE_MENU_NUMBERS,
-        "菜单栏网速",
-        cfg!(target_os = "macos"),
-        numbers_on && cfg!(target_os = "macos"),
-        None::<&str>,
-    )?;
-
-    // 顶部图标子菜单：一项一套皮肤，勾选态表达当前选择
-    let mut theme_items: Vec<(IconTheme, CheckMenuItem<tauri::Wry>)> = Vec::new();
-    for t in IconTheme::ALL {
-        let item = CheckMenuItem::with_id(
-            app,
-            format!("{MENU_ICON_PREFIX}{}", t.id()),
-            t.label(),
-            true,
-            t == theme,
-            None::<&str>,
-        )?;
-        theme_items.push((t, item));
-    }
-    // 子菜单只借用引用，句柄所有权留在 theme_items（后面交给 app 管理）
-    let theme_refs: Vec<&dyn IsMenuItem<tauri::Wry>> = theme_items
-        .iter()
-        .map(|(_, item)| item as &dyn IsMenuItem<tauri::Wry>)
-        .collect();
-    let icon_menu =
-        Submenu::with_id_and_items(app, MENU_ICON_THEME, "顶部图标", true, &theme_refs)?;
-
-    let quit = MenuItem::with_id(app, "quit", "退出 Prune", true, None::<&str>)?;
-    let menu = Menu::with_items(
-        app,
-        &[
-            &open_main,
-            &check_update,
-            &PredefinedMenuItem::separator(app)?,
-            &cpu_anim,
-            &menu_numbers,
-            &icon_menu,
-            &PredefinedMenuItem::separator(app)?,
-            &quit,
-        ],
-    )?;
+    let locale = crate::i18n::current(app);
+    let (menu, theme_items) = build_menu(app, locale)?;
     app.manage(TrayMenuState {
-        themes: theme_items,
+        themes: RwLock::new(theme_items),
     });
 
     let tray = TrayIconBuilder::with_id(TRAY_ID)
@@ -266,10 +342,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
     // 否则彩色会被系统当 alpha 掩码反色成黑白剪影。
     tray.set_icon_as_template(theme.is_template()).ok();
     eprintln!(
-        "[m13-tray] ✅ tray 已创建: theme={}（{} 帧）, 菜单栏数字={}",
+        "[m13-tray] ✅ tray 已创建: theme={}（{} 帧）, 菜单栏数字={}, locale={:?}",
         theme.id(),
         theme.frames().len(),
-        MENU_NUMBERS_ENABLED.load(Ordering::Relaxed)
+        MENU_NUMBERS_ENABLED.load(Ordering::Relaxed),
+        locale
     );
     Ok(())
 }
@@ -297,7 +374,7 @@ fn switch_theme(app: &AppHandle, theme: IconTheme) {
         set_frame(app, None);
         eprintln!(
             "[m11-tray] 顶部图标已切换: {}（{}）",
-            theme.label(),
+            theme.label(crate::i18n::current(app)),
             theme.id()
         );
     }
@@ -308,7 +385,8 @@ fn sync_checks(app: &AppHandle, active: IconTheme) {
     let Some(state) = app.try_state::<TrayMenuState>() else {
         return;
     };
-    for (theme, item) in &state.themes {
+    let themes = state.themes.read().unwrap_or_else(|e| e.into_inner());
+    for (theme, item) in themes.iter() {
         let _ = item.set_checked(*theme == active);
     }
 }
@@ -568,7 +646,7 @@ pub fn update_tooltip(app: &AppHandle, usage: Option<f32>) {
     // 心情词（M20）：只对猫皮生效——剪刀不是宠物，没有心情可标。
     // 悠闲不标（正常态不值得占字符），与菜单栏数字的宽度纪律同源。
     if current_theme() == IconTheme::Cat {
-        if let Some(word) = current_mood().label() {
+        if let Some(word) = current_mood().label(crate::i18n::current(app)) {
             tip.push_str(&format!(" · {word}"));
         }
     }

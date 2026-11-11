@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 mod commands;
+mod i18n;
 mod lan;
 mod net_diag;
 mod net_sampler;
@@ -53,6 +54,8 @@ pub fn run() {
             updater::update_check,
             updater::update_pending,
             updater::update_install,
+            i18n::locale_get,
+            i18n::locale_set,
             commands::mem_snapshot,
             commands::mem_processes,
             commands::mem_history,
@@ -101,6 +104,14 @@ pub fn run() {
             // 资源守门员形态：常驻菜单栏，不占 Dock
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+
+            // 语言必须在建托盘之前解析好：托盘菜单文案活在 Rust 进程里，
+            // 建完再改就得重建整份菜单（见 tray::rebuild_menu）
+            let (locale, source) = i18n::resolve(app.handle());
+            let app_locale = i18n::AppLocale::new();
+            app_locale.set(locale);
+            eprintln!("[i18n] 启动语言: {locale:?}（{}）", source.as_str());
+            app.manage(app_locale);
 
             tray::create(app.handle())?;
 

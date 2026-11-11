@@ -11,6 +11,7 @@
 //! - **退出滞回与状态绑定**：只有当前正处于该状态时才查它的退出计时，
 //!   低优先级通道在高位时持续累计进入计时，高优先级一解除立即按优先级接管。
 
+use crate::locale::Locale;
 use crate::mem::PressureLevel;
 
 /// 宠物心情。Leisure / Sprint 播同一套前跃帧（Sprint 只是更快），
@@ -30,12 +31,15 @@ pub enum PetMood {
 
 impl PetMood {
     /// 托盘 tooltip 的心情词；悠闲不标注（正常态不值得占字符）。
-    pub fn label(self) -> Option<&'static str> {
-        match self {
-            PetMood::Leisure => None,
-            PetMood::Sprint => Some("狂奔"),
-            PetMood::Pant => Some("喘气"),
-            PetMood::Alert => Some("炸毛"),
+    pub fn label(self, locale: Locale) -> Option<&'static str> {
+        match (self, locale) {
+            (PetMood::Leisure, _) => None,
+            (PetMood::Sprint, Locale::Zh) => Some("狂奔"),
+            (PetMood::Sprint, Locale::En) => Some("sprinting"),
+            (PetMood::Pant, Locale::Zh) => Some("喘气"),
+            (PetMood::Pant, Locale::En) => Some("panting"),
+            (PetMood::Alert, Locale::Zh) => Some("炸毛"),
+            (PetMood::Alert, Locale::En) => Some("on alert"),
         }
     }
 
@@ -641,8 +645,11 @@ mod tests {
 
     #[test]
     fn mood_labels_and_round_trip() {
-        assert_eq!(PetMood::Leisure.label(), None);
-        assert_eq!(PetMood::Sprint.label(), Some("狂奔"));
+        assert_eq!(PetMood::Leisure.label(Locale::Zh), None);
+        assert_eq!(PetMood::Sprint.label(Locale::Zh), Some("狂奔"));
+        assert_eq!(PetMood::Sprint.label(Locale::En), Some("sprinting"));
+        // 英文侧必须是纯 ASCII（门禁：UI 里不得出现中文残留）
+        assert!(PetMood::Alert.label(Locale::En).unwrap().is_ascii());
         for m in [
             PetMood::Leisure,
             PetMood::Sprint,

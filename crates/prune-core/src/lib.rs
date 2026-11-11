@@ -27,6 +27,7 @@ pub mod disk;
 pub mod island;
 pub mod leak;
 pub mod localtime;
+pub mod locale;
 pub mod mem;
 pub mod net;
 pub mod paths;

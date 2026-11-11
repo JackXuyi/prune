@@ -16,6 +16,7 @@
 
 use std::sync::OnceLock;
 
+use prune_core::locale::Locale;
 use prune_core::pet::PetMood;
 use tauri::image::Image;
 
@@ -42,10 +43,12 @@ impl IconTheme {
         }
     }
 
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Scissors => "剪刀（默认）",
-            Self::Cat => "小猫",
+    pub fn label(self, locale: Locale) -> &'static str {
+        match (self, locale) {
+            (Self::Scissors, Locale::Zh) => "剪刀（默认）",
+            (Self::Scissors, Locale::En) => "Scissors (default)",
+            (Self::Cat, Locale::Zh) => "小猫",
+            (Self::Cat, Locale::En) => "Cat",
         }
     }
 
