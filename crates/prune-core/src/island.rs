@@ -677,6 +677,9 @@ mod tests {
             is_gateway: false,
             is_self: false,
             randomized_mac: false,
+            first_seen: 0,
+            last_seen: 0,
+            is_new: false,
         }
     }
 

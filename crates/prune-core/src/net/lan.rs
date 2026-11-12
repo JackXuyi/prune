@@ -101,6 +101,16 @@ pub struct LanDevice {
     pub is_self: bool,
     /// 随机化 MAC（locally administered）→ UI 不展示厂商列，也不查 OUI
     pub randomized_mac: bool,
+    /// 首次发现时间（Unix 秒；来自历史层 `lan_history`，冷启动首扫 = 本轮 at；
+    /// 旧版缓存 = 0，UI 显示 `—`）。M19 spec §3.1。
+    #[serde(default)]
+    pub first_seen: i64,
+    /// 最后活跃时间（本轮仍在网 → = 本轮 at；离线遗留 = 上次在线轮次；旧缓存 = 0）
+    #[serde(default)]
+    pub last_seen: i64,
+    /// 新设备标识（历史层算好，前端只判真假不推口径；旧缓存 = false）
+    #[serde(default)]
+    pub is_new: bool,
 }
 
 /// 一轮局域网扫描的完整产出。serde camelCase ↔ `src/types/lan.ts`。
@@ -686,6 +696,11 @@ pub fn merge(
                 is_gateway,
                 is_self,
                 randomized_mac: mac.is_some_and(|m| is_randomized_mac(&m)),
+                // 时间线三字段由 `lan_history::apply_history` 回填（M19 spec §4）；
+                // merge 本身无记忆，先给中性值
+                first_seen: 0,
+                last_seen: 0,
+                is_new: false,
             })
         })
         .collect()
