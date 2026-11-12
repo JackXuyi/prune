@@ -16,7 +16,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { dynamicText, i18nFor } from "../i18n";
 import { useI18n } from "../i18n/store";
 import type { Locale } from "../i18n/types";
-import { fireAndForget, openMain } from "../lib/ipc";
+import { fireAndForget, isTauri, openMain } from "../lib/ipc";
 
 type Phase = "idle" | "collapsed" | "expanded";
 
@@ -171,6 +171,9 @@ export function Island() {
   }, [hide]);
 
   useEffect(() => {
+    // 浏览器预览里没有 Tauri 事件总线（__TAURI_INTERNALS__ 不存在），listen 会抛
+    // transformCallback 的 TypeError。岛在非 Tauri 环境本来也收不到事件，直接跳过。
+    if (!isTauri()) return;
     let disposed = false;
     const disposers: Array<() => void> = [];
 
