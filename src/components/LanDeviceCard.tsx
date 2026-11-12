@@ -145,7 +145,8 @@ export function LanDeviceCard({
 }
 
 /** 设备类型 → 域色 tile（plan §4 映射表：低饱和域色 + 14% 透明度底） */
-function tileTone(d: LanDevice): { tile: string; icon: string } {
+/** 域色 tile（M20-b 起拓扑视图共用）：按设备类型给 tile 底色与图标色，与卡片视觉同源 */
+export function tileTone(d: LanDevice): { tile: string; icon: string } {
   if (d.isSelf || d.isGateway || d.kind === "router") {
     return { tile: "bg-accent/[0.14]", icon: "text-accent" };
   }
