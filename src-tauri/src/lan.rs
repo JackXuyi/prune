@@ -129,6 +129,10 @@ pub async fn lan_scan(
     state.scanning.store(false, Ordering::SeqCst);
 
     let snap = res?;
+    // M19 时间线（docs/m19-lan-device-times-spec.md §5）：回填 first_seen /
+    // last_seen / is_new 并落历史层。不可用快照由 record 内部跳过。
+    let mut snap = snap;
+    prune_core::net::lan_history::record(&mut snap);
     if let Ok(mut last) = state.last.lock() {
         *last = Some(snap.clone());
     }

@@ -786,7 +786,7 @@ fn cmd_lan(scan: bool, json: bool) -> i32 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0);
-    let snap = if scan {
+    let mut snap = if scan {
         // 30s mDNS 窗口期间终端要有心跳，否则像卡死（stderr：stdout 保持纯输出）
         eprintln!(
             "全段扫描中：TCP connect {} 地址 + mDNS（{}s 窗口）+ SSDP（{}s）…",
@@ -798,6 +798,9 @@ fn cmd_lan(scan: bool, json: bool) -> i32 {
     } else {
         net::lan::snapshot(at, &exposed)
     };
+    // M19 时间线（docs/m19-lan-device-times-spec.md §5）：与 GUI 同一份历史层，
+    // 回填 first_seen / last_seen / is_new。不可用快照由 record 内部跳过。
+    net::lan_history::record(&mut snap);
     if scan {
         // 与 GUI 同一份缓存（spec §12）：MCP `lan_devices` 读的是它，
         // 所以没有 GUI 的机器上 `prune lan --scan` 之后 MCP 也有数据可读
@@ -873,12 +876,40 @@ fn cmd_lan(scan: bool, json: bool) -> i32 {
             let ports: Vec<String> = d.inbound.iter().map(|p| p.to_string()).collect();
             format!("  ← 连了我 {}", ports.join("/"))
         };
+        // M19 时间线：新设备标记 + 加入/活跃时长（first_seen == 0 = 旧缓存无记录，不显示）
+        let badge = if d.is_new { "[新] " } else { "" };
+        let times = if d.first_seen > 0 {
+            format!(
+                "  加入{} 活跃{}",
+                ago_str(at - d.first_seen),
+                ago_str(at - d.last_seen)
+            )
+        } else {
+            String::new()
+        };
         println!(
-            "  {:<15} {:<17} {:<12} {:<6} {}{inbound}",
+            "  {:<15} {:<17} {:<12} {:<6} {}{badge}{times}{inbound}",
             d.ip, mac, vendor, role, state
         );
     }
     0
+}
+
+/// 秒差 → CLI 相对时长（CLI 无 i18n，中文硬编码与现有输出一致）
+fn ago_str(diff: i64) -> String {
+    if diff < 0 {
+        return "—".into();
+    }
+    if diff < 60 {
+        return "刚刚".into();
+    }
+    if diff < 3600 {
+        return format!("{} 分钟前", diff / 60);
+    }
+    if diff < 86_400 {
+        return format!("{} 小时前", diff / 3600);
+    }
+    format!("{} 天前", diff / 86_400)
 }
 
 fn kind_label(kind: net::lan::DeviceKind) -> &'static str {

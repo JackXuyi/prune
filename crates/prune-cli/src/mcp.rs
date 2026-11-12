@@ -158,7 +158,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "lan_devices",
-            "description": "局域网设备与暴露面（只读缓存，不发包）：同网段设备列表（IP/MAC/厂商/类型/在线状态）+ 本机对它们开放的端口。数据来自最近一轮扫描（GUI 点扫描或 prune lan --scan），本工具只读缓存——若返回 status=unavailable，请先让用户扫一轮。设备厂商为 null 可能是随机化 MAC（正常现象），不代表识别失败；mDNS/SSDP 均空时 notes 会说明可能是防火墙拦截。",
+            "description": "局域网设备与暴露面（只读缓存，不发包）：同网段设备列表（IP/MAC/厂商/类型/在线状态）+ 本机对它们开放的端口。数据来自最近一轮扫描（GUI 点扫描或 prune lan --scan），本工具只读缓存——若返回 status=unavailable，请先让用户扫一轮。设备厂商为 null 可能是随机化 MAC（正常现象），不代表识别失败；mDNS/SSDP 均空时 notes 会说明可能是防火墙拦截。时间线字段：firstSeen（首次发现，Unix 秒）/ lastSeen（最后活跃）/ isNew（10 分钟内新接入，true 时请向用户提示），0 表示旧版缓存无记录。",
             "inputSchema": { "type": "object", "properties": {} }
         }
     ])
