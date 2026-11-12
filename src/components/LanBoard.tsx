@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { EmptyState } from "./EmptyArt";
 import { LanDeviceCard, LanDeviceDetailModal } from "./LanDeviceCard";
+import { LanTopology } from "./LanTopology";
 import { ChevronRightIcon, RefreshIcon } from "./icons";
 import { formatClock } from "../lib/format";
 import { useI18n } from "../i18n/store";
@@ -29,6 +30,8 @@ export function LanBoard() {
   const scan = useLanStore((s) => s.scan);
   const [filter, setFilter] = useState<LanFilter>("all");
   const [showOffline, setShowOffline] = useState(false);
+  // 视图二态（M20 spec §1.2）：卡片网格 / 拓扑画布。会话内记忆即可，不落 localStorage
+  const [view, setView] = useState<"cards" | "topo">("cards");
   const [selected, setSelected] = useState<LanDevice | null>(null);
 
   useEffect(() => {
@@ -125,37 +128,56 @@ export function LanBoard() {
         />
       ) : (
         <>
-          {/* 筛选条 + 重扫（plan §5：单选 chips，与端口页搜索语义独立） */}
+          {/* 筛选条 + 视图切换 + 重扫（plan §5：单选 chips，与端口页搜索语义独立）。
+              chips 只属于卡片网格——拓扑模式下隐藏，避免「点了没反应」（spec §1.2） */}
           <div className="mt-3 flex items-center justify-between gap-3">
-            <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.filter.aria")}>
-              <FilterChip
-                active={filter === "all"}
-                onClick={() => setFilter("all")}
-                label={t("lan.filter.all")}
-                count={devices.length}
-              />
-              <FilterChip
-                active={filter === "online"}
-                onClick={() => setFilter("online")}
-                label={t("lan.filter.online")}
-                count={onlineCount}
-              />
-              <FilterChip
-                active={filter === "inbound"}
-                onClick={() => setFilter("inbound")}
-                label={t("lan.filter.inbound")}
-                count={inboundCount}
-                dim={inboundCount === 0}
-              />
+            {view === "cards" ? (
+              <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.filter.aria")}>
+                <FilterChip
+                  active={filter === "all"}
+                  onClick={() => setFilter("all")}
+                  label={t("lan.filter.all")}
+                  count={devices.length}
+                />
+                <FilterChip
+                  active={filter === "online"}
+                  onClick={() => setFilter("online")}
+                  label={t("lan.filter.online")}
+                  count={onlineCount}
+                />
+                <FilterChip
+                  active={filter === "inbound"}
+                  onClick={() => setFilter("inbound")}
+                  label={t("lan.filter.inbound")}
+                  count={inboundCount}
+                  dim={inboundCount === 0}
+                />
+              </div>
+            ) : (
+              <span />
+            )}
+            <div className="flex shrink-0 items-center gap-2">
+              <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
+                <ViewChip
+                  active={view === "cards"}
+                  onClick={() => setView("cards")}
+                  label={t("lan.topo.cards")}
+                />
+                <ViewChip
+                  active={view === "topo"}
+                  onClick={() => setView("topo")}
+                  label={t("lan.topo.view")}
+                />
+              </div>
+              <button
+                type="button"
+                onClick={() => void scan()}
+                title={t("lan.rescanTitle")}
+                className="flex shrink-0 items-center gap-1 rounded-full bg-chip px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
+              >
+                <RefreshIcon size={10} /> {t("lan.rescan")}
+              </button>
             </div>
-            <button
-              type="button"
-              onClick={() => void scan()}
-              title={t("lan.rescanTitle")}
-              className="flex shrink-0 items-center gap-1 rounded-full bg-chip px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
-            >
-              <RefreshIcon size={10} /> {t("lan.rescan")}
-            </button>
           </div>
 
           {/* 指标卡 ×3（plan §3：核心安全信号从摘要行提权） */}
@@ -194,7 +216,10 @@ export function LanBoard() {
             </p>
           ) : null}
 
-          {filter === "inbound" ? (
+          {view === "topo" ? (
+            // 拓扑画布（M20）：全量设备直渲（离线置灰），不做筛选——chips 语义只属于卡片
+            <LanTopology devices={devices} onSelect={setSelected} />
+          ) : filter === "inbound" ? (
             connectedMe.length > 0 ? (
               <DeviceSection
                 title={t("lan.section.inbound")}
@@ -285,6 +310,33 @@ export function LanBoard() {
         />
       ) : null}
     </div>
+  );
+}
+
+/** 视图二态切换 chip（M20 spec §1.2）：与 FilterChip 同视觉语言，无计数 */
+function ViewChip({
+  active,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      role="tab"
+      aria-selected={active}
+      onClick={onClick}
+      className={`rounded-full px-2.5 py-1 text-[10.5px] transition-colors ${
+        active
+          ? "bg-accent/[0.14] font-medium text-accent"
+          : "text-ink-faint hover:bg-chip hover:text-ink-dim"
+      }`}
+    >
+      {label}
+    </button>
   );
 }
 
