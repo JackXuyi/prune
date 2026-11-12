@@ -33,6 +33,8 @@ export function LanBoard() {
   // 视图二态（M20 spec §1.2）：卡片网格 / 拓扑画布。会话内记忆即可，不落 localStorage
   const [view, setView] = useState<"cards" | "topo">("cards");
   const [selected, setSelected] = useState<LanDevice | null>(null);
+  /** 拓扑入口开关（M20-b 视觉优化未落地前先隐藏，代码全保留） */
+  const TOPO_ENABLED = false;
 
   useEffect(() => {
     void init();
@@ -157,18 +159,23 @@ export function LanBoard() {
               <span />
             )}
             <div className="flex shrink-0 items-center gap-2">
-              <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
-                <ViewChip
-                  active={view === "cards"}
-                  onClick={() => setView("cards")}
-                  label={t("lan.topo.cards")}
-                />
-                <ViewChip
-                  active={view === "topo"}
-                  onClick={() => setView("topo")}
-                  label={t("lan.topo.view")}
-                />
-              </div>
+              {/* M20 拓扑入口暂隐藏（视觉优化 M20-b 未落地，先不出入口）。
+                  代码全保留：组件 / view state / topo 分支均可直接工作，
+                  恢复入口只需把 TOPO_ENABLED 改回 true。 */}
+              {TOPO_ENABLED ? (
+                <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
+                  <ViewChip
+                    active={view === "cards"}
+                    onClick={() => setView("cards")}
+                    label={t("lan.topo.cards")}
+                  />
+                  <ViewChip
+                    active={view === "topo"}
+                    onClick={() => setView("topo")}
+                    label={t("lan.topo.view")}
+                  />
+                </div>
+              ) : null}
               <button
                 type="button"
                 onClick={() => void scan()}
