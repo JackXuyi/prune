@@ -78,6 +78,18 @@ const zh = {
   footer:
     "{devices} 台设备 · 扫描 {seconds} s · {clock} · 本轮快照语义：跨轮次的「同一台设备」以稳定 MAC 优先；随机 MAC / 无 MAC 以 IP + 网段为准",
 
+  /** 拓扑视图（M20）：网关居中星形布局，节点可拖拽 */
+  topo: {
+    view: "拓扑",
+    cards: "卡片",
+    dragHint: "拖拽节点重排 · 点击节点看详情",
+    legendSelf: "本机",
+    legendGateway: "网关",
+    legendNew: "新设备",
+    legendOffline: "离线",
+    legendInbound: "连了我",
+  },
+
   /** 设备卡 / 详情弹窗共用的身份与状态词 */
   card: {
     self: "本机",
@@ -207,6 +219,17 @@ const en: MessageTree<typeof zh> = {
 
   footer:
     "{devices} devices · scanned in {seconds} s · {clock} · Snapshot semantics: the same device across rounds is keyed on a stable MAC first; randomized or missing MACs fall back to IP + subnet",
+
+  topo: {
+    view: "Topology",
+    cards: "Cards",
+    dragHint: "Drag nodes to rearrange · click a node for details",
+    legendSelf: "This machine",
+    legendGateway: "Gateway",
+    legendNew: "New",
+    legendOffline: "Offline",
+    legendInbound: "Connected to me",
+  },
 
   card: {
     self: "This machine",
