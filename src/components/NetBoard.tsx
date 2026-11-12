@@ -44,6 +44,7 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
   const sample = useNetTotalStore((s) => s.sample);
   const history = useNetTotalStore((s) => s.history);
   const days = useNetTotalStore((s) => s.days);
+  const refreshNet = useNetTotalStore((s) => s.refresh);
 
   const [page, setPage] = useState<NetSubPage>("monitor");
 
@@ -65,10 +66,24 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
 
       {page === "monitor" ? (
         <>
+      {/* 速率不可读横幅（spec §4.5）：橙色软底 + 底线 + 重试。重试走 store.refresh，
+          不新开命令；连着点只是多读一次系统计数器，无害。 */}
       {status === "unavailable" ? (
-        <p className="mt-3 rounded-lg bg-warn/[0.08] px-3 py-2 text-[11px] leading-relaxed text-warn">
-          {t("net.unavailable", { why: sample?.note ?? t("net.unavailableFallback") })}
-        </p>
+        <div className="mt-3 flex h-[30px] items-center justify-between gap-3 rounded-md border-b border-warn/25 bg-warn/[0.1] px-3">
+          <span
+            className="min-w-0 truncate text-[10.5px] text-warn"
+            title={t("net.unavailable", { why: sample?.note ?? t("net.unavailableFallback") })}
+          >
+            {t("net.unavailable", { why: sample?.note ?? t("net.unavailableFallback") })}
+          </span>
+          <button
+            type="button"
+            onClick={() => void refreshNet()}
+            className="shrink-0 text-[10.5px] text-warn transition-opacity hover:opacity-75"
+          >
+            {t("common.action.retry")}
+          </button>
+        </div>
       ) : null}
 
       <div className="mt-4 grid grid-cols-2 gap-8 border-b border-hairline-soft pb-4">
@@ -347,7 +362,7 @@ function DayBars({ days, count }: { days: DayTraffic[]; count: number }) {
                   <div className={`flex-1 ${isToday ? "bg-domain-net" : "bg-accent/80"}`} />
                 </div>
               ) : (
-                <div className="h-px w-full bg-white/[0.09]" />
+                <div className="h-px w-full bg-chip-hover" />
               )}
             </div>
           );
@@ -431,7 +446,7 @@ function VirtualIfaces({ ifaces, maxBps }: { ifaces: IfaceRate[]; maxBps: number
         type="button"
         onClick={() => setOpen((v) => !v)}
         aria-expanded={open}
-        className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
+        className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left text-[10px] text-ink-faint transition-colors hover:bg-chip hover:text-ink-dim"
       >
         <span className={`transition-transform ${open ? "rotate-90" : ""}`}>▸</span>
         <span>
@@ -544,7 +559,7 @@ function AppRanking({
                   type="button"
                   onClick={onOpenResources}
                   title={t("net.apps.detailTitle")}
-                  className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.04]"
+                  className="flex w-full items-center gap-3 rounded-md px-1 py-1 text-left transition-colors hover:bg-chip"
                 >
                   <span className="w-[76px] shrink-0 truncate text-[11.5px] text-ink" title={r.family}>
                     {r.family}
@@ -603,7 +618,7 @@ function Segmented({
   ];
   return (
     <div
-      className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5"
+      className="flex shrink-0 rounded-full bg-chip p-0.5"
       role="tablist"
       aria-label={t("net.subpage.aria")}
     >
@@ -618,7 +633,7 @@ function Segmented({
             onClick={() => onChange(it.key)}
             className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
               active
-                ? "bg-white/[0.08] font-medium text-ink"
+                ? "bg-chip-hover font-medium text-ink"
                 : "text-ink-faint hover:text-ink-dim"
             }`}
           >
@@ -664,7 +679,7 @@ function DiagPage() {
           type="button"
           onClick={() => void run()}
           disabled={running}
-          className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] disabled:opacity-50"
+          className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip disabled:opacity-50"
         >
           {running ? t("common.progress.diagnosing") : t("net.diag.start")}
         </button>
@@ -681,7 +696,7 @@ function DiagPage() {
       ) : done ? (
         <>
           {/* UI v4（§6.5）诊断轨道：DNS → 网关 → 出口逐段点亮，先看「断在哪」再看细节 */}
-          <section className="mt-3 rounded-xl border border-hairline-soft bg-white/[0.02] px-4 py-3.5">
+          <section className="mt-3 rounded-card border border-hairline-soft bg-surface-raised px-4 py-3.5">
             <TrackProgress ariaLabel={t("net.diag.trackAria")} nodes={diagTrackNodes(done, locale)} />
           </section>
           <section className="mt-4 space-y-5 border-b border-hairline-soft pb-4">
@@ -721,7 +736,7 @@ function DiagPage() {
           ) : null}
 
           {done.verdict ? (
-            <div className="mt-3 rounded-lg bg-white/[0.04] px-3 py-2.5">
+            <div className="mt-3 rounded-card bg-chip px-3 py-2.5">
               <div className="text-[12px] font-medium text-ink">
                 {t("net.diag.verdict", { label: done.verdict.label })}
               </div>
@@ -837,7 +852,7 @@ function LayerChart({
         <p className="mt-1.5 text-[10px] text-danger/80">{t("net.layer.noReading")}</p>
       ) : (
         <>
-          <div className="relative mt-2 h-2 rounded-full bg-white/[0.05]">
+          <div className="relative mt-2 h-2 rounded-full bg-chip">
             <div
               className={`absolute inset-y-0 left-0 rounded-full transition-[width] duration-500 ${fill}`}
               style={{ width: `${pct(median)}%` }}
@@ -906,7 +921,7 @@ function SpeedCard() {
           type="button"
           onClick={() => void runSpeed()}
           disabled={speedRunning}
-          className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] disabled:opacity-50"
+          className="shrink-0 rounded-md border border-hairline-soft px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip disabled:opacity-50"
         >
           {speedRunning ? t("common.progress.speedTesting") : t("net.speed.start")}
         </button>

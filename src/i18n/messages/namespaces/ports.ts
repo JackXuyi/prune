@@ -31,6 +31,10 @@ const zh = {
   emptyCleanNote:
     "当前用户可见范围内没有进程监听端口。扫描过了才是这个结论——不是没扫。",
   noMatch: "没有匹配「{query}」的端口。",
+  noMatchTitle: "没有匹配「{query}」的端口",
+  noMatchNote: "试试端口号、进程名或项目名的一部分，或清除搜索条件。",
+  clearSearch: "清除搜索",
+  rowLocate: "定位",
 
   board: {
     title: "端口仪表盘",
@@ -94,6 +98,10 @@ const en: MessageTree<typeof zh> = {
   emptyCleanNote:
     "No process is listening on a port within what the current user can see. That conclusion holds because a scan ran — not because none did.",
   noMatch: "No ports match “{query}”.",
+  noMatchTitle: 'No ports match "{query}"',
+  noMatchNote: "Try part of a port number, process name or project, or clear the search.",
+  clearSearch: "Clear search",
+  rowLocate: "Locate",
 
   board: {
     title: "Port dashboard",

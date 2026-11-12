@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { ChevronRightIcon } from "./icons";
-import { Badge } from "./primitives";
+import { Badge, Btn } from "./primitives";
 import { StackBar } from "./charts/StackBar";
 import { DotMatrix } from "./charts/DotMatrix";
 import { EmptyState } from "./EmptyArt";
@@ -105,7 +105,7 @@ export function PortBoard({
               onChange={(e) => setQuery(e.target.value)}
               placeholder={t("ports.searchPlaceholder")}
               spellCheck={false}
-              className="w-44 rounded-md border border-hairline bg-white/[0.04] px-2.5 py-1.5 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
+              className="w-44 rounded-md border border-hairline bg-surface-sunk px-2.5 py-1.5 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/50 focus:outline-none"
             />
           ) : null}
           <PortSubTabs page={page} onChange={setPage} />
@@ -139,7 +139,7 @@ export function PortBoard({
 
       {/* TIME_WAIT：会占端口但没有任何进程持有——不渲染成「被占用」，也不给结束入口 */}
       {snapshot?.timeWait ? (
-        <p className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-[11px] leading-relaxed text-ink-dim">
+        <p className="mt-3 rounded-lg bg-chip px-3 py-2 text-[11px] leading-relaxed text-ink-dim">
           {t("ports.timeWait", {
             n: snapshot.timeWait,
             ports:
@@ -162,12 +162,25 @@ export function PortBoard({
         entries.length === 0 ? (
           <EmptyState
             title={t("ports.emptyCleanTitle")}
-            note={t("ports.emptyCleanNote")}
+            description={t("ports.emptyCleanNote")}
           />
         ) : (
-          <p className="mt-4 text-[11px] text-ink-faint">
-            {t("ports.noMatch", { query })}
-          </p>
+          <EmptyState
+            art="search"
+            title={t("ports.noMatchTitle", { query })}
+            description={t("ports.noMatchNote")}
+            action={
+              <Btn
+                variant="ghost"
+                onClick={() => {
+                  setQuery("");
+                  searchRef.current?.focus();
+                }}
+              >
+                {t("ports.clearSearch")}
+              </Btn>
+            }
+          />
         )
       ) : (
         <>
@@ -215,7 +228,7 @@ export function PortBoard({
               />
             </div>
           ) : null}
-          <div className="mt-3 grid grid-cols-[74px_78px_minmax(0,1fr)_minmax(0,1.05fr)_54px] items-center gap-2.5 border-b border-hairline-soft px-2 pb-2 text-[10px] text-ink-faint">
+          <div className="mt-3 grid grid-cols-[70px_74px_216px_minmax(0,1fr)_56px] items-center gap-2.5 border-b border-hairline-soft px-2 pb-2 text-[10px] text-ink-faint">
             <span>{t("ports.col.port")}</span>
             <span>{t("ports.col.exposure")}</span>
             <span>{t("ports.col.process")}</span>
@@ -238,7 +251,7 @@ export function PortBoard({
               <button
                 type="button"
                 onClick={toggleFolded}
-                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.04] hover:text-ink"
+                className="flex w-full items-center gap-1.5 rounded-md px-2 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-chip hover:text-ink"
               >
                 <ChevronRightIcon
                   size={11}
@@ -295,7 +308,7 @@ function PortSubTabs({
   ];
   return (
     <div
-      className="flex shrink-0 rounded-full bg-white/[0.05] p-0.5"
+      className="flex shrink-0 rounded-full bg-chip p-0.5"
       role="tablist"
       aria-label={t("ports.subpage.aria")}
     >
@@ -310,7 +323,7 @@ function PortSubTabs({
             onClick={() => onChange(it.key)}
             className={`rounded-full px-3 py-1 text-[11px] transition-colors ${
               active
-                ? "bg-white/[0.08] font-medium text-ink"
+                ? "bg-chip-hover font-medium text-ink"
                 : "text-ink-faint hover:text-ink-dim"
             }`}
           >
@@ -352,7 +365,7 @@ function PortRow({
           onKill(primary, entry.port, e.clientX, e.clientY);
         }}
         title={killable ? t("ports.row.hintKillable") : t("ports.row.hintLocked")}
-        className="grid grid-cols-[74px_78px_minmax(0,1fr)_minmax(0,1.05fr)_54px] items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.04]"
+        className="group grid grid-cols-[70px_74px_216px_minmax(0,1fr)_56px] items-center gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-chip"
       >
         <span className="flex items-baseline gap-1">
           <span className="font-mono text-[12.5px] leading-tight tabular-nums text-ink">
@@ -367,7 +380,7 @@ function PortRow({
           </Badge>
         </span>
 
-        <span className="min-w-0">
+        <span className="w-[216px] min-w-0">
           <span className="block truncate text-[11.5px] text-ink">
             {primary ? primary.comm : t("ports.row.kernelOwned")}
             {primary?.pid != null ? (
@@ -399,8 +412,19 @@ function PortRow({
           )}
         </span>
 
-        <span className="text-right font-mono text-[11px] tabular-nums text-ink-dim">
-          {entry.conns == null ? "—" : entry.conns}
+        <span className="flex items-center justify-end gap-1.5">
+          <span className="font-mono text-[11px] tabular-nums text-ink-dim">
+            {entry.conns == null ? "—" : entry.conns}
+          </span>
+          {primary?.pid != null ? (
+            <button
+              type="button"
+              onClick={() => onOpenProcess(primary.pid!)}
+              className="shrink-0 text-[10px] text-accent opacity-0 transition-opacity group-hover:opacity-100"
+            >
+              {t("ports.rowLocate")}
+            </button>
+          ) : null}
         </span>
       </div>
 
