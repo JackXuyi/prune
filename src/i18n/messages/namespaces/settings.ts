@@ -74,6 +74,13 @@ const zh = {
   saved: "已保存",
   autoSave: "改动即时生效并保存",
   loading: "读取设置…",
+  theme: {
+    title: "外观",
+    desc: "主题立即生效；「跟随系统」会随系统深浅色自动切换。",
+    system: "跟随系统",
+    light: "浅色",
+    dark: "深色",
+  },
   saveFailed: "保存失败：{err}",
 } as const;
 
@@ -147,6 +154,13 @@ const en: MessageTree<typeof zh> = {
   saved: "Saved",
   autoSave: "Changes apply and save immediately",
   loading: "Loading settings…",
+  theme: {
+    title: "Appearance",
+    desc: "Applies immediately. \"Follow system\" tracks the OS appearance.",
+    system: "System",
+    light: "Light",
+    dark: "Dark",
+  },
   saveFailed: "Save failed: {err}",
 };
 

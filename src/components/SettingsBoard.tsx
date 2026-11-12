@@ -17,6 +17,7 @@ import { LanguageSection } from "./LanguageSection";
 import { Badge } from "../components/primitives";
 import { useI18n } from "../i18n/store";
 import { isTauri } from "../lib/ipc";
+import { getTheme, setTheme, subscribeTheme, type ThemeMode } from "../lib/theme";
 
 interface IslandSettings {
   enabled: boolean;
@@ -119,7 +120,19 @@ export function SettingsBoard() {
       <div className="mx-auto flex max-w-[560px] flex-col gap-4">
         <LanguageSection />
 
-        <section className="rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5">
+        {/* 外观（spec §5.3 v5 新增）：三态主题分段控件。落盘 localStorage["prune.theme"]，
+            system 时由 theme.ts 监听 matchMedia 实时切换 —— 不新增 Rust command。 */}
+        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <span className="text-[13px] font-medium">{t("settings.theme.title")}</span>
+              <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">{t("settings.theme.desc")}</p>
+            </div>
+            <ThemeSegmented />
+          </div>
+        </section>
+
+        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
           <div className="flex items-start justify-between gap-4">
             <div>
               <div className="flex items-center gap-2">
@@ -153,7 +166,7 @@ export function SettingsBoard() {
         </section>
 
         <section
-          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
             disabled ? "opacity-40" : ""
           }`}
         >
@@ -176,7 +189,7 @@ export function SettingsBoard() {
         </section>
 
         <section
-          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
             disabled ? "opacity-40" : ""
           }`}
         >
@@ -199,7 +212,7 @@ export function SettingsBoard() {
         </section>
 
         <section
-          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
             disabled ? "opacity-40" : ""
           }`}
         >
@@ -253,7 +266,7 @@ export function SettingsBoard() {
             onChange={(v) => update({ maxPerHour: v })}
           />
 
-          <p className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
+          <p className="mt-3 rounded-lg bg-chip px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
             {t("settings.cpu.rule", {
               window: cfg.cpuSustainSec,
               tolerance: cfg.cpuTolerancePct,
@@ -264,7 +277,7 @@ export function SettingsBoard() {
         </section>
 
         <section
-          className={`rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5 transition-opacity ${
+          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
             disabled ? "opacity-40" : ""
           }`}
         >
@@ -295,7 +308,7 @@ export function SettingsBoard() {
             onChange={(v) => update({ memSustainSec: v })}
           />
 
-          <p className="mt-3 rounded-lg bg-white/[0.03] px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
+          <p className="mt-3 rounded-lg bg-chip px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
             {t("settings.mem.rule", {
               swap: cfg.swapPct,
               window: cfg.memSustainSec,
@@ -335,7 +348,7 @@ function Switch({
       aria-label={label}
       onClick={() => onChange(!checked)}
       className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors ${
-        checked ? "bg-accent/80" : "bg-white/[0.12]"
+        checked ? "bg-accent/80" : "bg-chip-hover"
       }`}
     >
       <span
@@ -385,9 +398,51 @@ function Slider({
         disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
         aria-label={label}
-        className="mt-1.5 h-1 w-full cursor-pointer appearance-none rounded-full bg-white/[0.1] accent-accent disabled:cursor-not-allowed [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent"
+        className="mt-1.5 h-1 w-full cursor-pointer appearance-none rounded-full bg-chip accent-accent disabled:cursor-not-allowed [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent"
       />
       <p className="mt-1 text-[10px] leading-4 text-ink-faint">{hint}</p>
+    </div>
+  );
+}
+
+/** 三态主题分段控件（跟随系统 / 浅色 / 深色）。订阅模式变化，HMR 安全。 */
+function ThemeSegmented() {
+  const { t } = useI18n();
+  const [mode, setMode] = useState<ThemeMode>(() => getTheme());
+
+  useEffect(() => subscribeTheme(setMode), []);
+
+  const items: { key: ThemeMode; label: string }[] = [
+    { key: "system", label: t("settings.theme.system") },
+    { key: "light", label: t("settings.theme.light") },
+    { key: "dark", label: t("settings.theme.dark") },
+  ];
+  return (
+    <div
+      role="radiogroup"
+      aria-label={t("settings.theme.title")}
+      className="flex shrink-0 rounded-full bg-chip p-0.5"
+    >
+      {items.map((it) => {
+        const active = mode === it.key;
+        return (
+          <button
+            key={it.key}
+            type="button"
+            role="radio"
+            aria-checked={active}
+            onClick={() => {
+              setMode(it.key);
+              setTheme(it.key);
+            }}
+            className={`rounded-full px-2.5 py-1 text-[10.5px] transition-colors ${
+              active ? "bg-chip-hover font-medium text-ink" : "text-ink-faint hover:text-ink-dim"
+            }`}
+          >
+            {it.label}
+          </button>
+        );
+      })}
     </div>
   );
 }

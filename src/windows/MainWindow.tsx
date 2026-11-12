@@ -556,7 +556,7 @@ export function MainWindow() {
             }}
           >
             <div
-              className="absolute right-4 top-14 max-h-[calc(100vh-72px)] w-[480px] overflow-y-auto rounded-xl border border-hairline bg-surface-raised shadow-2xl shadow-black/50"
+              className="absolute left-1/2 top-1/2 max-h-[calc(100vh-64px)] w-[520px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[14px] border border-hairline bg-overlay shadow-2xl shadow-black/50"
               onClick={(e) => e.stopPropagation()}
             >
               <SettingsBoard />

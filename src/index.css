@@ -5,6 +5,7 @@
 @theme {
   --color-surface: #0e1114;
   --color-surface-raised: #14181d;
+  --color-overlay: #191e24;
   --color-surface-overlay: #191e24;
   --color-hairline: #242a32;
   --color-hairline-soft: #1c2128;
@@ -61,6 +62,7 @@
 :root[data-theme="light"] {
   --color-surface: #f4f6f8;
   --color-surface-raised: #ffffff;
+  --color-overlay: #ffffff;
   --color-surface-overlay: #ffffff;
   --color-surface-sunk: #eef1f4;
   --color-hairline: #dfe5ea;
