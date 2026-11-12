@@ -95,7 +95,7 @@ topo.legendSelf / legendGateway / legendNew / legendOffline / legendInbound
 | 设备数多（>20） | 环半径自适应 + 抖动错位；标签可能偶有交叠，属已知可接受（可拖开） |
 | 快照刷新（重扫后） | 新 ip 落初始位；消失的 ip 位置残留在 map 中不渲染（无害，随组件卸载释放） |
 | 只有一台网关没有本机 | 本机节点缺席时只画网关居中 + 环形设备，不画 inbound 线 |
-| 动画偏好 | ping 脉冲用 Tailwind 内置 `animate-ping`，跟随系统 reduced-motion 由 Tailwind 媒体查询自动降级 |
+| 动画偏好 | ping 脉冲用 Tailwind 内置 `animate-ping`；它自身不带 reduced-motion 降级，由 index.css 全局 `prefers-reduced-motion` 兜底（UI v5 §11.2：0.01ms + iteration-count 1） |
 
 ## 8. 实施拆分
 

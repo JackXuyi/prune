@@ -174,7 +174,7 @@ onClick(node)        suppressClick ? (suppressClick = false) : onSelect(d)
 | 重扫后设备集变化 | 新 ip 补初始位；消失 ip 的 pos 残留不渲染（无害） |
 | 容器极窄（<320px） | R 被 clamp 到 130，节点可能溢出画布边——clamp 拖拽限制兜底，属已知可接受 |
 | 浏览器 dev（非 Tauri） | store 给 null 快照 → 空态，拓扑不可达，无假数据 |
-| reduced-motion | Tailwind `animate-ping` 自带 media query 降级，无额外处理 |
+| reduced-motion | Tailwind 的 `animate-ping` 本身**不带** reduced-motion 降级；实际兜底是 index.css 的全局 `@media (prefers-reduced-motion: reduce)`（duration 0.01ms + `iteration-count: 1`，防 infinite 动画高频重绘），落定时即静止 |
 
 ## 8. 实施拆分与验收
 
