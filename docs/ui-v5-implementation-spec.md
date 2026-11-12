@@ -1213,3 +1213,20 @@ pnpm dev                                   # vite 1430
 | §5.3 设置 | 左 124px 分区导航 | **单列滚动卡**（480→520 居中）：分区只有语言/外观/灵动岛三类，左侧导航为空转 | 分区数不足 |
 
 另：`--color-overlay` 在 P0 漏建，P2 使用 `bg-overlay` 时补入 index.css（深 `#191e24` / 浅 `#ffffff`）。
+
+---
+
+## 13. 落地纠偏记录（P3 实测）
+
+| 章 | 原文 | 实测修正 | 依据 |
+|---|---|---|---|
+| §9.4 硬编码色 | `bg-white/` 清零 | **三档中性面**：卡面 0.02–0.035 → `chip-soft`，静态填充 0.04–0.06 → `chip`，hover/focus 与 0.08–0.1 → `chip-hover` | 原值有 8 档 alpha，两级装不下；新增 `--color-chip-soft` 属「只增不删」 |
+| §2.3 浅色 | `--chip` 两种 | **三档同步翻转**（`--color-chip-soft` 浅色 = `rgba(0,0,0,.03)`） | 浅色下卡面需要比 hover 更淡的一层 |
+| §9.4 硬编码色 | 组件内 grep `rgba(255` 清零 | 灵动岛 **17 处白色系**不参与主题翻转（岛是恒定深玻璃），提取为 `--island-hairline / ink / ink-dim / ink-mute / ink-faint` 五个主题无关变量 | 岛悬浮于壁纸，浅色主题下也得是深玻璃 |
+| §2.1 强调色 | `bg-accent` + 白字 | **`text-accent-ink`**：深色 `#34d399` 上白字仅 1.98:1；浅色 `#0e9e6e` 上白字 4.52:1 才反过来需要白 | 对比度实测 |
+| §2.1 危险色 | `bg-danger` + 白字 | **`--color-danger-ink`**：深色 `#f0705f` 配暖黑 `#2a1512`（≈6:1），浅色 `#c94f40` 配白（4.9:1） | 单靠白字在深色下达不到 AA |
+| §11 a11y | 分散补 focus ring | **全局 `:focus-visible` 一条**（`@layer base`，accent 70% 2px）：输入框的 `focus:outline-none` 仍可覆盖，避免环与描边双重指示 | 逐组件补会漏；放 base 层让工具类优先 |
+| §11 a11y | — | RailNav 6 个 tab 原先只有 `title`（读屏不读），补 `role=tablist` 父级 + 逐项 `aria-label` | `document.activeElement` 扫描出无名按钮 |
+| §9.4 i18n | 新增 60 条 + 英文回归 | 实际词条已在 P0–P2 随手补齐；**英文回归结论：380×432 面板 scrollHeight = clientHeight = 432，无溢出**；960 主窗无裁切元素 | 实测 |
+
+**P3 门禁结果**：`tsc --noEmit` 0 error；`pnpm build` 6.2 s 通过；`check:i18n` 无硬编码中文；浅色 960×640 与 380×432 截图通过；键盘 Tab 全程有焦点环、6 页无名称按钮 0 个。
