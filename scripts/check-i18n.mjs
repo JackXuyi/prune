@@ -27,7 +27,17 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SRC = join(ROOT, "src");
 
-/** 允许存在中文的路径前缀（相对仓库根） */
+/**
+ * 仓库相对路径，**统一成正斜杠**。
+ *
+ * Windows 上 `relative()` 返回 `src\i18n\messages\chart.ts`，与 ALLOW 里的
+ * `src/i18n/messages/` 前缀永远匹配不上 —— 结果是 catalog 本体 950 处中文
+ * 全被当成违规。同一类 Windows 路径问题的第二个变体（第一个是 ROOT 用了
+ * URL.pathname），两个都只在 Windows CI 上现形。
+ */
+const relOf = (abs) => relative(ROOT, abs).replaceAll("\\", "/");
+
+/** 允许存在中文的路径前缀（相对仓库根，正斜杠） */
 const ALLOW = [
   "src/i18n/messages/",
   // i18n 运行时本身：`localeName()` 返回「中文 / English」，这两个词在任何
@@ -35,6 +45,21 @@ const ALLOW = [
   "src/i18n/index.ts",
   "src/lib/devFixture.ts",
 ];
+
+/**
+ * 路径自检：拿一个确定存在于 ALLOW 里的文件验证整条链路。
+ *
+ * 没有这一步时，分隔符或基准目录一错，症状是「950 处硬编码中文」——
+ * 看上去像文案出了问题，实际是路径匹配全挂。宁可一行报清楚原因。
+ */
+{
+  const probe = relOf(join(SRC, "i18n", "index.ts"));
+  if (!ALLOW.some((p) => probe === p || probe.startsWith(p))) {
+    console.error(`[i18n] ❌ 路径自检失败：src/i18n/index.ts 解析成了 "${probe}"`);
+    console.error("      ALLOW 前缀匹配不上，通常是 Windows 路径分隔符或 ROOT 基准不对");
+    process.exit(1);
+  }
+}
 
 /**
  * **没有待迁清单**（spec §8 commit 9）。
@@ -187,7 +212,7 @@ const DISK_CATALOG = join(ROOT, "src/i18n/messages/namespaces/disk.ts");
 }
 
 for (const abs of walk(SRC)) {
-  const rel = relative(ROOT, abs);
+  const rel = relOf(abs);
   if (ALLOW.some((p) => rel === p || rel.startsWith(p))) continue;
   const code = readFileSync(abs, "utf8");
   for (const h of scan(code)) violations.push(`${rel}:${h.line}  ${h.text}`);
