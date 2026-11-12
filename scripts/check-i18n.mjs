@@ -17,8 +17,14 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { fileURLToPath } from "node:url";
 
-const ROOT = new URL("..", import.meta.url).pathname;
+// 必须走 fileURLToPath，不能直接取 URL.pathname：Windows 上 pathname 是
+// `/D:/a/prune/prune/`（带前导斜杠、正斜杠），join 之后变成 `\D:\a\...`，
+// 被当成「当前盘的根目录下有个叫 D: 的文件夹」，于是 readFileSync 报
+// `D:\D:\a\prune\prune\...` ENOENT —— 本地 macOS 永远复现不出来，
+// 只有 Windows CI 打包时才炸（v0.7.0 首次发版的失败原因）。
+const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const SRC = join(ROOT, "src");
 
 /** 允许存在中文的路径前缀（相对仓库根） */
