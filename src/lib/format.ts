@@ -100,6 +100,43 @@ export function formatRelative(tsSec: number | null, locale: Locale = currentLoc
   return formatClock(tsSec, locale);
 }
 
+/**
+ * 相对时间，**锚定快照时刻**而不是墙钟（M19 spec 决策 3）。
+ *
+ * 与 `formatRelative` 的差别就在基准：设备时间线是快照语义——缓存快照重启后
+ * 打开，「活跃 5 分钟前」必须相对 `snapshot.at` 算，否则隔了两天打开会谎报。
+ * 分档不变（档位是交互约定）：刚刚 / n 分钟前 / n 小时前 / n 天前 / ≥30 天直接日期。
+ * `tsSec` 为 0（旧版缓存无记录）→ `—`。
+ */
+export function formatAgo(
+  tsSec: number | null,
+  nowSec: number,
+  locale: Locale = currentLocale(),
+): string {
+  if (!tsSec || nowSec <= 0) return "—";
+  const diff = Math.max(0, nowSec - tsSec);
+  const { t } = i18nFor(locale);
+  if (diff < 60) return t("common.time.justNow");
+  const rtf = relativeFormatters[locale];
+  if (diff < 3600) return rtf.format(-Math.floor(diff / 60), "minute");
+  if (diff < 86_400) return rtf.format(-Math.floor(diff / 3600), "hour");
+  if (diff < 30 * 86_400) return rtf.format(-Math.floor(diff / 86_400), "day");
+  return formatDayClock(tsSec, locale);
+}
+
+/**
+ * 本地日期 + 时钟 `MM-DD HH:mm`（24 小时制）。
+ *
+ * 手工拼而不是 `toLocaleString`：`en-GB` 会给 `09/11`（日/月）这种歧义顺序，
+ * 而 `MM-DD HH:mm` 在两语言下都无歧义，且与详情弹窗次行小字的对齐宽度稳定。
+ */
+export function formatDayClock(tsSec: number | null, _locale: Locale = currentLocale()): string {
+  if (!tsSec) return "—";
+  const d = new Date(tsSec * 1000);
+  const p = (n: number) => String(n).padStart(2, "0");
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+}
+
 /** 速率：保留 1 位小数，0 显示为 0 */
 export function formatRate(perSec: number): string {
   if (!Number.isFinite(perSec) || perSec <= 0) return "0";

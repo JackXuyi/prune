@@ -43,6 +43,12 @@ export interface LanDevice {
   isSelf: boolean;
   /** 随机化 MAC：本机实测约一半设备都是（spec §9），UI 加 `· 随机` 小标 */
   randomizedMac: boolean;
+  /** 首次发现时间（Unix 秒；来自跨轮次历史层，旧版缓存 = 0 显示 `—`）。M19 spec §3.1。 */
+  firstSeen: number;
+  /** 最后活跃时间（本轮仍在网 → = 本轮 at；离线遗留 = 上次在线轮次；旧缓存 = 0） */
+  lastSeen: number;
+  /** 新设备标识（Rust 侧算好：`snapshot.at - firstSeen <= 600s` 且非首扫基线） */
+  isNew: boolean;
 }
 
 export interface LanSnapshot {

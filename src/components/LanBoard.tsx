@@ -39,10 +39,18 @@ export function LanBoard() {
     const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
     return (
       <div className="mt-6">
-        <p className="text-[11.5px] text-ink-dim">{phaseText(progress, locale)}</p>
-        <div className="mt-2 h-1 w-full max-w-[420px] overflow-hidden rounded-full bg-white/[0.06]">
+        {/* spec §4.5：进度必须可见——阶段文案在左、{done}/{total} 在右，绝不只转圈 */}
+        <div className="flex w-full max-w-[420px] items-center justify-between">
+          <p className="text-[11.5px] text-ink-dim">{phaseText(progress, locale)}</p>
+          {progress ? (
+            <p className="font-mono text-[9.5px] tabular-nums text-ink-faint">
+              {progress.done}/{progress.total}
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-2 h-[3px] w-full max-w-[420px] overflow-hidden rounded-full bg-chip">
           <div
-            className="h-full rounded-full bg-accent/70 transition-[width] duration-300"
+            className="h-full rounded-full bg-domain-net transition-[width] duration-300"
             style={{ width: `${pct}%` }}
           />
         </div>
@@ -144,7 +152,7 @@ export function LanBoard() {
               type="button"
               onClick={() => void scan()}
               title={t("lan.rescanTitle")}
-              className="flex shrink-0 items-center gap-1 rounded-full bg-white/[0.05] px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
+              className="flex shrink-0 items-center gap-1 rounded-full bg-chip px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
             >
               <RefreshIcon size={10} /> {t("lan.rescan")}
             </button>
@@ -181,7 +189,7 @@ export function LanBoard() {
           </div>
 
           {randomMacCount > 0 ? (
-            <p className="mt-2 rounded-lg bg-white/[0.03] px-3 py-2 text-[10.5px] leading-relaxed text-ink-dim">
+            <p className="mt-2 rounded-lg bg-chip px-3 py-2 text-[10.5px] leading-relaxed text-ink-dim">
               {t("lan.randomMacNote", { n: randomMacCount })}
             </p>
           ) : null}
@@ -191,6 +199,7 @@ export function LanBoard() {
               <DeviceSection
                 title={t("lan.section.inbound")}
                 devices={connectedMe}
+                at={snapshot.at}
                 onSelect={setSelected}
               />
             ) : (
@@ -204,11 +213,13 @@ export function LanBoard() {
               <DeviceSection
                 title={t("lan.section.pinned")}
                 devices={pinned}
+                at={snapshot.at}
                 onSelect={setSelected}
               />
               <DeviceSection
                 title={t("lan.section.online")}
                 devices={onlineOthers}
+                at={snapshot.at}
                 onSelect={setSelected}
               />
               {filter === "online" && onlineCount === 0 ? (
@@ -244,6 +255,7 @@ export function LanBoard() {
                         <LanDeviceCard
                           key={d.ip}
                           d={d}
+                          at={snapshot.at}
                           dimmed
                           onSelect={setSelected}
                         />
@@ -266,7 +278,11 @@ export function LanBoard() {
       )}
 
       {selected ? (
-        <LanDeviceDetailModal d={selected} onClose={() => setSelected(null)} />
+        <LanDeviceDetailModal
+          d={selected}
+          at={snapshot.at}
+          onClose={() => setSelected(null)}
+        />
       ) : null}
     </div>
   );
@@ -296,7 +312,7 @@ function FilterChip({
           ? "bg-accent/[0.14] font-medium text-accent"
           : dim
             ? "text-ink-faint/60 hover:text-ink-dim"
-            : "text-ink-faint hover:bg-white/[0.05] hover:text-ink-dim"
+            : "text-ink-faint hover:bg-chip hover:text-ink-dim"
       }`}
     >
       {label} <span className="tabular-nums">{count}</span>
@@ -318,7 +334,7 @@ function MetricCard({
   tone?: "warn";
 }) {
   return (
-    <div className="rounded-[10px] border border-hairline-soft bg-white/[0.03] px-3 py-2">
+    <div className="rounded-[10px] border border-hairline-soft bg-chip px-3 py-2">
       <div className="text-[10px] text-ink-faint">{label}</div>
       <div className="mt-1 flex items-baseline gap-1">
         <span
@@ -342,10 +358,13 @@ function MetricCard({
 function DeviceSection({
   title,
   devices,
+  at,
   onSelect,
 }: {
   title: string;
   devices: LanDevice[];
+  /** 快照时刻（Unix 秒）：透传给卡片与详情弹窗做相对时间锚（M19 spec §6.1） */
+  at: number;
   onSelect: (d: LanDevice) => void;
 }) {
   if (devices.length === 0) return null;
@@ -359,7 +378,7 @@ function DeviceSection({
         style={{ gridTemplateColumns: "repeat(auto-fill, minmax(330px, 1fr))" }}
       >
         {devices.map((d) => (
-          <LanDeviceCard key={d.ip} d={d} onSelect={onSelect} />
+          <LanDeviceCard key={d.ip} d={d} at={at} onSelect={onSelect} />
         ))}
       </div>
     </div>

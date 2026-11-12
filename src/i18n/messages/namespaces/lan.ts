@@ -62,7 +62,7 @@ const zh = {
   },
 
   randomMacNote:
-    "{n} 台设备使用随机化 MAC——无法识别厂商，跨轮次聚合以 IP 为准。",
+    "{n} 台设备使用随机化 MAC——无法识别厂商，跨轮次聚合以 IP + 网段为准。",
 
   section: {
     inbound: "连了我的设备",
@@ -76,7 +76,7 @@ const zh = {
   },
 
   footer:
-    "{devices} 台设备 · 扫描 {seconds} s · {clock} · 本轮快照语义：跨轮次的「同一台设备」以 IP 为准（随机 MAC 换网就换，聚合键不做 MAC 承诺）",
+    "{devices} 台设备 · 扫描 {seconds} s · {clock} · 本轮快照语义：跨轮次的「同一台设备」以稳定 MAC 优先；随机 MAC / 无 MAC 以 IP + 网段为准",
 
   /** 设备卡 / 详情弹窗共用的身份与状态词 */
   card: {
@@ -89,6 +89,8 @@ const zh = {
     openTitle: "点击查看设备详情",
     badgeSelf: "自己",
     badgeUplink: "上联",
+    badgeNew: "新",
+    lastActive: "活跃 {ago}",
     inbound: "连了我 {ports}",
     detailAria: "设备详情：{title}",
   },
@@ -107,11 +109,14 @@ const zh = {
     servicesNone: "未发现",
     inbound: "入站连接",
     inboundNone: "无",
+    firstSeen: "加入时间",
+    lastSeen: "最后活跃",
+    timeMissing: "—（旧版快照无记录）",
   },
 
   modal: {
     randomMacNote:
-      "随机化 MAC：设备为防跟踪轮换硬件地址，厂商识别与跨轮次聚合（以 IP 为准）均受影响。",
+      "随机化 MAC：设备为防跟踪轮换硬件地址，厂商识别与跨轮次聚合（以 IP + 网段为准）均受影响。",
     footer: "Esc 或点空白处关闭 · 数据来自本轮扫描快照",
     close: "关闭",
     copy: "复制",
@@ -187,7 +192,7 @@ const en: MessageTree<typeof zh> = {
   },
 
   randomMacNote:
-    "{n} devices use a randomized MAC — the vendor can't be identified, so rounds are aggregated by IP.",
+    "{n} devices use a randomized MAC — the vendor can't be identified, so rounds are aggregated by IP + subnet.",
 
   section: {
     inbound: "Devices connected to me",
@@ -201,7 +206,7 @@ const en: MessageTree<typeof zh> = {
   },
 
   footer:
-    "{devices} devices · scanned in {seconds} s · {clock} · Snapshot semantics: the same device across rounds is identified by IP (a randomized MAC changes with the network, so the aggregation key makes no MAC promise)",
+    "{devices} devices · scanned in {seconds} s · {clock} · Snapshot semantics: the same device across rounds is keyed on a stable MAC first; randomized or missing MACs fall back to IP + subnet",
 
   card: {
     self: "This machine",
@@ -213,6 +218,8 @@ const en: MessageTree<typeof zh> = {
     openTitle: "Click for device details",
     badgeSelf: "this one",
     badgeUplink: "uplink",
+    badgeNew: "new",
+    lastActive: "Active {ago}",
     inbound: "Connected to me {ports}",
     detailAria: "Device details: {title}",
   },
@@ -231,11 +238,14 @@ const en: MessageTree<typeof zh> = {
     servicesNone: "None",
     inbound: "Inbound connections",
     inboundNone: "None",
+    firstSeen: "First seen",
+    lastSeen: "Last active",
+    timeMissing: "— (not in this snapshot)",
   },
 
   modal: {
     randomMacNote:
-      "Randomized MAC: the device rotates its hardware address to avoid tracking, which affects both vendor identification and cross-round aggregation (which keys on IP).",
+      "Randomized MAC: the device rotates its hardware address to avoid tracking, which affects both vendor identification and cross-round aggregation (which keys on IP + subnet).",
     footer: "Press Esc or click outside to close · data comes from this round's snapshot",
     close: "Close",
     copy: "Copy",

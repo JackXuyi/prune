@@ -2,16 +2,18 @@ import { useEffect, useState } from "react";
 
 import { CopyIcon, DeviceKindIcon } from "./icons";
 import { writeClipboard } from "../lib/clipboard";
+import { formatAgo, formatDayClock } from "../lib/format";
 import { useI18n } from "../i18n/store";
 import { kindLabel, type LanDevice } from "../types/lan";
 
 /**
- * 局域网设备卡（m18-lan-cards-redesign-plan.md §4）：
+ * 局域网设备卡（m18-lan-cards-redesign-plan.md §4 / m19-lan-device-times-spec.md §6）：
  * 图标 tile（域色 14% 底）+ 状态点 + IP mono 徽标 + 「连了我」warn 徽标
- * + services 标签；点击打开设备详情弹窗。
+ * + services 标签 + 「活跃 x 前」时间行；点击打开设备详情弹窗。
  *
  * 展示原则：hostname 命中 → 设备名为主标题；查不到 → 回退类型名，不编造。
  * 「连了我」命中时卡片加 warn 描边，安全信号前置。
+ * 时间线：卡片只显示「活跃 x 前」，加入时间只进详情弹窗（M19 已确认决策）。
  */
 /**
  * 设备身份的展示三件套（主标题 / 副标题 / 状态）。
@@ -39,16 +41,20 @@ function useIdentity(d: LanDevice) {
 
 export function LanDeviceCard({
   d,
+  at,
   dimmed = false,
   onSelect,
 }: {
   d: LanDevice;
+  /** 快照时刻（Unix 秒）：相对时间锚定它而非墙钟（M19 spec 决策 3） */
+  at: number;
   dimmed?: boolean;
   onSelect: (d: LanDevice) => void;
 }) {
-  const { t, title, subtitle, state, dot } = useIdentity(d);
+  const { t, locale, title, subtitle, state, dot } = useIdentity(d);
   const { tile, icon } = tileTone(d);
   const hasInbound = d.inbound.length > 0;
+  const hasTimeline = d.lastSeen > 0 && at > 0;
 
   return (
     <div
@@ -79,6 +85,11 @@ export function LanDeviceCard({
             {d.isGateway ? (
               <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] text-accent">
                 {t("lan.card.badgeUplink")}
+              </span>
+            ) : null}
+            {d.isNew ? (
+              <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] font-medium text-accent">
+                {t("lan.card.badgeNew")}
               </span>
             ) : null}
           </span>
@@ -121,6 +132,13 @@ export function LanDeviceCard({
           </span>
         ) : null}
       </div>
+
+      {/* 时间行：只显示「活跃 x 前」，锚定快照时刻；旧缓存（lastSeen = 0）不渲染 */}
+      {hasTimeline ? (
+        <div className="mt-1.5 text-[10px] leading-tight text-ink-faint">
+          {t("lan.card.lastActive", { ago: formatAgo(d.lastSeen, at, locale) })}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -150,9 +168,12 @@ function tileTone(d: LanDevice): { tile: string; icon: string } {
 /** 设备详情弹窗：点击卡片打开，Esc / 点遮罩 / 关闭按钮退出 */
 export function LanDeviceDetailModal({
   d,
+  at,
   onClose,
 }: {
   d: LanDevice;
+  /** 快照时刻（Unix 秒）：相对时间锚定它而非墙钟（M19 spec 决策 3） */
+  at: number;
   onClose: () => void;
 }) {
   const { t, locale, hostname, title, subtitle, state, dot } = useIdentity(d);
@@ -275,6 +296,31 @@ export function LanDeviceDetailModal({
             </DetailRow>
             <DetailRow label={t("lan.field.kind")}>
               <span className="text-ink">{kindLabel(d.kind, locale)}</span>
+            </DetailRow>
+            {/* 时间线（M19 spec §6.2）：相对 + 绝对双行；旧缓存（0）显示 timeMissing */}
+            <DetailRow label={t("lan.field.firstSeen")}>
+              {d.firstSeen > 0 && at > 0 ? (
+                <span className="text-ink">
+                  {formatAgo(d.firstSeen, at, locale)}
+                  <span className="mt-0.5 block text-[9.5px] text-ink-faint">
+                    {formatDayClock(d.firstSeen, locale)}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-ink-faint">{t("lan.field.timeMissing")}</span>
+              )}
+            </DetailRow>
+            <DetailRow label={t("lan.field.lastSeen")}>
+              {d.lastSeen > 0 && at > 0 ? (
+                <span className="text-ink">
+                  {formatAgo(d.lastSeen, at, locale)}
+                  <span className="mt-0.5 block text-[9.5px] text-ink-faint">
+                    {formatDayClock(d.lastSeen, locale)}
+                  </span>
+                </span>
+              ) : (
+                <span className="text-ink-faint">{t("lan.field.timeMissing")}</span>
+              )}
             </DetailRow>
             <DetailRow label={t("lan.field.hostname")}>
               <span
