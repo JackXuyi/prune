@@ -44,12 +44,15 @@ export function StackBar({
       `${s.label} ${Math.round((s.value / sum) * 100)}%${s.muted ? t("chart.stack.mutedSuffix") : ""}`,
     )
     .join(t("chart.stack.join"));
+  const visible = segments.filter((s) => s.value > 0 && (s.value / sum) * 100 >= 1.2);
   return (
     <div
       role="img"
       aria-label={ariaLabel ?? legend}
       className={`flex w-full overflow-hidden rounded-full bg-chip ${className}`}
-      style={{ height }}
+      // spec §11.2：分段之间留 2px 间隙（border 会在 3px 高度上吃掉 1px）；
+      // 只有一段时不加，避免左右各空白一截
+      style={{ height, gap: visible.length > 1 ? 2 : 0 }}
     >
       {segments.map((seg) => {
         if (!(seg.value > 0)) return null;
