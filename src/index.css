@@ -125,7 +125,15 @@ body {
   height: 8px;
 }
 
-/* __A11Y_FOCUS_BLOCK__ */
+/* P3 a11y：全局键盘焦点环（WCAG 2.4.7）。
+   放在 @layer base：文本输入框等用 focus:border-accent 做指示的控件，
+   可用工具类 focus:outline-none 覆盖它，避免「环 + 描边」双重指示。 */
+@layer base {
+  :focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
+    outline-offset: 1px;
+  }
+}
 
 *::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--color-ink-faint) 35%, transparent);
