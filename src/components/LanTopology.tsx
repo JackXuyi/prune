@@ -153,11 +153,20 @@ function planLayout(
     }
   }
   if (!fitted) {
-    // 极端密度：按最紧一档硬排（宁可挤，也不能把两个节点算到同一格）
-    rows = ROWS_MAX;
+    // 极端密度（>40 台）：宽度是硬约束，行数不设上限。
+    // 早先这里按「10 台/列」硬排，列数由台数反推——画布宽度装不下这么多列，
+    // 最外侧两列的 IP 直接被画布边缘裁掉（50 台实测：最右列只剩 `192.168.1…`）。
+    // 现在反过来算：列数取「标签仍落在画布内」的最大值，装不下就加高画布（页面可滚），
+    // 宁可画布变长，也不能把 IP 裁成省略号——IP 是这个视图唯一的身份信息。
     colW = COL_W_LIST[COL_W_LIST.length - 1];
-    colsR = Math.max(1, Math.ceil(rest.length / rows));
-    colsL = mine.length > 0 ? Math.ceil(mine.length / rows) : 0;
+    /** 给定起点 x 的偏移，最多能排几列（c 列时的最右标签右沿 ≤ half） */
+    const maxColsByWidth = (base: number) =>
+      Math.max(1, Math.floor((half - base - LABEL_SPAN) / colW + 0.5));
+    colsR = Math.min(Math.max(1, rest.length), maxColsByWidth(SPINE_GAP));
+    colsL =
+      mine.length > 0
+        ? Math.min(mine.length, maxColsByWidth((gw && me ? SELF_DIST : 0) + SPINE_GAP))
+        : 0;
   }
 
   const rightStacks = splitStacks(rest, colsR);
