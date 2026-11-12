@@ -17,23 +17,25 @@ export function CellBar({
   if (!show) return <div className="h-[3px] w-full" aria-hidden />;
 
   const width = Math.max(0, Math.min(1, ratio)) * 100;
-  const color =
+  // 颜色一律走 token：v5 之前这里是 rgba 硬编码，浅色主题下条会糊成一片灰
+  const token =
     tone === "accent"
-      ? "rgba(52, 211, 153, 0.75)"
+      ? "var(--color-accent)"
       : tone === "warn"
-        ? "rgba(245, 183, 74, 0.8)"
+        ? "var(--color-warn)"
         : tone === "danger"
-          ? "rgba(248, 113, 113, 0.85)"
+          ? "var(--color-danger)"
           : tone === "mem"
-            ? "rgba(106, 169, 255, 0.8)"
+            ? "var(--color-info)"
             : tone === "cpu"
-              ? "rgba(167, 139, 250, 0.8)"
+              ? "var(--color-domain-cpu)"
               : tone === "net"
-                ? "rgba(34, 211, 238, 0.8)"
-                : "rgba(255, 255, 255, 0.22)";
+                ? "var(--color-domain-net)"
+                : "var(--color-ink-faint)";
+  const color = `color-mix(in srgb, ${token} ${tone === "neutral" ? 45 : 80}%, transparent)`;
 
   return (
-    <div className="h-[3px] w-full overflow-hidden rounded-full bg-white/[0.06]" aria-hidden>
+    <div className="h-[3px] w-full overflow-hidden rounded-full bg-chip" aria-hidden>
       <div
         className="h-full rounded-full transition-[width] duration-500"
         style={{ width: `${width}%`, background: color }}

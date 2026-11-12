@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import { CellBar } from "./CellBar";
+import { EmptyState } from "./EmptyArt";
+import { Btn } from "./primitives";
 import { AppIcon } from "./AppIcon";
 import { ChevronRightIcon } from "./icons";
 import { useI18n } from "../i18n/store";
@@ -62,6 +64,12 @@ interface Row {
   exposed: number;
   conns: ConnStats | null;
   net: Speed | null;
+  /**
+   * 搜索用文本：应用名 + 成员进程名 + 可执行路径 + 端口进程名。
+   * v5 纠偏：v4 只匹配家族名，搜 `chrome` 在中文界面里永远没结果 ——
+   * 用户记得住进程名，记不住我们给的分类名。
+   */
+  hay: string;
 }
 
 /** 行装配：家族 × 成员 × 端口 × 连接 × 网速。主窗口网格与面板卡片共用同一口径。 */
@@ -88,6 +96,14 @@ function buildRows(
         )
       : [];
     const speed = net && net.status === "ok" ? netSpeedOfPids(net, pids) : null;
+    const hay = [
+      f.name,
+      ...members.map((m) => m.name),
+      ...members.map((m) => m.exe ?? ""),
+      ...watched.flatMap((e) => e.listeners.map((b) => b.comm ?? "")),
+    ]
+      .join(" ")
+      .toLowerCase();
     return {
       family: f,
       members,
@@ -101,6 +117,7 @@ function buildRows(
       exposed: watched.filter((e) => e.exposure === "any").length,
       conns: ports ? connsOfPids(ports.connsByPid, pids) : null,
       net: speed,
+      hay,
     };
   });
 }
@@ -233,7 +250,7 @@ export function AppResourceBoard({
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
-    const base = q ? rows.filter((r) => r.family.name.toLowerCase().includes(q)) : rows;
+    const base = q ? rows.filter((r) => r.hay.includes(q)) : rows;
     return [...base].sort((a, b) => {
       const va = sortValue(sortKey, a);
       const vb = sortValue(sortKey, b);
@@ -429,7 +446,7 @@ export function AppResourceBoard({
       ) : null}
 
       <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-        <div className="grid grid-cols-2 gap-3">
+        <div className="grid grid-cols-2 gap-2.5">
           {visible.map((r) => (
             <ResourceCard
               key={r.family.name}
@@ -461,10 +478,31 @@ export function AppResourceBoard({
           </button>
         ) : null}
 
+        {/* 空态必须能分辨「没搜到」和「没数据」：前者给清除搜索，后者说明权限 */}
         {filtered.length === 0 ? (
-          <p className="px-1 py-6 text-[11px] text-ink-faint">
-            {t("resources.noMatch", { query })}
-          </p>
+          <EmptyState
+            art="search"
+            title={t("resources.noMatchTitle", { query })}
+            description={t("resources.noMatchNote")}
+            action={
+              <Btn
+                variant="ghost"
+                onClick={() => {
+                  setQuery("");
+                  searchRef.current?.focus();
+                }}
+              >
+                {t("resources.clearSearch")}
+              </Btn>
+            }
+          />
+        ) : null}
+        {rows.length === 0 ? (
+          <EmptyState
+            art="no-record"
+            title={t("resources.noProcTitle")}
+            description={t("resources.noProcNote")}
+          />
         ) : null}
       </div>
     </div>
@@ -526,7 +564,7 @@ function ResourceCard({
       onClick={onOpen}
       disabled={!onOpen}
       aria-label={onOpen ? t("resources.ariaOpen", { name: family.name }) : undefined}
-      className={`group col-span-1 flex w-full flex-col rounded-xl border border-hairline-soft bg-white/[0.02] text-left transition-colors hover:border-hairline hover:bg-white/[0.035] disabled:cursor-default disabled:hover:border-hairline-soft disabled:hover:bg-white/[0.02] ${
+      className={`group col-span-1 flex w-full flex-col rounded-card border border-hairline-soft bg-surface-raised text-left transition-[border-color,transform] duration-150 hover:-translate-y-px hover:border-hairline disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-hairline-soft ${
         dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"
       }`}
     >
@@ -591,11 +629,11 @@ function ResourceCard({
         </div>
         <ChevronRightIcon
           size={12}
-          className="mt-1 shrink-0 text-ink-faint transition-transform group-hover:translate-x-0.5 group-hover:text-ink-dim"
+          className="mt-1 shrink-0 text-ink-faint opacity-0 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100"
         />
       </div>
 
-      <div className={dense ? "mt-1 w-full space-y-[3px]" : "mt-1.5 w-full space-y-[5px]"}>
+      <div className={dense ? "mt-1 w-full space-y-[3px]" : "mt-1 w-full space-y-[2px]"}>
           {/* UI v4 排行榜条：CPU 紫 + 内存蓝双 mini-bar，域色即语义（§3.2） */}
           <MetricRow
             dense={dense}
@@ -677,8 +715,8 @@ function MetricRow({
     <div
       className={
         dense
-          ? "grid grid-cols-[24px_minmax(0,1fr)_84px] items-center gap-1.5"
-          : "grid grid-cols-[30px_minmax(0,1fr)_92px] items-center gap-2"
+          ? "grid grid-cols-[24px_minmax(0,1fr)_78px] items-center gap-1.5"
+          : "grid grid-cols-[34px_minmax(0,1fr)_minmax(62px,auto)] items-center gap-2"
       }
       title={hint}
     >

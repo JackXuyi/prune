@@ -25,10 +25,10 @@ export function Reading({
   size = "lg",
 }: {
   readout: Readout;
-  size?: "lg" | "sm";
+  size?: "lg" | "md" | "sm";
 }) {
-  const valueCls = size === "lg" ? "text-[24px]" : "text-[13.5px]";
-  const unitCls = size === "lg" ? "text-[11px]" : "text-[10px]";
+  const valueCls = size === "lg" ? "text-[24px]" : size === "md" ? "text-[19px]" : "text-[13.5px]";
+  const unitCls = size === "lg" ? "text-[11px]" : size === "md" ? "text-[10px]" : "text-[10px]";
   return (
     <span className="flex items-baseline gap-1">
       <span className={`font-mono ${valueCls} leading-none tabular-nums ${toneText(readout.tone)}`}>

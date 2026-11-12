@@ -41,28 +41,25 @@ export function NetDirectionReading({ readout }: { readout: NetDirectionReadout 
 
   return (
     <div title={tooltip}>
-      <div className="flex items-baseline gap-1.5">
-        <span className={`text-[13px] leading-none ${toneText}`}>{arrow}</span>
-        <span className={`font-mono text-[24px] leading-none tabular-nums ${toneText}`}>
+      {/* 96 px 卡内：19 px 读数 + 13 px 走势 + 一行脚注。数值仍是同一份 readout，
+          只是比 v4 的 24 px 小一档 —— 六张卡必须等高，不能为网络单独撑高。 */}
+      <div className="flex items-baseline gap-1">
+        <span className={`text-[11px] leading-none ${toneText}`}>{arrow}</span>
+        <span className={`font-mono text-[19px] leading-none tabular-nums ${toneText}`}>
           {readout.main}
         </span>
-        <span className="text-[11px] text-ink-faint">{readout.unit}</span>
+        <span className="text-[10px] text-ink-faint">{readout.unit}</span>
       </div>
-      <div className="mt-1 h-[26px]">
+      <div className="mt-1 h-[13px]">
         {readout.series.length >= 2 ? (
-          <Sparkline
-            values={readout.series}
-            height={26}
-            tone={down ? "accent" : "info"}
-            baselineZero
-          />
+          <Sparkline values={readout.series} height={13} tone={down ? "accent" : "info"} baselineZero />
         ) : (
-          <div className="flex h-[26px] items-center text-[9.5px] text-ink-faint/70">
-            {t("stats.net.trendWarmup")}
+          <div className="flex h-[13px] items-center text-[9px] text-ink-faint/70">
+            {t("stats.net.trendWarmupShort")}
           </div>
         )}
       </div>
-      <div className="mt-1 truncate text-[10px] leading-none text-ink-faint" dir="ltr">
+      <div className="mt-1 truncate text-[9.5px] leading-none text-ink-faint" dir="ltr">
         {readout.todayText != null
           ? t("stats.net.m5Today", { value: readout.avgText, today: readout.todayText })
           : t("stats.net.m5", { value: readout.avgText })}

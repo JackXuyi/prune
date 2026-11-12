@@ -16,6 +16,20 @@ const zh = {
     reclaimable: "可回收",
     breakdown: "可回收空间构成",
     toStorage: "→ 存储",
+    scope: "4 级构成",
+    scopeTip: "L1 零后悔 · L2 可再生 · L3 需判断 · L4 只给命令、不计入总量",
+    l4Note: "L4 为斜纹段，不计入总量",
+  },
+  unscanned: {
+    title: "还没扫描过这台 Mac",
+    note: "CPU / 内存 / 网络是实时采样，不用扫描；可回收空间与剪除成绩单要等第一次扫描。首次约 12 秒，只读，不动任何文件。",
+    scope: "范围：包管理器缓存 · 项目目录，不扫 /System",
+  },
+  nba: {
+    badge: "下一步最佳操作",
+    title: "跨平台二进制占用 {size}，这台 Mac 永远加载不了",
+    note: "{n} 个缓存条目里有 linux / win32 / android 二进制，本机可用仅 {native}",
+    action: "去存储",
   },
   tier: {
     l1: "L1 跨平台二进制",
@@ -42,6 +56,7 @@ const zh = {
   swap: {
     label: "swap {used} / {total}",
     aria: "swap 已用 {pct}，阈值刻度 75 与 90",
+    footnote: "swap {used} / {total} · {pct}",
   },
   cpuTrend: { label: "近 10 min · 10 s 一个点", aria: "CPU 近 10 分钟走势" },
   portsDotsAria: "监听端口点阵：共 {n} 个",
@@ -102,6 +117,20 @@ const en: MessageTree<typeof zh> = {
     reclaimable: "Reclaimable",
     breakdown: "What's reclaimable",
     toStorage: "→ Storage",
+    scope: "4 tiers",
+    scopeTip: "L1 never regret · L2 regenerable · L3 needs judgment · L4 commands only, excluded",
+    l4Note: "L4 is the hatched segment and is not counted in the total",
+  },
+  unscanned: {
+    title: "This Mac hasn't been scanned yet",
+    note: "CPU, memory and network are sampled live — no scan needed. Reclaimable space and the cut report wait for the first scan. About 12 s, read-only, nothing is touched.",
+    scope: "Scope: package-manager caches · project folders, /System excluded",
+  },
+  nba: {
+    badge: "Next best action",
+    title: "{size} of cross-platform binaries — this Mac can never load them",
+    note: "{n} cache entries include linux / win32 / android builds; only {native} is usable here",
+    action: "Go to Storage",
   },
   tier: {
     l1: "L1 cross-platform binaries",
@@ -128,6 +157,7 @@ const en: MessageTree<typeof zh> = {
   swap: {
     label: "swap {used} / {total}",
     aria: "swap used {pct}, thresholds at 75 and 90",
+    footnote: "swap {used} / {total} · {pct}",
   },
   cpuTrend: { label: "Last 10 min · one point per 10 s", aria: "CPU trend, last 10 minutes" },
   portsDotsAria: "Listening port matrix: {n} total",

@@ -376,6 +376,12 @@ export function devDiskReport(): DiskReport {
   return {
     scannedAt: Math.floor(Date.now() / 1000) - 42,
     scanElapsedMs: 17560,
+    // 卷容量：浏览器预览也要有分母，否则「可回收 51.5 GB」是悬空的
+    volume: {
+      totalBytes: 460 * GB,
+      availableBytes: 234.5 * GB,
+      userAvailableBytes: 218.4 * GB,
+    },
     groups: [
       yarn,
       devGroup("npm", "npm 缓存", "l2", 8.53 * GB, 3),
@@ -802,5 +808,24 @@ export function devSpeedResult(): SpeedResult {
     rpm: 320.0,
     rpmLevel: "Medium",
     baseRttMs: 28.9,
+  };
+}
+
+/**
+ * 剪除成绩单 fixture（M21）：浏览器预览里 `cut_report` 命令不存在，
+ * 没有这条数据整块卡片就是空白 —— 设计稿上最有情绪的「我到底省了多少」
+ * 反而永远看不到。只给 DEV 用，生产构建在非 Tauri 环境仍然诚实报错。
+ */
+export function devCutReport() {
+  const GB = 1024 ** 3;
+  return {
+    totalBytes: 128.6 * GB,
+    totalItems: 43,
+    firstTs: Math.floor(Date.now() / 1000) - 86_400 * 240,
+    top: [
+      { label: "Yarn 跨平台二进制", bytes: 26.1 * GB, count: 12 },
+      { label: "pnpm store 陈旧版本", bytes: 18.4 * GB, count: 9 },
+      { label: "项目依赖 node_modules", bytes: 9.4 * GB, count: 5 },
+    ],
   };
 }
