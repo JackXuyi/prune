@@ -3,6 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../i18n/store";
 import type { I18n } from "../i18n";
 import { formatBytes, formatPercent, formatRelative } from "../lib/format";
+import { useDialogA11y } from "../lib/dialogA11y";
 import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { StackBar } from "./charts/StackBar";
@@ -737,6 +738,8 @@ function CleanDrawer({
   /** 抽屉内逐条勾选：默认全选，取消的条目不会传给后端 */
   const [drop, setDrop] = useState<Set<string>>(new Set());
   const [confirmed, setConfirmed] = useState(false);
+  /** 模态 a11y（§11.2）：焦点陷阱 + 关闭后焦点回到触发元素 */
+  const dialogRef = useDialogA11y<HTMLDivElement>(open);
 
   // 每次拿到新清单都重置勾选与二次确认（旧状态套新清单 = 静默漏删/多删）
   const items = preview?.items;
@@ -770,7 +773,13 @@ function CleanDrawer({
         className="prune-fade-in absolute inset-0 bg-black/45 backdrop-blur-[2px]"
         onClick={() => (busy ? undefined : onClose())}
       />
-      <div className="prune-drawer-in relative flex max-h-[70%] flex-col rounded-t-2xl border-t border-hairline bg-surface-overlay shadow-[0_-18px_44px_rgba(0,0,0,0.45)]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={t("disk.drawer.title")}
+        className="prune-drawer-in relative flex max-h-[70%] flex-col rounded-t-2xl border-t border-hairline bg-surface-overlay shadow-[0_-18px_44px_rgba(0,0,0,0.45)]"
+      >
         <div className="flex items-start gap-3 px-5 pt-3 pb-2">
           <div className="min-w-0 flex-1">
             <div className="flex items-baseline gap-2">

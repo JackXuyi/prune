@@ -23,6 +23,7 @@ import type { I18n } from "../i18n";
 import { useI18n } from "../i18n/store";
 import type { NoParamKey } from "../i18n/types";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
+import { useDialogA11y } from "../lib/dialogA11y";
 import { isTauri, killProcess } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
@@ -103,6 +104,8 @@ export function MainWindow() {
   const [backTo, setBackTo] = useState<MainTab | null>(null);
   /** 设置弹层（齿轮）开关 */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /** 模态 a11y（§11.2）：焦点陷阱 + 关闭后焦点回到触发元素 */
+  const settingsDialogRef = useDialogA11y<HTMLDivElement>(settingsOpen);
   /**
    * 已「忽略」的错误文案。存字符串而不是布尔值：
    * 同一个错误忽略一次就够，换成新错误要立刻重新出现 —— 比存 boolean 少一个副作用。
@@ -556,6 +559,10 @@ export function MainWindow() {
             }}
           >
             <div
+              ref={settingsDialogRef}
+              role="dialog"
+              aria-modal="true"
+              aria-label={t("settings.title")}
               className="absolute left-1/2 top-1/2 max-h-[calc(100vh-64px)] w-[520px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[14px] border border-hairline bg-overlay shadow-2xl shadow-black/50"
               onClick={(e) => e.stopPropagation()}
             >

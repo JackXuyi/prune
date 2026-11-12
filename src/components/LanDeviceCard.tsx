@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 
 import { CopyIcon, DeviceKindIcon } from "./icons";
 import { writeClipboard } from "../lib/clipboard";
+import { useDialogA11y } from "../lib/dialogA11y";
 import { formatAgo, formatDayClock } from "../lib/format";
 import { useI18n } from "../i18n/store";
 import { kindLabel, type LanDevice } from "../types/lan";
@@ -178,6 +179,8 @@ export function LanDeviceDetailModal({
 }) {
   const { t, locale, hostname, title, subtitle, state, dot } = useIdentity(d);
   const [copied, setCopied] = useState<"ip" | "mac" | null>(null);
+  /** 模态 a11y（§11.2）：焦点陷阱 + 关闭后焦点回到触发元素 */
+  const dialogRef = useDialogA11y<HTMLDivElement>(true);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -214,6 +217,7 @@ export function LanDeviceDetailModal({
     >
       <div className="fixed inset-0 z-50 flex items-center justify-center p-6">
         <div
+          ref={dialogRef}
           role="dialog"
           aria-label={t("lan.card.detailAria", { title })}
           onClick={(e) => e.stopPropagation()}
