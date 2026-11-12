@@ -271,7 +271,7 @@ type BtnSize = "sm" | "md";
 const btnVariant: Record<BtnVariant, string> = {
   primary: "bg-accent text-accent-ink hover:brightness-105",
   ghost: "border border-hairline bg-chip text-ink-dim hover:border-ink-faint hover:text-ink",
-  danger: "bg-danger text-white hover:brightness-105",
+  danger: "bg-danger text-danger-ink hover:brightness-105",
   text: "text-ink-dim hover:bg-chip-hover hover:text-ink",
 };
 

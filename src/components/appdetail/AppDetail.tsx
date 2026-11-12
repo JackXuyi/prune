@@ -234,7 +234,7 @@ export function AppDetail({
                   type="button"
                   onClick={() => bundlePath && void revealPath(bundlePath)}
                   disabled={!bundlePath}
-                  className="rounded-md border border-hairline bg-white/[0.04] px-2 py-1 text-[10px] text-ink-dim transition-colors hover:text-ink disabled:opacity-40"
+                  className="rounded-md border border-hairline bg-chip px-2 py-1 text-[10px] text-ink-dim transition-colors hover:text-ink disabled:opacity-40"
                 >
                   {t("common.action.revealAndSelect")}
                 </button>
@@ -537,7 +537,7 @@ function TopBar({
       <button
         type="button"
         onClick={onBack}
-        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-accent transition-colors hover:bg-white/[0.06]"
+        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-[11px] text-accent transition-colors hover:bg-chip-hover"
       >
         {t("resources.detail.back")}
       </button>
@@ -548,8 +548,9 @@ function TopBar({
           type="button"
           onClick={onRefresh}
           disabled={busy}
-          className="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink disabled:opacity-50"
+          className="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-50"
           title={t("resources.detail.refreshDiskTip")}
+          aria-label={t("resources.detail.refreshDiskTip")}
         >
           <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
         </button>

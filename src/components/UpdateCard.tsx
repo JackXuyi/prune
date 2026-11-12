@@ -129,7 +129,7 @@ export function UpdateCard() {
           <button
             type="button"
             onClick={() => void install()}
-            className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-white transition-opacity hover:opacity-85"
+            className="shrink-0 rounded-md bg-accent px-2 py-1 text-[10px] font-medium text-accent-ink transition-opacity hover:opacity-85"
           >
             {t("update.installNow")}
           </button>
@@ -154,7 +154,7 @@ export function UpdateCard() {
               </span>
             ) : null}
           </div>
-          <div className="h-1 w-full overflow-hidden rounded-full bg-white/[0.06]">
+          <div className="h-1 w-full overflow-hidden rounded-full bg-chip">
             <div
               className="h-full rounded-full bg-accent transition-[width] duration-300"
               style={{ width: percent != null ? `${percent}%` : "30%" }}

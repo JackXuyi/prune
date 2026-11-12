@@ -60,10 +60,10 @@ export function LanDeviceCard({
     <div
       onClick={() => onSelect(d)}
       title={t("lan.card.openTitle")}
-      className={`cursor-pointer rounded-[10px] border bg-white/[0.03] px-3 py-2.5 transition-colors ${
+      className={`cursor-pointer rounded-[10px] border bg-chip-soft px-3 py-2.5 transition-colors ${
         hasInbound
           ? "border-warn/[0.4] hover:bg-warn/[0.04]"
-          : "border-hairline-soft hover:border-hairline hover:bg-white/[0.05]"
+          : "border-hairline-soft hover:border-hairline hover:bg-chip-hover"
       } ${dimmed ? "opacity-55" : ""}`}
     >
       <div className="flex items-center gap-2.5">
@@ -121,7 +121,7 @@ export function LanDeviceCard({
         {d.services.slice(0, 2).map((s) => (
           <span
             key={s}
-            className="truncate rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-ink-dim"
+            className="truncate rounded-md bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim"
           >
             {s}
           </span>
@@ -161,7 +161,7 @@ function tileTone(d: LanDevice): { tile: string; icon: string } {
     case "iot":
       return { tile: "bg-[#a78bfa]/[0.14]", icon: "text-[#a78bfa]" };
     default:
-      return { tile: "bg-white/[0.05]", icon: "text-ink-dim" };
+      return { tile: "bg-chip", icon: "text-ink-dim" };
   }
 }
 
@@ -335,7 +335,7 @@ export function LanDeviceDetailModal({
                   {d.services.map((s) => (
                     <span
                       key={s}
-                      className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-ink-dim"
+                      className="rounded-md bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim"
                     >
                       {s}
                     </span>
@@ -357,7 +357,7 @@ export function LanDeviceDetailModal({
           </dl>
 
           {d.randomizedMac ? (
-            <p className="mt-3 rounded-lg bg-white/[0.03] px-2.5 py-1.5 text-[10px] leading-relaxed text-ink-faint">
+            <p className="mt-3 rounded-lg bg-chip-soft px-2.5 py-1.5 text-[10px] leading-relaxed text-ink-faint">
               {t("lan.modal.randomMacNote")}
             </p>
           ) : null}
@@ -367,7 +367,7 @@ export function LanDeviceDetailModal({
             <button
               type="button"
               onClick={onClose}
-              className="rounded-full bg-white/[0.06] px-3 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.1] hover:text-ink"
+              className="rounded-full bg-chip px-3 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
             >
               {t("lan.modal.close")}
             </button>
@@ -398,7 +398,7 @@ function CopyBtn({ label, onClick }: { label: string; onClick: () => void }) {
     <button
       type="button"
       onClick={onClick}
-      className="flex shrink-0 items-center gap-1 rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:bg-white/[0.1] hover:text-ink"
+      className="flex shrink-0 items-center gap-1 rounded bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
     >
       <CopyIcon size={10} />
       {label}

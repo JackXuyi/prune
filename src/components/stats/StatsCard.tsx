@@ -80,7 +80,7 @@ export function StatsCard({
 }) {
   const { t } = useI18n();
   const shell =
-    "flex min-h-[140px] flex-col rounded-xl border border-hairline-soft bg-white/[0.02] px-4 py-3.5";
+    "flex min-h-[140px] flex-col rounded-xl border border-hairline-soft bg-chip-soft px-4 py-3.5";
   const content = body ?? (
     <>
       <div className="flex items-baseline justify-between gap-2">
@@ -134,7 +134,7 @@ export function StatsCard({
       type="button"
       onClick={onOpen}
       title={t("stats.readout.openDetail", { title })}
-      className={`group text-left transition-colors hover:border-hairline hover:bg-white/[0.035] ${shell}`}
+      className={`group text-left transition-colors hover:border-hairline hover:bg-chip-hover ${shell}`}
     >
       {inner}
     </button>

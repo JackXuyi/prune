@@ -93,7 +93,7 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   };
 
   return (
-    <section className="mt-4 rounded-xl border border-hairline-soft bg-white/[0.02] p-3.5">
+    <section className="mt-4 rounded-xl border border-hairline-soft bg-chip-soft p-3.5">
       <div className="flex items-baseline justify-between gap-3">
         <h2 className="text-[12px] font-medium text-ink">{t("disk.project.title")}</h2>
         <span className="font-mono text-[11px] tabular-nums text-ink-dim">
@@ -128,7 +128,7 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
                   path: p.depsPath,
                   tip: t("disk.pathMenu.openWithTip"),
                 })}
-                className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
+                className="flex w-full items-center gap-2 rounded-md px-1 py-1.5 text-left transition-colors hover:bg-chip-hover"
               >
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[11.5px] text-ink">{p.name}</span>

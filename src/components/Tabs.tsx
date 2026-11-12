@@ -36,7 +36,7 @@ export function Tabs<T extends string>({
             title={it.hint}
             onClick={() => onChange(it.id)}
             className={`inline-flex items-center gap-1 rounded-md font-medium transition-colors ${pad} ${
-              active ? "bg-white/[0.08] text-ink" : "text-ink-faint hover:text-ink-dim"
+              active ? "bg-chip-hover text-ink" : "text-ink-faint hover:text-ink-dim"
             }`}
           >
             {it.label}

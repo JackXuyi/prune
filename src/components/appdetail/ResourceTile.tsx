@@ -27,7 +27,7 @@ export function ResourceTile({
 }) {
   return (
     <section
-      className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5"
+      className="rounded-xl border border-hairline-soft bg-chip-soft px-3 py-2.5"
       title={hint}
     >
       <div className="flex items-center gap-1.5 text-[9.5px] text-ink-faint">

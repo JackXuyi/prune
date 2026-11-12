@@ -40,7 +40,7 @@ export function TrackProgress({
                     ? `linear-gradient(90deg, ${OK}, color-mix(in srgb, ${OK} 40%, transparent))`
                     : n.state === "fail" && prev?.state === "ok"
                       ? `linear-gradient(90deg, ${OK}, ${FAIL})`
-                      : "rgba(255,255,255,0.08)",
+                      : "var(--color-chip)",
                   marginInline: 6,
                 }}
               />

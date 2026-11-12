@@ -21,7 +21,7 @@ export function RingGauge({
   stroke = 12,
   gapDeg = 2.5,
   empty = false,
-  trackColor = "rgba(255,255,255,0.06)",
+  trackColor = "var(--color-chip)",
   className = "",
   children,
   ariaLabel,

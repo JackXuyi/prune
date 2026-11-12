@@ -71,7 +71,7 @@ export function ProcTable({
   };
 
   return (
-    <section className="rounded-xl border border-hairline-soft bg-white/[0.02]">
+    <section className="rounded-xl border border-hairline-soft bg-chip-soft">
       <div className="flex items-center gap-2 border-b border-hairline-soft px-3 py-2">
         <span className="text-[11px] font-medium text-ink">{t("resources.proc.title")}</span>
         <span className="font-mono text-[10px] tabular-nums text-ink-faint">
@@ -129,7 +129,7 @@ export function ProcTable({
                 e.preventDefault();
                 onKillMenu(p, e.clientX, e.clientY);
               }}
-              className="cursor-pointer border-t border-hairline-soft/60 transition-colors hover:bg-white/[0.04] focus:bg-white/[0.06] focus:outline-none"
+              className="cursor-pointer border-t border-hairline-soft/60 transition-colors hover:bg-chip-hover focus:bg-chip-hover"
               title={`${p.name} · pid ${p.pid}${p.exe ? `\n${p.exe}` : ""}`}
             >
               <td className="truncate px-2 py-[5px] text-ink">{p.name}</td>

@@ -188,7 +188,7 @@ function CaseSection({
             <button
               type="button"
               onClick={() => onOpen(item.pid)}
-              className="w-full rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.05]"
+              className="w-full rounded-md px-1 py-1 text-left transition-colors hover:bg-chip-hover"
             >
               <div className="flex items-center gap-2.5">
                 <AppIcon

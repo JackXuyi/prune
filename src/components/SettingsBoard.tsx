@@ -352,7 +352,7 @@ function Switch({
       }`}
     >
       <span
-        className="absolute top-[3px] h-4 w-4 rounded-full bg-white transition-all"
+        className="absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.3)] transition-all"
         style={{ left: checked ? 20 : 3 }}
       />
     </button>

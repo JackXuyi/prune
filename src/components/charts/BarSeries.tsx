@@ -76,7 +76,7 @@ export function BarSeries({
                   height: 1,
                   borderTop: b.hasData
                     ? `1px solid color-mix(in srgb, ${color} 55%, transparent)`
-                    : "1px dashed rgba(255,255,255,0.16)",
+                    : "1px dashed var(--color-hairline)",
                 }}
               />
             )}

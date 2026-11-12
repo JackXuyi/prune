@@ -48,7 +48,7 @@ export function StackBar({
     <div
       role="img"
       aria-label={ariaLabel ?? legend}
-      className={`flex w-full overflow-hidden rounded-full bg-white/[0.05] ${className}`}
+      className={`flex w-full overflow-hidden rounded-full bg-chip ${className}`}
       style={{ height }}
     >
       {segments.map((seg) => {

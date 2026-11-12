@@ -63,7 +63,7 @@ export function BarList({
             type="button"
             onClick={r.onClick}
             title={r.title}
-            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-white/[0.04]"
+            className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-chip-hover"
           >
             {inner}
           </button>

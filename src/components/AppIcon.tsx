@@ -62,7 +62,7 @@ export function AppIcon({
         background: `linear-gradient(145deg, ${badge.from}, ${badge.to})`,
         // 暗底防止深色图标糊在背景上（inset ring 而非 border，避免撑大盒子）
         boxShadow:
-          "inset 0 0 0 1px rgba(255,255,255,0.10), 0 1px 3px rgba(0,0,0,0.35)",
+          "inset 0 0 0 1px var(--color-hairline), 0 1px 3px rgba(0,0,0,0.35)",
       }}
       title={title}
       aria-hidden

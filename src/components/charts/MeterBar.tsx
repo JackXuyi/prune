@@ -44,7 +44,7 @@ export function MeterBar({
           ? t("chart.meter.ratio", { pct: Math.round(ratio * 100) })
           : t("chart.meter.unavailable"))
       }
-      className={`relative w-full rounded-full bg-white/[0.05] ${className}`}
+      className={`relative w-full rounded-full bg-chip ${className}`}
       style={{ height }}
     >
       {ratio != null ? (

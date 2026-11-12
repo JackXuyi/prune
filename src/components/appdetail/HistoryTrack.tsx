@@ -48,7 +48,7 @@ export function HistoryTrack({
 
   if (!loading && rows.length === 0 && daily.length === 0) {
     return (
-      <section className="rounded-xl border border-hairline-soft bg-white/[0.02] py-4">
+      <section className="rounded-xl border border-hairline-soft bg-chip-soft py-4">
         <EmptyState
           title={t("resources.history.emptyTitle")}
           note={error ? t("resources.history.emptyReadError", { err: error }) : t("resources.history.emptyNote")}
@@ -58,7 +58,7 @@ export function HistoryTrack({
   }
 
   return (
-    <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
+    <section className="rounded-xl border border-hairline-soft bg-chip-soft px-3 py-2.5">
       <div className="flex items-center gap-2 text-[10px] text-ink-dim">
         <span className="text-[11px] font-medium text-ink">{t("resources.history.title")}</span>
         <div className="grow" />

@@ -374,7 +374,7 @@ export function MainWindow() {
             <button
               type="button"
               onClick={() => go(backTo)}
-              className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
+              className="rounded-md bg-chip px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
             >
               {t("nav.backTo", { label: t(TAB_LABEL[backTo]) })}
             </button>
@@ -403,7 +403,7 @@ export function MainWindow() {
             type="button"
             onClick={onRefresh}
             disabled={busy}
-            className="flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
+            className="flex items-center gap-1.5 rounded-md bg-chip px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-50"
           >
             <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
             {refreshLabel}
@@ -609,7 +609,7 @@ function FamilyRow({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-white/[0.04]"
+        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-chip-hover"
       >
         <ChevronRightIcon
           size={12}
@@ -653,7 +653,7 @@ function FamilyRow({
                   }}
                   title={t("memory.rowHint")}
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
-                    isActive ? "bg-accent/[0.10] text-ink" : "text-ink-dim hover:bg-white/[0.04]"
+                    isActive ? "bg-accent/[0.10] text-ink" : "text-ink-dim hover:bg-chip-hover"
                   }`}
                 >
                   <span className="min-w-0 flex-1 truncate text-[11.5px]">
@@ -757,7 +757,7 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
                 : t("memory.swap.pagefile")}
             </span>
           </div>
-          <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-white/[0.05]">
+          <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-chip">
             {/* 阈值色带：0–75% 绿 → 75–90% 黄 → 90%+ 红，固定铺满轨道 */}
             <div
               className="absolute inset-0"
@@ -949,7 +949,7 @@ function VictimRow({
           onKillMenu(proc, e.clientX, e.clientY);
         }}
         title={t("memory.rowHint")}
-        className="w-full rounded-md px-1 py-1.5 text-left transition-colors hover:bg-white/[0.04]"
+        className="w-full rounded-md px-1 py-1.5 text-left transition-colors hover:bg-chip-hover"
       >
         <div className="flex w-full items-center gap-2">
           <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink">{proc.name}</span>
@@ -962,7 +962,7 @@ function VictimRow({
         </div>
         {/* UI v4（§6.3）：换出占比红橙渐变条——「大部分在磁盘上」一眼可见 */}
         {ratio != null && ratio > 0 ? (
-          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-white/[0.06]" aria-hidden>
+          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-chip" aria-hidden>
             <div
               className="prune-anim h-full rounded-full transition-[width] duration-500"
               style={{
@@ -1324,7 +1324,7 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
                 type="button"
                 disabled={busy}
                 onClick={() => void run(phase === "confirm-force")}
-                className="flex-1 rounded-md bg-danger/90 px-2 py-1 text-[10.5px] text-white transition-colors hover:bg-danger disabled:opacity-50"
+                className="flex-1 rounded-md bg-danger/90 px-2 py-1 text-[10.5px] text-danger-ink transition-colors hover:bg-danger disabled:opacity-50"
               >
                 {busy ? t("common.action.executing") : t("common.action.confirm")}
               </button>
@@ -1332,7 +1332,7 @@ function ProcKillMenu({ target, onClose }: { target: KillTarget; onClose: () => 
                 type="button"
                 disabled={busy}
                 onClick={() => (err ? onClose() : setPhase("idle"))}
-                className="flex-1 rounded-md border border-hairline px-2 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-white/[0.05] hover:text-ink disabled:opacity-50"
+                className="flex-1 rounded-md border border-hairline px-2 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-50"
               >
                 {err ? t("common.action.close") : t("common.action.cancel")}
               </button>
@@ -1362,7 +1362,7 @@ function MenuItem({
       className={`flex w-full flex-col items-start px-3 py-1.5 text-left transition-colors ${
         tone === "danger"
           ? "text-danger hover:bg-danger/[0.08]"
-          : "text-ink hover:bg-white/[0.05]"
+          : "text-ink hover:bg-chip-hover"
       }`}
     >
       <span className="text-[11.5px] leading-tight">{label}</span>

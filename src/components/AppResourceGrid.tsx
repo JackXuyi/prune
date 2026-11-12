@@ -350,7 +350,7 @@ export function AppResourceBoard({
               setQuery(e.target.value);
             }}
             placeholder={t("resources.searchPlaceholder")}
-            className="w-[168px] rounded-md border border-hairline bg-white/[0.03] px-2 py-1 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
+            className="w-[168px] rounded-md border border-hairline bg-chip-soft px-2 py-1 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
           />
           <span className="ml-1 text-[10px] text-ink-faint">{t("resources.sortLabel")}</span>
           {SORTS.map((s) => {
@@ -363,8 +363,8 @@ export function AppResourceBoard({
                 onClick={() => pickSort(s.key)}
                 className={`rounded-md px-2 py-1 text-[10.5px] transition-colors ${
                   active
-                    ? "bg-white/[0.09] text-ink"
-                    : "text-ink-dim hover:bg-white/[0.05] hover:text-ink"
+                    ? "bg-chip-hover text-ink"
+                    : "text-ink-dim hover:bg-chip-hover hover:text-ink"
                 }`}
                 title={active ? t("resources.sortTipToggle", { label }) : t("resources.sortTip", { label })}
               >
@@ -427,7 +427,7 @@ export function AppResourceBoard({
                     key={key}
                     type="button"
                     onClick={() => pickSort(key)}
-                    className="rounded bg-white/[0.05] px-1.5 py-0.5 text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
+                    className="rounded bg-chip px-1.5 py-0.5 text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
                     title={t("resources.spotlightTip", { label })}
                   >
                     {label} <span className="text-ink">{r.family.name}</span>
@@ -465,7 +465,7 @@ export function AppResourceBoard({
           <button
             type="button"
             onClick={() => setShowAll((v) => !v)}
-            className="mt-3 w-full rounded-lg bg-white/[0.03] py-2 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
+            className="mt-3 w-full rounded-lg bg-chip-soft py-2 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
           >
             {showAll
               ? t("resources.collapse")

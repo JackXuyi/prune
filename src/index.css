@@ -34,13 +34,16 @@
   --color-net-soft: rgba(34, 211, 238, 0.12);
   --color-port-soft: rgba(242, 163, 92, 0.14);
 
-  /* UI v5：把散落各处的 bg-white/[0.0x] 收敛成两级中性面。
-     浅色主题下这两个值翻转为黑底 alpha，组件不必按主题写两套。 */
+  /* UI v5：把散落各处的 bg-white/[0.0x] 收敛成中性面三档。
+     浅色主题下这三个值翻转为黑底 alpha，组件不必按主题写两套。 */
   --color-surface-sunk: #0b0e11;
+  --color-chip-soft: rgba(255, 255, 255, 0.028);
   --color-chip: rgba(255, 255, 255, 0.045);
   --color-chip-hover: rgba(255, 255, 255, 0.08);
   /* L4 不可回收段的斜纹线色 */
   --color-hatch: rgba(255, 255, 255, 0.1);
+  /* danger 底上的文字色：深色下浅红配暖黑（白字只有 2.7:1），浅色下深红配白 */
+  --color-danger-ink: #2a1512;
 
   /* 大数字字号：Hero 40px / 域卡 24px（§6） */
   --radius-hero: 18px;
@@ -77,6 +80,7 @@
   --color-warn-soft: rgba(185, 122, 18, 0.1);
   --color-danger: #c94f40;
   --color-danger-soft: rgba(201, 79, 64, 0.1);
+  --color-danger-ink: #ffffff;
   --color-info: #2273cc;
   --color-info-soft: rgba(34, 115, 204, 0.1);
   --color-domain-cpu: #7c5cd6;
@@ -88,6 +92,17 @@
   --color-chip: rgba(0, 0, 0, 0.045);
   --color-chip-hover: rgba(0, 0, 0, 0.075);
   --color-hatch: rgba(0, 0, 0, 0.14);
+}
+
+/* 灵动岛恒定深玻璃（P3）：岛悬浮在壁纸上，底色不随主题翻转，
+   白色系文字属「岛自身材质」而非主题语义，故独立于 --color-* 主题层。
+   spec 门禁：组件内 grep rgba(255 清零，统一走这里的 var()。 */
+:root {
+  --island-hairline: rgba(255, 255, 255, 0.14);
+  --island-ink: rgba(255, 255, 255, 0.72);
+  --island-ink-dim: rgba(255, 255, 255, 0.55);
+  --island-ink-mute: rgba(255, 255, 255, 0.5);
+  --island-ink-faint: rgba(255, 255, 255, 0.4);
 }
 
 html,
@@ -109,6 +124,8 @@ body {
   width: 8px;
   height: 8px;
 }
+
+/* __A11Y_FOCUS_BLOCK__ */
 
 *::-webkit-scrollbar-thumb {
   background: color-mix(in srgb, var(--color-ink-faint) 35%, transparent);

@@ -382,7 +382,7 @@ function CollapsedRow({
             width: 30,
             height: 4,
             borderRadius: 2,
-            background: "rgba(255,255,255,0.14)",
+            background: "var(--island-hairline)",
             overflow: "hidden",
             display: "block",
           }}
@@ -431,7 +431,7 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
         >
           {Math.round(data.avg)}%
         </span>
-        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+        <span style={{ fontSize: 12, color: "var(--island-ink-dim)" }}>
           {t("island.cpu.subtitle")}
         </span>
       </div>
@@ -440,7 +440,7 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
         style={{
           marginTop: 6,
           fontSize: 11,
-          color: "rgba(255,255,255,0.5)",
+          color: "var(--island-ink-mute)",
           fontVariantNumeric: "tabular-nums",
         }}
       >
@@ -453,7 +453,7 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
         {data.top.length === 0 ? (
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <span style={{ fontSize: 11, color: "var(--island-ink-faint)" }}>
             {t("island.cpu.detailSoon")}
           </span>
         ) : (
@@ -465,7 +465,7 @@ function CpuExpanded({ data, notchH }: { data: CpuPayload; notchH: number }) {
                 alignItems: "center",
                 justifyContent: "space-between",
                 fontSize: 11,
-                color: "rgba(255,255,255,0.72)",
+                color: "var(--island-ink)",
               }}
             >
               <span
@@ -506,7 +506,7 @@ function memSubtitle(data: MemPayload, locale: Locale): string {
 function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
   const { t, locale } = useI18n();
   const accent = memColor(data.pressure);
-  const dim = "rgba(255,255,255,0.5)";
+  const dim = "var(--island-ink-mute)";
   return (
     <div
       style={{
@@ -534,7 +534,7 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
         >
           {data.swapUsedGb != null ? `${data.swapUsedGb.toFixed(1)}G` : `${Math.round(data.swapRatioPct)}%`}
         </span>
-        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+        <span style={{ fontSize: 12, color: "var(--island-ink-dim)" }}>
           {memSubtitle(data, locale)}
         </span>
       </div>
@@ -558,7 +558,7 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
 
       <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
         {data.top.length === 0 ? (
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <span style={{ fontSize: 11, color: "var(--island-ink-faint)" }}>
             {t("island.mem.detailSoon")}
           </span>
         ) : (
@@ -570,7 +570,7 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
                 alignItems: "center",
                 justifyContent: "space-between",
                 fontSize: 11,
-                color: "rgba(255,255,255,0.72)",
+                color: "var(--island-ink)",
               }}
             >
               <span
@@ -600,7 +600,7 @@ function MemExpanded({ data, notchH }: { data: MemPayload; notchH: number }) {
 /** 端口事件展开态（M19）：端口大字 + 谁占的 + 项目归属 / 暴露面 / 持有者数 */
 function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
   const { t } = useI18n();
-  const dim = "rgba(255,255,255,0.5)";
+  const dim = "var(--island-ink-mute)";
   const exposureWarn = data.exposure === "any";
   return (
     <div
@@ -629,7 +629,7 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
         >
           {`:${data.port}`}
         </span>
-        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)" }}>
+        <span style={{ fontSize: 12, color: "var(--island-ink-dim)" }}>
           {data.conflict
             ? t("island.ports.conflict")
             : t("island.ports.ownedBy", {
@@ -659,7 +659,7 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
               alignItems: "center",
               justifyContent: "space-between",
               fontSize: 11,
-              color: "rgba(255,255,255,0.72)",
+              color: "var(--island-ink)",
             }}
           >
             <span
@@ -677,7 +677,7 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
             </span>
           </div>
         ) : (
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <span style={{ fontSize: 11, color: "var(--island-ink-faint)" }}>
             {t("island.ports.noProject")}
           </span>
         )}
@@ -710,7 +710,7 @@ function MemChip({ color }: { color: string }) {
 /** 局域网新面孔展开态（M23）：设备名 + 类型词 + 厂商线索，语气保持中性（不是「入侵」） */
 function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
   const { t, locale } = useI18n();
-  const dim = "rgba(255,255,255,0.5)";
+  const dim = "var(--island-ink-mute)";
   const name = data.label || data.ip;
   return (
     <div
@@ -742,7 +742,7 @@ function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
         >
           {name}
         </span>
-        <span style={{ fontSize: 12, color: "rgba(255,255,255,0.55)", flexShrink: 0 }}>
+        <span style={{ fontSize: 12, color: "var(--island-ink-dim)", flexShrink: 0 }}>
           {t("island.lan.joined")}
         </span>
       </div>
@@ -766,7 +766,7 @@ function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
             alignItems: "center",
             justifyContent: "space-between",
             fontSize: 11,
-            color: "rgba(255,255,255,0.72)",
+            color: "var(--island-ink)",
           }}
         >
           <span>{data.ip}</span>
@@ -775,7 +775,7 @@ function LanExpanded({ data, notchH }: { data: LanPayload; notchH: number }) {
           </span>
         </div>
         {data.randomizedMac && (
-          <span style={{ fontSize: 11, color: "rgba(255,255,255,0.4)" }}>
+          <span style={{ fontSize: 11, color: "var(--island-ink-faint)" }}>
             {t("island.lan.randomMac")}
           </span>
         )}

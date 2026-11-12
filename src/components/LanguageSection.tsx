@@ -136,7 +136,7 @@ export function LanguageSection() {
   }, [open, cursor, busy]);
 
   return (
-    <section className="rounded-xl border border-hairline bg-white/[0.02] px-4 py-3.5">
+    <section className="rounded-xl border border-hairline bg-chip-soft px-4 py-3.5">
       <div className="flex items-center justify-between gap-4">
         <span className="text-[13px] font-medium">{t("settings.language.title")}</span>
 
@@ -148,7 +148,7 @@ export function LanguageSection() {
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={toggle}
-            className="flex max-w-[260px] items-center gap-1 rounded-md bg-white/[0.05] px-2 py-1 text-[11.5px] font-medium text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-60"
+            className="flex max-w-[260px] items-center gap-1 rounded-md bg-chip px-2 py-1 text-[11.5px] font-medium text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-60"
           >
             <span className="truncate">{triggerLabel}</span>
             <ChevronRightIcon size={11} className="shrink-0 rotate-90 opacity-60" />
@@ -172,7 +172,7 @@ export function LanguageSection() {
                     onMouseEnter={() => setCursor(i)}
                     onClick={() => void pick(opt)}
                     className={`flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left transition-colors disabled:opacity-60 ${
-                      i === cursor ? "bg-white/[0.06]" : ""
+                      i === cursor ? "bg-chip" : ""
                     }`}
                   >
                     <span className="w-3 shrink-0 text-[10px] leading-5 text-accent">

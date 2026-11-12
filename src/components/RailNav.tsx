@@ -65,6 +65,7 @@ export function RailNav({
         <ScissorsIcon size={17} className="text-accent" />
       </span>
 
+      <div role="tablist" aria-orientation="vertical" className="flex flex-col items-center">
       {ITEMS.map((it) => {
         const active = it.id === value;
         const Icon = it.icon;
@@ -74,6 +75,7 @@ export function RailNav({
             type="button"
             role="tab"
             aria-selected={active}
+            aria-label={t(it.labelKey)}
             title={`${t(it.labelKey)} · ${t(it.hintKey)}`}
             onClick={() => onChange(it.id)}
             className={`prune-anim relative grid size-10 place-items-center rounded-[10px] transition-colors ${
@@ -92,6 +94,7 @@ export function RailNav({
           </button>
         );
       })}
+      </div>
 
       <span className="flex-1" />
 
