@@ -5,7 +5,7 @@ import { tGlobal } from "../i18n/store";
 
 import { devDiskPreview, devDiskReport } from "../lib/devFixture";
 import { diskReport, diskScan, isTauri, reclaimExecute, reclaimPreview } from "../lib/ipc";
-import type { DiskReport, ReclaimPreview, ReclaimReport, ScanProgress } from "../types/disk";
+import type { DiskReport, ReclaimItem, ReclaimPreview, ReclaimReport, ScanProgress } from "../types/disk";
 
 interface DiskStore {
   report: DiskReport | null;
@@ -24,7 +24,11 @@ interface DiskStore {
   refresh: () => Promise<void>;
   loadPreview: (keys: string[]) => Promise<void>;
   clearPreview: () => void;
-  execute: (confirmed: boolean) => Promise<void>;
+  /**
+   * 执行清理。`items` 可传子集 —— 抽屉里逐条取消勾选后只清理剩下的；
+   * 不传等价于「清单全选」（旧行为，保持向后兼容）。
+   */
+  execute: (confirmed: boolean, items?: ReclaimItem[]) => Promise<void>;
   clearReclaimed: () => void;
 }
 
@@ -106,18 +110,20 @@ export const useDiskStore = create<DiskStore>((set, get) => ({
 
   clearPreview: () => set({ preview: null, previewLoading: false }),
 
-  execute: async (confirmed) => {
+  execute: async (confirmed, items) => {
     const preview = get().preview;
     if (!preview || get().busy) return;
+    const list = items ?? preview.items;
+    const bytes = list.reduce((n, it) => n + it.bytes, 0);
     // 仅 DEV fixture 允许在浏览器里模拟清理结果；生产构建在非 Tauri 环境绝不伪造
     // 「清理成功」摘要——放行到 reclaimExecute 抛错，走下方 catch 诚实报错
     if (!isTauri() && import.meta.env.DEV) {
-      set({ lastReclaimed: { moved: preview.items.length, bytes: preview.totalBytes, failed: [], skipped: 0 }, preview: null });
+      set({ lastReclaimed: { moved: list.length, bytes, failed: [], skipped: 0 }, preview: null });
       return;
     }
     set({ busy: true, error: null });
     try {
-      const result = await reclaimExecute(preview.items, confirmed);
+      const result = await reclaimExecute(list, confirmed);
       set({ lastReclaimed: result, preview: null });
       // 报告由 disk://done 事件刷新；这里再拉一次兜底
       const report = await diskReport();

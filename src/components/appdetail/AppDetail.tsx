@@ -12,7 +12,7 @@ import { LeakEvidence } from "../LeakCard";
 import { AreaChart } from "../charts/AreaChart";
 import { StackBar } from "../charts/StackBar";
 import { ChevronRightIcon, RefreshIcon } from "../icons";
-import { Badge } from "../primitives";
+import { Badge, Btn } from "../primitives";
 import { HistoryTrack } from "./HistoryTrack";
 import { ProcTable } from "./ProcTable";
 import { ResourceTile } from "./ResourceTile";
@@ -172,12 +172,20 @@ export function AppDetail({
     );
   }
   if (!family) {
+    // 已退出不是错误：历史还在，读数只是「退出前最后一次快照」（口径必须说清楚）
     return (
       <div className="flex min-h-0 flex-1 flex-col">
         <TopBar onBack={onBack} />
         <EmptyState
+          art="no-record"
           title={t("resources.detail.notRunningTitle")}
-          note={t("resources.detail.notRunningNote", { name: familyName })}
+          description={t("resources.detail.notRunningNote", { name: familyName })}
+          footnote={t("resources.detail.exitedFootnote")}
+          action={
+            <Btn variant="ghost" onClick={onBack}>
+              {t("resources.detail.backToList")}
+            </Btn>
+          }
         />
       </div>
     );
@@ -420,8 +428,10 @@ export function AppDetail({
           {/* 进程明细 */}
           <ProcTable members={members} onOpenProcess={onOpenProcess} onKillMenu={onKillMenu} />
 
+          {/* 端口 / 工作区：两列并排，信息密度更高也更省滚动 */}
+          <div className={`grid gap-2.5 ${family.workspaces.length > 0 ? "grid-cols-2" : "grid-cols-1"}`}>
           {/* 端口与连接 */}
-          <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
+          <section className="rounded-card border border-hairline-soft bg-surface-raised px-3 py-2.5">
             <div className="flex items-center gap-2">
               <span className="text-[11px] font-medium text-ink">{t("resources.ports.title")}</span>
               <span className="text-[9.5px] text-ink-faint">
@@ -477,7 +487,7 @@ export function AppDetail({
 
           {/* 工作区 */}
           {family.workspaces.length > 0 ? (
-            <section className="rounded-xl border border-hairline-soft bg-white/[0.02] px-3 py-2.5">
+            <section className="rounded-card border border-hairline-soft bg-surface-raised px-3 py-2.5">
               <div className="text-[11px] font-medium text-ink">{t("resources.workspace.title")}</div>
               <ul className="mt-1 space-y-1">
                 {family.workspaces.slice(0, 4).map((w) => (
@@ -496,6 +506,7 @@ export function AppDetail({
               </ul>
             </section>
           ) : null}
+          </div>
 
           {/* 泄漏证据：只在命中时出现（沉默即正常） */}
           {leakItem ? <LeakEvidence item={leakItem} /> : null}

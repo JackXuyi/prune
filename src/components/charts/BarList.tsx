@@ -43,7 +43,7 @@ export function BarList({
         const inner = (
           <>
             <span className="w-24 shrink-0 truncate text-[11px] text-ink-dim">{r.label}</span>
-            <span className="relative h-1.5 min-w-0 flex-1 rounded-full bg-white/[0.05]">
+            <span className="relative h-1.5 min-w-0 flex-1 rounded-full bg-chip">
               {pct != null && pct > 0 ? (
                 <span
                   aria-hidden
@@ -52,7 +52,7 @@ export function BarList({
                 />
               ) : null}
             </span>
-            <span className="w-24 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
+            <span className="w-20 shrink-0 text-right font-mono text-[11px] whitespace-nowrap tabular-nums text-ink">
               {r.display}
             </span>
           </>

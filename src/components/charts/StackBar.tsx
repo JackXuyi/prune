@@ -66,7 +66,7 @@ export function StackBar({
               ...(seg.muted
                 ? {
                     background:
-                      "repeating-linear-gradient(45deg, rgba(255,255,255,0.22) 0 2px, transparent 2px 4px)",
+                      "repeating-linear-gradient(45deg, color-mix(in srgb, var(--color-ink-faint) 55%, transparent) 0 2px, transparent 2px 4px)",
                   }
                 : {}),
             }}

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n/store";
 import type { I18n } from "../i18n";
@@ -10,55 +10,429 @@ import { BarList } from "./charts/BarList";
 import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
 import { ProjectHealthCard } from "./ProjectHealthCard";
-import { cacheLabel, reclaimNoteText, LEVEL_META, type CacheGroup, type DeadweightStats, type DetailItem, type Level, type ReclaimChild, type VolumeInfo } from "../types/disk";
-import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
-import { Badge, Meter } from "./primitives";
+import {
+  cacheLabel,
+  reclaimNoteText,
+  LEVEL_META,
+  type CacheGroup,
+  type DeadweightStats,
+  type DetailItem,
+  type Level,
+  type ReclaimChild,
+  type ReclaimItem,
+  type VolumeInfo,
+} from "../types/disk";
+import { ChevronRightIcon, FileIcon, FolderIcon, RefreshIcon } from "./icons";
+import { Btn, PopMenu, toast } from "./primitives";
 
-/** M4/S2：存储 tab 顶部的卷容量环（UI v4 §6.4：细环 + 环心百分比，替代文字条） */
-function VolumeBar({
-  volume,
-  reclaimable,
-}: {
-  volume: VolumeInfo;
-  reclaimable: number;
-}) {
+/** 分级固定顺序：从「零后悔」到「只给命令」，与安全分级同源 */
+const TIERS: Level[] = ["l1", "l2", "l3", "l4"];
+
+/**
+ * 存储 tab（UI v5 §4.4）。
+ *
+ * **三段链路是唯一正确形态**（旧版画成「四个勾选框 → 一键清理」是错的）：
+ * ① 分级构成（只读 + 勾选决定预览范围）
+ * ② 分组预览（展开某一级，逐组勾选/右键定位）
+ * ③ 底部抽屉确认（逐条取消勾选 + L4 二次确认 + 主按钮）
+ *
+ * 为什么不能一步清理：L1 是「零后悔」但 L2/L3 删除后要重装或丢状态，
+ * L4 只给命令不执行。把四档压成一个按钮，等于把风险选择权从用户手里拿走。
+ */
+export function ReclaimBoard() {
+  const report = useDiskStore((s) => s.report);
+  const scanning = useDiskStore((s) => s.scanning);
+  const progress = useDiskStore((s) => s.progress);
+  const error = useDiskStore((s) => s.error);
+  const preview = useDiskStore((s) => s.preview);
+  const previewLoading = useDiskStore((s) => s.previewLoading);
+  const lastReclaimed = useDiskStore((s) => s.lastReclaimed);
+  const busy = useDiskStore((s) => s.busy);
+  const refresh = useDiskStore((s) => s.refresh);
+  const loadPreview = useDiskStore((s) => s.loadPreview);
+  const clearPreview = useDiskStore((s) => s.clearPreview);
+  const execute = useDiskStore((s) => s.execute);
+  const clearReclaimed = useDiskStore((s) => s.clearReclaimed);
+  const i18n = useI18n();
+  const { t } = i18n;
+
+  /** 已勾选的分组 key（级 ↔ 组双向同步的唯一真相） */
+  const [picked, setPicked] = useState<Set<string>>(new Set());
+  /** 当前展开的级 */
+  const [openTier, setOpenTier] = useState<Level | null>(null);
+  const [drawer, setDrawer] = useState(false);
+
+  const groups = useMemo(() => report?.groups ?? [], [report]);
+
+  // 清理成功 → toast「已清理 X，进入废纸篓」；用 ref 去重，避免重挂载时把旧结果再播一次
+  const seenReclaim = useRef<typeof lastReclaimed>(null);
+  useEffect(() => {
+    if (!lastReclaimed || seenReclaim.current === lastReclaimed) return;
+    seenReclaim.current = lastReclaimed;
+    toast(t("disk.drawer.done", { size: formatBytes(lastReclaimed.bytes) }), "ok");
+  }, [lastReclaimed, t]);
+
+  // 报告换了（重扫/清理后）就清空选择：旧 key 可能已经不存在
+  const scannedAt = report?.scannedAt;
+  useEffect(() => {
+    setPicked(new Set());
+    setOpenTier(null);
+  }, [scannedAt]);
+
+  if (error) {
+    return (
+      <div className="m-4 rounded-card bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">{error}</div>
+    );
+  }
+
+  if (!report) {
+    return (
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+        {/* 页名在顶栏（spec §1.3）；这里只留扫描状态 —— 它是状态不是标题 */}
+        <p className="text-[11px] text-ink-faint">
+          {scanning
+            ? progress
+              ? t("disk.scanningWith", { done: progress.done, total: progress.total })
+              : t("disk.scanning")
+            : t("common.hint.firstScan")}
+        </p>
+        <Btn
+          className="mt-3"
+          onClick={() => void refresh()}
+          disabled={scanning}
+          icon={<RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />}
+        >
+          {scanning ? t("common.progress.scanning") : t("common.action.scanNow")}
+        </Btn>
+        {/* UI v4（§6.7）：剪刀线稿空态——等待扫描也有情绪 */}
+        {!scanning ? (
+          <EmptyState
+            art="scan"
+            title={t("disk.empty.noReportTitle")}
+            description={t("disk.empty.noReportNote")}
+          />
+        ) : null}
+      </div>
+    );
+  }
+
+  const a1 = groups.find((g) => g.deadweight != null) ?? null;
+  const totals = report.totals;
+
+  /**
+   * 某一级下面列出的分组。
+   *
+   * 关键纠偏：L1「跨平台二进制」不是一个目录，而是缓存目录里被标记为死重的
+   * 那部分条目 —— 它寄居在 Yarn 缓存（level=l2）里。所以：
+   *   L1 → 带 deadweight 的分组（大小取死重切片，不是整组）
+   *   L2/L3/L4 → 本级没有死重切片的分组（避免同一个组在两个级里出现两次）
+   */
+  const groupsOfTier = (level: Level) =>
+    level === "l1"
+      ? groups.filter((g) => g.deadweight != null)
+      : groups.filter((g) => g.level === level && g.deadweight == null);
+
+  const pickedGroups = groups.filter((g) => picked.has(g.key));
+  // 「能删多少」按分组自身口径累加（含 deadweight 时只算可删的那一块），
+  // 不用 totals：totals 是「可回收」记账口径，两者会差在不可删的部分上。
+  const pickedBytes = pickedGroups.reduce((n, g) => n + reclaimableOf(g), 0);
+
+  const toggleGroup = (key: string) =>
+    setPicked((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  const openDrawer = async () => {
+    const keys = pickedGroups.map((g) => g.key);
+    if (keys.length === 0) return;
+    setDrawer(true);
+    await loadPreview(keys);
+  };
+
+  const closeDrawer = () => {
+    setDrawer(false);
+    clearPreview();
+  };
+
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-3">
+        {/* 头部：可回收总额（顶栏承担页名，这里只放这一页的核心事实） */}
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="flex items-baseline gap-2">
+              <span className="font-mono text-[26px] leading-none font-semibold tracking-tight tabular-nums text-ink">
+                <span className="mr-1 text-accent">⚡</span>
+                {formatBytes(totals.reclaimable)}
+              </span>
+              <span className="text-[12px] text-ink-faint">{t("disk.reclaimableSuffix")}</span>
+            </div>
+            <p className="mt-1 text-[10px] text-ink-faint">{t("disk.subnet")}</p>
+            <p className="mt-0.5 text-[10px] text-ink-faint">
+              {t("disk.groups.meta", {
+                n: groups.length,
+                when: formatRelative(report.scannedAt, i18n.locale),
+                secs: (report.scanElapsedMs / 1000).toFixed(1),
+              })}
+              {report.incremental ? t("disk.groups.incremental") : ""}
+            </p>
+          </div>
+          <Btn
+            className="mt-0.5"
+            onClick={() => void refresh()}
+            disabled={scanning}
+            icon={<RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />}
+          >
+            {scanning ? t("common.progress.scanning") : t("common.action.rescan")}
+          </Btn>
+        </div>
+
+        {/* 清理完成条：「已移入废纸篓 N 项」+ 从右上浮起的 +N GB */}
+        {lastReclaimed ? (
+          <div className="relative mt-2.5 flex items-center gap-2.5 rounded-card bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
+            {lastReclaimed.bytes > 0 ? (
+              <span
+                className="prune-float-up pointer-events-none absolute top-0.5 right-20 font-mono text-[13px] font-semibold tabular-nums"
+                aria-hidden
+              >
+                +{formatBytes(lastReclaimed.bytes)}
+              </span>
+            ) : null}
+            <span className="min-w-0 flex-1 truncate">
+              {t("disk.reclaimed.moved", {
+                n: lastReclaimed.moved,
+                size: formatBytes(lastReclaimed.bytes),
+              })}
+              {lastReclaimed.skipped > 0
+                ? t("disk.reclaimed.skipped", { n: lastReclaimed.skipped })
+                : ""}
+              {lastReclaimed.failed.length > 0
+                ? t("disk.reclaimed.failed", { n: lastReclaimed.failed.length })
+                : ""}
+            </span>
+            <button
+              type="button"
+              onClick={clearReclaimed}
+              className="shrink-0 text-[10px] text-ink-dim transition-colors hover:text-ink"
+            >
+              {t("disk.reclaimed.dismiss")}
+            </button>
+          </div>
+        ) : null}
+
+        {/* 卷容量：可回收的 GB 需要分母才有意义 */}
+        {report.volume ? (
+          <VolumeCard volume={report.volume} reclaimable={totals.reclaimable} />
+        ) : null}
+
+        {/* 扫完了但确实没有可回收项 —— 「很干净」是正反馈，不是缺数据 */}
+        {totals.reclaimable === 0 ? (
+          <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised py-2">
+            <EmptyState
+              art="scan"
+              title={t("disk.empty.cleanTitle")}
+              description={t("disk.empty.cleanNote")}
+            />
+          </div>
+        ) : null}
+
+        {/* ① 分级构成 + ② 分组预览（同一个卡，展开即预览） */}
+        {totals.reclaimable > 0 ? (
+          <section className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised">
+            <div className="flex items-baseline justify-between gap-3 px-3.5 pt-2.5">
+              <span className="text-[11.5px] font-medium text-ink">{t("disk.stack.title")}</span>
+              <span className="text-[9.5px] text-ink-faint">{t("disk.stage.pickHint")}</span>
+            </div>
+            <div className="px-3.5">
+              <StackBar
+                className="mt-2"
+                ariaLabel={t("disk.stack.aria", {
+                  l1: formatBytes(totals.deadweight),
+                  l2: formatBytes(totals.l2),
+                  l3: formatBytes(totals.l3),
+                  l4: formatBytes(totals.l4),
+                })}
+                segments={[
+                  { key: "l1", label: `L1 ${t("disk.tier.l1")}`, value: totals.deadweight, tone: "accent" },
+                  { key: "l2", label: `L2 ${t("disk.tier.l2")}`, value: totals.l2, tone: "info" },
+                  { key: "l3", label: `L3 ${t("disk.tier.l3")}`, value: totals.l3, tone: "neutral" },
+                  { key: "l4", label: `L4 ${t("disk.tier.l4")}`, value: totals.l4, muted: true },
+                ]}
+              />
+              <p className="mt-1.5 text-[9.5px] text-ink-faint">{t("disk.stack.note")}</p>
+            </div>
+
+            <div className="mt-1 pb-1">
+              {TIERS.map((level) => (
+                <TierRow
+                  key={level}
+                  level={level}
+                  bytes={
+                    level === "l1"
+                      ? totals.deadweight
+                      : level === "l2"
+                        ? totals.l2
+                        : level === "l3"
+                          ? totals.l3
+                          : totals.l4
+                  }
+                  members={groupsOfTier(level)}
+                  picked={picked}
+                  expanded={openTier === level}
+                  onToggleExpand={() => setOpenTier((cur) => (cur === level ? null : level))}
+                  onToggleGroup={toggleGroup}
+                />
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* 扫描进度（轻量一行，不抢视线） */}
+        {scanning ? (
+          <div className="mt-2 text-[10px] text-ink-faint">
+            {progress
+              ? t("disk.progressLine", {
+                  done: progress.done,
+                  total: progress.total,
+                  phase: progress.phase,
+                  bytes: formatBytes(progress.bytesSoFar),
+                })
+              : t("common.progress.scanning")}
+          </div>
+        ) : null}
+
+        {/* A1 杀手卡：跨平台二进制（唯一「零后悔」的量） */}
+        {a1?.deadweight ? (
+          <DeadweightCard group={a1} dw={a1.deadweight} />
+        ) : (
+          <section className="mt-3">
+            <h2 className="text-[11.5px] font-medium text-ink-dim">{t("disk.deadweight.noneTitle")}</h2>
+            <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
+              {t("disk.deadweight.noneNote")}
+            </p>
+          </section>
+        )}
+
+        {/* 同一批依赖存了 N 份 */}
+        {report.dup ? (
+          <section className="mt-2.5 rounded-card border border-warn/25 bg-warn/[0.06] px-3.5 py-2.5">
+            <div className="flex items-baseline justify-between gap-3">
+              <h2 className="text-[11.5px] font-medium text-ink">
+                {t("disk.dup.title", { n: report.dup.managers.length })}
+              </h2>
+              <span className="font-mono text-[11.5px] tabular-nums text-warn">
+                {formatBytes(report.dup.totalBytes)}
+              </span>
+            </div>
+            {/* advice 由 Rust 生成：P4 批次随 commands 一起本地化，这里先用后端串 */}
+            <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">{report.dup.advice}</p>
+            <div className="mt-1.5 flex flex-wrap gap-1.5">
+              {report.dup.managers.map(([name, bytes]) => (
+                <span
+                  key={name}
+                  className="rounded-ctl bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim"
+                >
+                  {name} <span className="font-mono tabular-nums">{formatBytes(bytes)}</span>
+                </span>
+              ))}
+            </div>
+          </section>
+        ) : null}
+
+        {/* F9 项目体检：把「N 个 node_modules 共 X GB」拆成按项目的账本 */}
+        <ProjectHealthCard projects={report.projects ?? []} />
+
+        <p className="mt-3 text-[9px] leading-relaxed text-ink-faint">
+          {t("disk.drawer.recycleNote")}
+        </p>
+      </div>
+
+      {/* ③ 底部操作栏：选中态是唯一的执行入口 */}
+      {totals.reclaimable > 0 ? (
+        <div className="flex shrink-0 items-center gap-3 border-t border-hairline bg-surface px-5 py-2.5">
+          <span className="text-[11px] text-ink-dim">
+            {pickedGroups.length === 0
+              ? t("disk.bar.pickedNone")
+              : t("disk.bar.picked", { n: pickedGroups.length, size: formatBytes(pickedBytes) })}
+          </span>
+          <div className="grow" />
+          <Btn
+            variant="primary"
+            disabled={pickedGroups.length === 0}
+            onClick={() => void openDrawer()}
+          >
+            {t("disk.bar.clean")}
+          </Btn>
+        </div>
+      ) : null}
+
+      <CleanDrawer
+        open={drawer || previewLoading}
+        loading={previewLoading}
+        preview={preview}
+        busy={busy}
+        onClose={closeDrawer}
+        onExecute={(items, confirmed) => {
+          void execute(confirmed, items).then(() => setPicked(new Set()));
+        }}
+      />
+    </div>
+  );
+}
+
+/** 一个分组「实际能删多少」：有 deadweight 的只算死重，否则整组 */
+function reclaimableOf(g: CacheGroup): number {
+  return g.deadweight ? g.deadweight.bytes : g.totalBytes;
+}
+
+/* ==========================================================================
+   卷卡
+   ========================================================================== */
+
+function VolumeCard({ volume, reclaimable }: { volume: VolumeInfo; reclaimable: number }) {
   const { t } = useI18n();
   const used = Math.max(0, volume.totalBytes - volume.availableBytes);
   const usedRatio = volume.totalBytes > 0 ? used / volume.totalBytes : 0;
-  const reclaimOfFree =
-    volume.userAvailableBytes > 0 ? reclaimable / volume.userAvailableBytes : 0;
+  const reclaimOfFree = volume.userAvailableBytes > 0 ? reclaimable / volume.userAvailableBytes : 0;
   // 容量越满环越红（80% 预警），环色即语义
   const ringColor =
-    usedRatio >= 0.9 ? "var(--color-danger)" : usedRatio >= 0.8 ? "var(--color-warn)" : "var(--color-domain-net)";
+    usedRatio >= 0.9
+      ? "var(--color-danger)"
+      : usedRatio >= 0.8
+        ? "var(--color-warn)"
+        : "var(--color-domain-net)";
 
   return (
-    <section className="mt-4 flex items-center gap-4 border-b border-hairline-soft pb-4">
+    <section className="mt-2.5 flex items-center gap-3 rounded-card border border-hairline-soft bg-surface-raised px-3.5 py-2">
       <RingGauge
         segments={[{ value: Math.max(0.04, usedRatio), color: ringColor }]}
-        size={72}
-        stroke={6}
+        size={56}
+        stroke={5}
         ariaLabel={t("disk.volume.aria", {
           pct: formatPercent(usedRatio),
           used: formatBytes(used),
           total: formatBytes(volume.totalBytes),
         })}
       >
-        <span className="font-mono text-[13px] tabular-nums text-ink">
+        <span className="flex items-baseline font-mono text-[12px] leading-none tabular-nums text-ink">
           {Math.round(usedRatio * 100)}
-          <span className="text-[8px] text-ink-faint">%</span>
+          <span className="text-[7px] text-ink-faint">%</span>
         </span>
       </RingGauge>
       <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between">
+        <div className="flex items-baseline justify-between gap-3">
           <span className="text-[11px] font-medium text-ink-dim">{t("disk.volume.title")}</span>
-          <span className="font-mono text-[11px] tabular-nums text-ink-dim">
+          <span className="font-mono text-[10.5px] tabular-nums text-ink-dim">
             {t("disk.volume.used", { used: formatBytes(used), total: formatBytes(volume.totalBytes) })}
             <span className="ml-2 text-ink">
               {t("disk.volume.free", { free: formatBytes(volume.userAvailableBytes) })}
             </span>
           </span>
         </div>
-        <p className="mt-1.5 text-[10px] text-ink-faint">
+        <p className="mt-0.5 text-[9.5px] text-ink-faint">
           {t("disk.volume.reclaimable", { size: formatBytes(reclaimable) })}
           {reclaimOfFree > 0
             ? t("disk.volume.reclaimOfFree", { pct: Math.round(reclaimOfFree * 100) })
@@ -66,6 +440,265 @@ function VolumeBar({
         </p>
       </div>
     </section>
+  );
+}
+
+/* ==========================================================================
+   ① + ② 分级构成 → 分组预览
+   ========================================================================== */
+
+function TierRow({
+  level,
+  bytes,
+  members,
+  picked,
+  expanded,
+  onToggleExpand,
+  onToggleGroup,
+}: {
+  level: Level;
+  /** 本级可回收量（与顶部总量、构成条同源 = report.totals） */
+  bytes: number;
+  /** 本级下的分组（L1 = 带死重切片的组，见 groupsOfTier） */
+  members: CacheGroup[];
+  picked: Set<string>;
+  expanded: boolean;
+  onToggleExpand: () => void;
+  onToggleGroup: (key: string) => void;
+}) {
+  const { t, locale } = useI18n();
+  const meta = LEVEL_META[level];
+  const hint = t(
+    level === "l1"
+      ? "disk.tier.l1Hint"
+      : level === "l2"
+        ? "disk.tier.l2Hint"
+        : level === "l3"
+          ? "disk.tier.l3Hint"
+          : "disk.tier.l4Hint",
+  );
+  const colors: Record<Level, string> = {
+    l1: "var(--color-accent)",
+    l2: "var(--color-info)",
+    l3: "var(--color-warn)",
+    l4: "var(--color-danger)",
+  };
+  const actionable = members.filter((g) => g.cleanable && level !== "l4").length;
+  const max = Math.max(bytes, 1);
+  const pickedHere = members.filter((g) => picked.has(g.key)).length;
+
+  return (
+    <div className="border-b border-hairline-soft last:border-b-0">
+      <button
+        type="button"
+        onClick={onToggleExpand}
+        aria-expanded={expanded}
+        title={hint}
+        className="flex w-full items-center gap-2 rounded-ctl px-3.5 py-[6px] text-left transition-colors hover:bg-chip"
+      >
+        <i
+          className="size-[7px] shrink-0 rounded-[2px]"
+          style={{ background: colors[level], opacity: level === "l4" ? 0.45 : 1 }}
+          aria-hidden
+        />
+        <span className="shrink-0 text-[11.5px] text-ink">
+          <span className="mr-1 font-mono text-[10px] text-ink-faint">{level.toUpperCase()}</span>
+          {t(meta.labelKey)}
+        </span>
+        <span className="min-w-0 flex-1 truncate text-[9.5px] text-ink-faint">
+          {level === "l4"
+            ? t("disk.stage.commandOnly")
+            : actionable > 0
+              ? t("disk.stage.cleanable", { n: actionable })
+              : t("disk.stage.statsOnly")}
+        </span>
+        <span className="h-[3px] w-16 shrink-0 overflow-hidden rounded-full bg-chip">
+          <i
+            className="block h-full rounded-full"
+            style={{
+              width: `${Math.max(2, (bytes / max) * 100)}%`,
+              background: colors[level],
+              opacity: level === "l4" ? 0.45 : 0.85,
+            }}
+          />
+        </span>
+        <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
+          {formatBytes(bytes)}
+        </span>
+        <span
+          className={`w-9 shrink-0 text-right font-mono text-[9.5px] tabular-nums ${
+            pickedHere > 0 ? "text-accent" : "text-transparent"
+          }`}
+          aria-hidden
+        >
+          {pickedHere > 0 ? `${pickedHere}/${members.length}` : "0"}
+        </span>
+        <ChevronRightIcon
+          size={11}
+          className={`shrink-0 text-ink-faint transition-transform ${expanded ? "rotate-90" : ""}`}
+        />
+      </button>
+
+      {expanded ? (
+        <div className="border-t border-hairline-soft bg-surface-sunk/40 px-3.5 py-1">
+          {members.length === 0 ? (
+            <p className="py-1.5 text-[10px] text-ink-faint">{t("disk.group.statsOnlyTip")}</p>
+          ) : (
+            members.map((g) => (
+              <GroupPick
+                key={g.key}
+                group={g}
+                selectable={g.cleanable && level !== "l4"}
+                checked={picked.has(g.key)}
+                onToggle={() => onToggleGroup(g.key)}
+                locale={locale}
+              />
+            ))
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** 勾选框：原生 input 才能拿到 indeterminate 与键盘可达 */
+function Check({
+  checked,
+  indeterminate = false,
+  disabled = false,
+  onChange,
+  label,
+}: {
+  checked: boolean;
+  indeterminate?: boolean;
+  disabled?: boolean;
+  onChange: () => void;
+  label: string;
+}) {
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    if (ref.current) ref.current.indeterminate = indeterminate && !checked;
+  }, [indeterminate, checked]);
+  return (
+    <input
+      ref={ref}
+      type="checkbox"
+      checked={checked}
+      disabled={disabled}
+      onChange={onChange}
+      aria-label={label}
+      className="size-[13px] shrink-0 cursor-pointer rounded-[3px] accent-[var(--color-accent)] disabled:cursor-default disabled:opacity-25"
+    />
+  );
+}
+
+/** 一个可清理分组：勾选 + 名称 + 路径 + 体积；右键定位 */
+function GroupPick({
+  group,
+  selectable,
+  checked,
+  onToggle,
+  locale,
+}: {
+  group: CacheGroup;
+  selectable: boolean;
+  checked: boolean;
+  onToggle: () => void;
+  locale: I18n["locale"];
+}) {
+  const { t } = useI18n();
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const details = group.details ?? [];
+  const rootIsDir = group.cleanable && group.level !== "l4";
+  // 有死重切片的分组挂在这一级的「可删量」是切片，而不是整个缓存目录
+  const shownBytes = group.deadweight ? group.deadweight.bytes : group.totalBytes;
+
+  return (
+    <div
+      className="group/row flex items-center gap-2 rounded-ctl py-[3px] pr-1 transition-colors hover:bg-chip"
+      title={t("disk.fileList.title", { path: group.root, tip: t("disk.pathMenu.rootTip") })}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        if (!rootIsDir) {
+          // 聚合项没有单一路径 —— 伪造一个会让「在 Finder 中打开」打到 home
+          toast(t("disk.pathMenu.aggregateTip"));
+          return;
+        }
+        setMenu({ x: e.clientX, y: e.clientY });
+      }}
+    >
+      <Check checked={checked} disabled={!selectable} onChange={onToggle} label={cacheLabel(group, locale)} />
+      <span className="min-w-0 flex-1">
+        <span className="block truncate text-[11px] text-ink">
+          {cacheLabel(group, locale)}
+          {group.deadweight ? (
+            <span className="ml-1.5 text-[9px] text-accent/80">{t("disk.stage.slice")}</span>
+          ) : null}
+        </span>
+        <span className="block truncate font-mono text-[9.5px] text-ink-faint">
+          {group.entryCount > 0 ? `${t("disk.group.entryCount", { n: group.entryCount })} · ` : ""}
+          {rootIsDir ? group.root : t("disk.group.statsOnlyTip")}
+        </span>
+      </span>
+      {details.length > 0 ? <GroupDetails details={details} /> : null}
+      <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink-dim">
+        {formatBytes(shownBytes)}
+      </span>
+      {menu ? (
+        <PathMenu x={menu.x} y={menu.y} path={group.root} isDir onClose={() => setMenu(null)} />
+      ) : null}
+    </div>
+  );
+}
+
+/** A4/A5 明细：按体积降序（Rust 侧已排），Top 20 + 「N 天未改动」，>180 天标灰 */
+function GroupDetails({ details }: { details: DetailItem[] }) {
+  const { t } = useI18n();
+  const stale = details.filter((d) => d.ageDays > STALE_DAYS).length;
+  const shown = details.slice(0, 20);
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  return (
+    <details className="shrink-0">
+      <summary className="cursor-pointer list-none text-[9.5px] text-ink-faint transition-colors hover:text-ink-dim">
+        {t("disk.details.summary", { n: details.length })}
+        {stale > 0 ? t("disk.details.stale", { n: stale, days: STALE_DAYS }) : ""}
+      </summary>
+      <div className="mt-1 space-y-0.5 rounded-ctl bg-surface-sunk px-2 py-1">
+        {shown.map((d) => (
+          <div
+            key={d.path}
+            className="flex items-baseline gap-2 text-[10px]"
+            onContextMenu={(e) => {
+              e.preventDefault();
+              setMenu({ x: e.clientX, y: e.clientY, path: d.path });
+            }}
+            title={t("disk.fileList.title", { path: d.path, tip: t("disk.pathMenu.rootTip") })}
+          >
+            <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
+              {formatBytes(d.bytes)}
+            </span>
+            <span className="w-20 shrink-0 text-ink-faint">{formatAge(d.ageDays, t)}</span>
+            <span
+              className={`min-w-0 flex-1 truncate ${d.ageDays > STALE_DAYS ? "text-ink-faint" : "text-ink-dim"}`}
+            >
+              {d.note ?? d.name}
+            </span>
+          </div>
+        ))}
+        {details.length > shown.length ? (
+          <p className="text-[9.5px] text-ink-faint">{t("disk.details.more", { n: details.length - shown.length })}</p>
+        ) : null}
+      </div>
+      {menu ? (
+        <PathMenu
+          x={menu.x}
+          y={menu.y}
+          path={menu.path}
+          isDir
+          onClose={() => setMenu(null)}
+        />
+      ) : null}
+    </details>
   );
 }
 
@@ -79,617 +712,286 @@ function formatAge(days: number, t: I18n["t"]): string {
   return t("common.unit.unchangedYears", { n: (days / 365).toFixed(1) });
 }
 
-/** 主窗口「可回收」tab：A1 杀手卡片 + A2 分组 + A3 合并建议 + dry-run → 清理 */
-export function ReclaimBoard() {
+/* ==========================================================================
+   ③ 清理抽屉
+   ========================================================================== */
+
+function CleanDrawer({
+  open,
+  loading,
+  preview,
+  busy,
+  onClose,
+  onExecute,
+}: {
+  open: boolean;
+  loading: boolean;
+  preview: ReturnType<typeof useDiskStore.getState>["preview"];
+  busy: boolean;
+  onClose: () => void;
+  onExecute: (items: ReclaimItem[], confirmed: boolean) => void;
+}) {
+  const { t, locale } = useI18n();
   const report = useDiskStore((s) => s.report);
-  const scanning = useDiskStore((s) => s.scanning);
-  const progress = useDiskStore((s) => s.progress);
-  const error = useDiskStore((s) => s.error);
-  const preview = useDiskStore((s) => s.preview);
-  const previewLoading = useDiskStore((s) => s.previewLoading);
-  const lastReclaimed = useDiskStore((s) => s.lastReclaimed);
-  const refresh = useDiskStore((s) => s.refresh);
-  const clearReclaimed = useDiskStore((s) => s.clearReclaimed);
-  const i18n = useI18n();
-  const { t } = i18n;
+  const groups = report?.groups ?? [];
+  /** 抽屉内逐条勾选：默认全选，取消的条目不会传给后端 */
+  const [drop, setDrop] = useState<Set<string>>(new Set());
+  const [confirmed, setConfirmed] = useState(false);
 
-  if (error) {
-    return (
-      <div className="m-4 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
-        {error}
-      </div>
-    );
-  }
+  // 每次拿到新清单都重置勾选与二次确认（旧状态套新清单 = 静默漏删/多删）
+  const items = preview?.items;
+  useEffect(() => {
+    setDrop(new Set());
+    setConfirmed(false);
+  }, [items]);
 
-  if (!report) {
-    return (
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-        <h1 className="text-[15px] font-semibold tracking-tight">{t("disk.title")}</h1>
-        <p className="mt-1 text-[11px] text-ink-faint">
-          {scanning
-            ? progress
-              ? t("disk.scanningWith", { done: progress.done, total: progress.total })
-              : t("disk.scanning")
-            : t("common.hint.firstScan")}
-        </p>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={scanning}
-          className="mt-3 flex items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
-        >
-          <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
-          {scanning ? t("common.progress.scanning") : t("common.action.scanNow")}
-        </button>
-        {/* UI v4（§6.7）：剪刀线稿空态——等待扫描也有情绪 */}
-        {!scanning ? (
-          <EmptyState title={t("disk.empty.noReportTitle")} note={t("disk.empty.noReportNote")} />
-        ) : null}
-      </div>
-    );
-  }
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      // 清理中禁止关闭：避免「以为取消了其实还在删」
+      if (e.key === "Escape" && !busy) onClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [open, busy, onClose]);
 
-  const a1 = report.groups.find((g) => g.deadweight != null) ?? null;
+  if (!open) return null;
+  // 清理成功后 store 会清空 preview —— 此时抽屉必须消失，不能停在骨架屏上
+  if (!loading && !preview) return null;
+
+  const list = (preview?.items ?? []).filter((it) => !drop.has(it.path));
+  const size = list.reduce((n, it) => n + it.bytes, 0);
+  const l4Count = list.filter((it) => it.level === "l4").length;
+  const needsConfirm = !!preview?.needsConfirm || l4Count > 0;
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-[22px] font-semibold leading-tight tracking-tight">
-            <span className="mr-1 text-accent">⚡</span>
-            {formatBytes(report.totals.reclaimable)}
-            <span className="ml-1.5 text-[13px] font-normal text-ink-faint">
-              {t("disk.reclaimableSuffix")}
-            </span>
-          </h1>
-          <p className="mt-1 text-[11px] text-ink-faint">{t("disk.subnet")}</p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void refresh()}
-          disabled={scanning}
-          className="mt-1 flex shrink-0 items-center gap-1.5 rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink disabled:opacity-50"
-        >
-          <RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />
-          {scanning ? t("common.progress.scanning") : t("common.action.rescan")}
-        </button>
-      </div>
-
-      {/* M4/S2 存储域分母：可回收的 GB 从此有上下文 */}
-      {report.volume ? <VolumeBar volume={report.volume} reclaimable={report.totals.reclaimable} /> : null}
-
-      {/* UI v4（§6.7）：扫完了但没有可回收项——「很干净」是正反馈不是缺数据 */}
-      {report.totals.reclaimable === 0 ? (
-        <EmptyState title={t("disk.empty.cleanTitle")} note={t("disk.empty.cleanNote")} />
-      ) : null}
-
-      <ReclaimStack totals={report.totals} />
-
-      <LayerBar totals={report.totals} />
-
-      {scanning ? (
-        <div className="mt-3 text-[10px] text-ink-faint">
-          {progress
-            ? t("disk.progressLine", {
-                done: progress.done,
-                total: progress.total,
-                phase: progress.phase,
-                bytes: formatBytes(progress.bytesSoFar),
-              })
-            : t("common.progress.scanning")}
-        </div>
-      ) : null}
-
-      {lastReclaimed ? (
-        <div className="relative mt-3 flex items-center justify-between rounded-lg bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
-          {/* UI v4（§6.4）清理完成飘字：+N GB 从右上浮起，尊重 reduced-motion */}
-          {lastReclaimed.bytes > 0 ? (
-            <span
-              className="prune-float-up pointer-events-none absolute right-4 top-1 font-mono text-[13px] font-semibold tabular-nums"
-              aria-hidden
-            >
-              +{formatBytes(lastReclaimed.bytes)}
-            </span>
-          ) : null}
-          <span>
-            {t("disk.reclaimed.moved", {
-              n: lastReclaimed.moved,
-              size: formatBytes(lastReclaimed.bytes),
-            })}
-            {lastReclaimed.skipped > 0
-              ? t("disk.reclaimed.skipped", { n: lastReclaimed.skipped })
-              : ""}
-            {lastReclaimed.failed.length > 0
-              ? t("disk.reclaimed.failed", { n: lastReclaimed.failed.length })
-              : ""}
-          </span>
-          <button type="button" onClick={clearReclaimed} className="text-[10px] text-ink-dim hover:text-ink">
-            {t("disk.reclaimed.dismiss")}
-          </button>
-        </div>
-      ) : null}
-
-      {a1?.deadweight ? (
-        <DeadweightCard group={a1} dw={a1.deadweight} />
-      ) : (
-        <section className="mt-4">
-          <h2 className="text-[12px] font-medium text-ink-dim">{t("disk.deadweight.noneTitle")}</h2>
-          <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">
-            {t("disk.deadweight.noneNote")}
-          </p>
-        </section>
-      )}
-
-      {report.dup ? (
-        <section className="mt-4 rounded-xl bg-warn/[0.06] p-3.5">
-          <div className="flex items-baseline justify-between">
-            <h2 className="text-[12px] font-medium text-ink">
-              {t("disk.dup.title", { n: report.dup.managers.length })}
-            </h2>
-            <span className="font-mono text-[12px] tabular-nums text-warn">
-              {formatBytes(report.dup.totalBytes)}
-            </span>
-          </div>
-          {/* advice 由 Rust 生成：P4 批次随 commands 一起本地化，这里先用后端串 */}
-          <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">{report.dup.advice}</p>
-          <div className="mt-2 flex flex-wrap gap-1.5">
-            {report.dup.managers.map(([name, bytes]) => (
-              <span
-                key={name}
-                className="rounded bg-white/[0.05] px-1.5 py-0.5 text-[10px] text-ink-dim"
-              >
-                {name} <span className="font-mono tabular-nums">{formatBytes(bytes)}</span>
-              </span>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* F9 项目体检：把「N 个 node_modules 共 X GB」拆成按项目的账本 */}
-      <ProjectHealthCard projects={report.projects ?? []} />
-
-      <section className="mt-4">
-        <div className="flex items-baseline justify-between">
-          <h2 className="text-[12px] font-medium text-ink-dim">{t("disk.groups.title")}</h2>
-          <span className="text-[10px] text-ink-faint">
-            {t("disk.groups.meta", {
-              n: report.groups.length,
-              when: formatRelative(report.scannedAt, i18n.locale),
-              secs: (report.scanElapsedMs / 1000).toFixed(1),
-            })}
-            {report.incremental ? t("disk.groups.incremental") : ""}
-          </span>
-        </div>
-        <ul className="mt-1.5 space-y-1">
-          {report.groups
-            .filter((g) => g.deadweight == null)
-            .map((g) => (
-              <GroupRow key={g.key} group={g} />
-            ))}
-        </ul>
-      </section>
-
-      {preview || previewLoading ? <PreviewPanel /> : null}
-    </div>
-  );
-}
-
-/**
- * 全量构成条（UX v3.1 §7.6）：L1–L4 一条堆叠，谁是大头一眼看出。
- * 分母 = 各段之和（L4 计入总宽但为斜纹段），与 LayerBar 的逐行相对条互为补充；
- * 总量为 0 时 StackBar 自身不渲染（不画空轨道冒充数据）。
- */
-function ReclaimStack({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
-  const { t } = useI18n();
-  return (
-    <div className="mt-4">
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11px] font-medium text-ink-dim">{t("disk.stack.title")}</span>
-        <span className="text-[10px] text-ink-faint">{t("disk.stack.note")}</span>
-      </div>
-      <StackBar
-        className="mt-2"
-        ariaLabel={t("disk.stack.aria", {
-          l1: formatBytes(totals.deadweight),
-          l2: formatBytes(totals.l2),
-          l3: formatBytes(totals.l3),
-          l4: formatBytes(totals.l4),
-        })}
-        segments={[
-          { key: "l1", label: `L1 ${t("disk.tier.l1")}`, value: totals.deadweight, tone: "accent" },
-          { key: "l2", label: `L2 ${t("disk.tier.l2")}`, value: totals.l2, tone: "info" },
-          { key: "l3", label: `L3 ${t("disk.tier.l3")}`, value: totals.l3, tone: "neutral" },
-          { key: "l4", label: `L4 ${t("disk.tier.l4")}`, value: totals.l4, muted: true },
-        ]}
+    <div className="absolute inset-0 z-[82] flex flex-col justify-end">
+      <div
+        className="prune-fade-in absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+        onClick={() => (busy ? undefined : onClose())}
       />
-      <p className="mt-1.5 text-[10px] text-ink-faint">
-        {t("disk.tier.total", {
-          l1: formatBytes(totals.deadweight),
-          l2: formatBytes(totals.l2),
-          l3: formatBytes(totals.l3),
-          l4: formatBytes(totals.l4),
-        })}
-      </p>
-    </div>
-  );
-}
-
-function LayerBar({ totals }: { totals: { deadweight: number; l2: number; l3: number; l4: number } }) {
-  const { t } = useI18n();
-  const rows: { level: Level; tag: string; label: string; bytes: number; hint: string }[] = [
-    { level: "l1", tag: "L1", label: t("disk.tier.l1"), bytes: totals.deadweight, hint: t("disk.tier.l1Hint") },
-    { level: "l2", tag: "L2", label: t("disk.tier.l2"), bytes: totals.l2, hint: t("disk.tier.l2Hint") },
-    { level: "l3", tag: "L3", label: t("disk.tier.l3"), bytes: totals.l3, hint: t("disk.tier.l3Hint") },
-    { level: "l4", tag: "L4", label: t("disk.tier.l4"), bytes: totals.l4, hint: t("disk.tier.l4Hint") },
-  ];
-  const max = Math.max(...rows.map((r) => r.bytes), 1);
-
-  return (
-    <div className="mt-4 space-y-2.5 border-b border-hairline-soft pb-4">
-      {rows.map((r) => {
-        const meta = LEVEL_META[r.level];
-        return (
-          <div key={r.level} className="flex items-center gap-3" title={r.hint}>
-            <span className="w-28 shrink-0 truncate text-[11px] text-ink-dim">
-              <span className="font-mono text-[10px] text-ink-faint">{r.tag}</span> · {r.label}
-            </span>
-            <Meter ratio={r.bytes / max} tone={meta.tone} height={4} className="min-w-0 flex-1" />
-            <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
-              {formatBytes(r.bytes)}
-            </span>
+      <div className="prune-drawer-in relative flex max-h-[70%] flex-col rounded-t-2xl border-t border-hairline bg-surface-overlay shadow-[0_-18px_44px_rgba(0,0,0,0.45)]">
+        <div className="flex items-start gap-3 px-5 pt-3 pb-2">
+          <div className="min-w-0 flex-1">
+            <div className="flex items-baseline gap-2">
+              <span className="text-[13px] font-semibold text-ink">{t("disk.drawer.title")}</span>
+            </div>
+            <p className="mt-0.5 text-[10px] text-ink-faint">
+              {loading
+                ? t("disk.preview.building")
+                : t("disk.drawer.summary", { n: list.length, size: formatBytes(size) })}
+              {" · "}
+              {t("disk.drawer.sub")}
+            </p>
           </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats }) {
-  const loadPreview = useDiskStore((s) => s.loadPreview);
-  const busy = useDiskStore((s) => s.busy);
-  const { t, locale } = useI18n();
-
-  return (
-    <section className="mt-4 rounded-xl bg-accent/[0.06] p-3.5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-[13px] font-semibold tracking-tight text-ink">
-            🟢 {t("disk.deadweight.title", { size: formatBytes(dw.bytes) })}
-          </h2>
-          <p className="mt-0.5 text-[10.5px] text-ink-faint">
-            {t("disk.deadweight.meta", {
-              label: cacheLabel(group, locale),
-              n: dw.entryCount,
-            })}
-            {dw.ratio != null ? t("disk.deadweight.ratio", { ratio: dw.ratio.toFixed(1) }) : ""}
-            {t("disk.deadweight.native", { size: formatBytes(dw.nativeBytes) })}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={() => void loadPreview([group.key])}
-          disabled={busy}
-          className="shrink-0 rounded-md bg-accent/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-50"
-        >
-          {t("disk.deadweight.preview")}
-        </button>
-      </div>
-
-      <div className="mt-2.5 grid grid-cols-2 gap-x-6 gap-y-1">
-        {dw.byPlatform.map((p) => (
-          <div key={p.platform} className="flex items-baseline justify-between text-[10.5px]">
-            <span className="text-ink-dim">{p.platform}</span>
-            <span className="text-ink-faint">
-              <span className="font-mono tabular-nums text-ink-dim">
-                {t("disk.deadweight.platformEntry", {
-                  n: p.entryCount,
-                  size: formatBytes(p.bytes),
-                })}
-              </span>
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* 浪费 vs 可用双段条（§7.6）：「浪费比 3.2 : 1」的比例一眼可见，数字仍保留 */}
-      <StackBar
-        className="mt-2.5"
-        height={5}
-        ariaLabel={
-          dw.ratio != null
-            ? t("disk.deadweight.ariaRatio", {
-                waste: formatBytes(dw.bytes),
-                native: formatBytes(dw.nativeBytes),
-                ratio: dw.ratio.toFixed(1),
-              })
-            : t("disk.deadweight.aria", {
-                waste: formatBytes(dw.bytes),
-                native: formatBytes(dw.nativeBytes),
-              })
-        }
-        segments={[
-          { key: "waste", label: t("disk.deadweight.segWaste"), value: dw.bytes, tone: "accent" },
-          {
-            key: "native",
-            label: t("disk.deadweight.segNative"),
-            value: dw.nativeBytes,
-            tone: "neutral",
-          },
-        ]}
-      />
-      <p className="mt-1 text-[10px] text-ink-faint">
-        {dw.ratio != null
-          ? t("disk.deadweight.summaryRatio", {
-              waste: formatBytes(dw.bytes),
-              native: formatBytes(dw.nativeBytes),
-              ratio: dw.ratio.toFixed(1),
-            })
-          : t("disk.deadweight.summary", {
-              waste: formatBytes(dw.bytes),
-              native: formatBytes(dw.nativeBytes),
-            })}
-      </p>
-
-      {/* 各平台浪费分布（§7.6「多实体比大小」）：谁是大头一眼看出 */}
-      {dw.byPlatform.length > 1 ? (
-        <BarList
-          className="mt-2"
-          rows={dw.byPlatform.map((p) => ({
-            key: p.platform,
-            label: p.platform,
-            value: p.bytes,
-            display: t("disk.deadweight.platformEntry", {
-              n: p.entryCount,
-              size: formatBytes(p.bytes),
-            }),
-            title: t("disk.deadweight.barTitle", {
-              platform: p.platform,
-              n: p.entryCount,
-              size: formatBytes(p.bytes),
-            }),
-          }))}
-        />
-      ) : null}
-
-      <details className="mt-2">
-        <summary className="cursor-pointer text-[10.5px] text-ink-faint hover:text-ink-dim">
-          {t("disk.deadweight.topItems", { n: Math.min(dw.items.length, 10) })}
-        </summary>
-        <ul className="mt-1.5 space-y-0.5">
-          {dw.items.slice(0, 10).map((it) => (
-            <li key={it.path} className="flex items-baseline gap-2 text-[10.5px]">
-              <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
-                {formatBytes(it.bytes)}
-              </span>
-              <span className="w-16 shrink-0 text-ink-faint">{it.platform ?? "—"}</span>
-              <span className="min-w-0 flex-1 truncate text-ink-dim" title={it.name}>
-                {it.name}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </details>
-
-      {dw.otherBytes > 0 ? (
-        <p className="mt-2 text-[10px] text-ink-faint">
-          {t("disk.deadweight.other", { size: formatBytes(dw.otherBytes) })}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
-function GroupRow({ group }: { group: CacheGroup }) {
-  const loadPreview = useDiskStore((s) => s.loadPreview);
-  const busy = useDiskStore((s) => s.busy);
-  const { t, locale } = useI18n();
-  const meta = LEVEL_META[group.level];
-  const details = group.details ?? [];
-  const [menu, setMenu] = useState<PathTarget | null>(null);
-  // L4 只给命令；聚合项（root 是 home）整项不可清，但 A4/A5 有明细时逐项确认
-  const cleanable = group.cleanable && group.level !== "l4";
-  const perItem = !cleanable && details.length > 0 && group.level !== "l4";
-  const actionable = cleanable || perItem;
-  // 聚合项的 root 是 home，右键打开它没有意义——只对「整根可清」的分组开放
-  const rootIsDir = group.cleanable && group.level !== "l4";
-
-  return (
-    <li
-      className="rounded-md px-2 py-1.5 transition-colors hover:bg-white/[0.03]"
-      onContextMenu={(e) => {
-        if (!rootIsDir) return;
-        e.preventDefault();
-        setMenu({ path: group.root, isDir: true, x: e.clientX, y: e.clientY });
-      }}
-      title={
-        rootIsDir ? t("disk.fileList.title", { path: group.root, tip: t("disk.pathMenu.rootTip") }) : group.root
-      }
-    >
-      <div className="flex items-center gap-2">
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[11.5px] text-ink">{cacheLabel(group, locale)}</span>
-          <span className="mt-0.5 block truncate text-[10px] text-ink-faint" title={group.root}>
-            {group.entryCount > 0
-              ? `${t("disk.group.entryCount", { n: group.entryCount })} · `
-              : ""}
-            {group.root}
-          </span>
-        </span>
-        <Badge tone={meta.tone}>
-          {meta.dot} {t(meta.labelKey)}
-        </Badge>
-        <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
-          {formatBytes(group.totalBytes)}
-        </span>
-        {actionable ? (
           <button
             type="button"
-            onClick={() => void loadPreview([group.key])}
-            disabled={busy || group.totalBytes === 0}
-            className="w-16 shrink-0 rounded bg-white/[0.05] px-1.5 py-1 text-[10px] text-ink-dim transition-colors hover:bg-accent/[0.12] hover:text-accent disabled:opacity-40"
+            onClick={onClose}
+            disabled={busy}
+            className="grid size-6 shrink-0 place-items-center rounded-ctl text-ink-faint transition-colors hover:bg-chip hover:text-ink disabled:opacity-40"
+            title={t("common.action.cancel")}
           >
-            {t("disk.group.preview")}
+            ✕
           </button>
-        ) : (
-          <span
-            className="w-16 shrink-0 text-center text-[10px] text-ink-faint"
-            title={group.level === "l4" ? t("disk.group.manualTip") : t("disk.group.statsOnlyTip")}
-          >
-            {group.level === "l4" ? t("disk.group.manual") : t("disk.group.statsOnly")}
-          </span>
-        )}
+        </div>
+
+        <div className="min-h-0 flex-1 overflow-y-auto px-5">
+          {loading || !preview ? (
+            <div className="space-y-1.5 py-2">
+              {[0, 1, 2, 3].map((i) => (
+                <div key={i} className="flex items-center gap-2">
+                  <span className="size-3 shrink-0 animate-pulse rounded-[3px] bg-chip" />
+                  <span className="h-2.5 w-56 animate-pulse rounded bg-chip" />
+                  <span className="ml-auto h-2.5 w-12 shrink-0 animate-pulse rounded bg-chip" />
+                </div>
+              ))}
+            </div>
+          ) : (
+            <ul className="space-y-0.5 pb-1">
+              {preview.items.map((it) => (
+                <DrawerItem
+                  key={it.path}
+                  item={it}
+                  checked={!drop.has(it.path)}
+                  onToggle={() =>
+                    setDrop((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(it.path)) next.delete(it.path);
+                      else next.add(it.path);
+                      return next;
+                    })
+                  }
+                />
+              ))}
+            </ul>
+          )}
+          {preview?.notes.map((n, i) => (
+            <p key={`${n.code}-${i}`} className="mb-1 text-[9.5px] leading-snug text-warn/90">
+              {reclaimNoteText(n, locale, groups)}
+            </p>
+          ))}
+        </div>
+
+        <div className="shrink-0 border-t border-hairline-soft px-5 py-2.5">
+          {needsConfirm ? (
+            <label className="mb-2 flex items-start gap-2 rounded-ctl border border-warn/25 bg-warn/[0.08] px-2.5 py-1.5">
+              <input
+                type="checkbox"
+                checked={confirmed}
+                onChange={(e) => setConfirmed(e.target.checked)}
+                className="mt-[1px] size-3 shrink-0 accent-[var(--color-warn)]"
+              />
+              <span className="text-[9.5px] leading-snug text-warn">{t("disk.drawer.l4warn", { n: l4Count })}</span>
+            </label>
+          ) : null}
+          <div className="flex items-center gap-2.5">
+            <span className="min-w-0 flex-1 truncate text-[9.5px] text-ink-faint">
+              {t("disk.drawer.recycleNote")}
+            </span>
+            <Btn onClick={onClose} disabled={busy}>
+              {t("common.action.cancel")}
+            </Btn>
+            <Btn
+              variant={needsConfirm ? "danger" : "primary"}
+              loading={busy}
+              disabled={list.length === 0 || (needsConfirm && !confirmed)}
+              onClick={() => onExecute(list, confirmed)}
+            >
+              {busy
+                ? t("disk.drawer.cleaning")
+                : list.length === 0
+                  ? t("disk.drawer.empty")
+                  : t("disk.drawer.clean", { size: formatBytes(size) })}
+            </Btn>
+          </div>
+        </div>
       </div>
-      {details.length > 0 ? <GroupDetails details={details} /> : null}
-      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
+    </div>
+  );
+}
+
+/** 抽屉里的一行：勾选 + 名称 + 体积；可展开一级子项（按需加载，不预取 50 次 IPC） */
+function DrawerItem({
+  item,
+  checked,
+  onToggle,
+}: {
+  item: ReclaimItem;
+  checked: boolean;
+  onToggle: () => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+
+  return (
+    <li>
+      <div
+        className="flex items-center gap-2 rounded-ctl px-1 py-[3px] transition-colors hover:bg-chip"
+        onContextMenu={(e) => {
+          e.preventDefault();
+          setMenu({ x: e.clientX, y: e.clientY });
+        }}
+      >
+        <Check checked={checked} onChange={onToggle} label={item.label} />
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
+          title={t("disk.drawer.itemTip")}
+        >
+          <ChevronRightIcon
+            size={10}
+            className={`shrink-0 text-ink-faint transition-transform ${open ? "rotate-90" : ""}`}
+          />
+          <span className={`min-w-0 flex-1 truncate text-[10.5px] ${checked ? "text-ink-dim" : "text-ink-faint line-through"}`}>
+            {item.label}
+          </span>
+        </button>
+        <span className="w-14 shrink-0 text-right font-mono text-[10.5px] tabular-nums text-ink-dim">
+          {formatBytes(item.bytes)}
+        </span>
+      </div>
+      {open ? (
+        <div className="ml-[21px] pb-1">
+          <FileList root={item.path} />
+        </div>
+      ) : null}
+      {menu ? (
+        <PathMenu x={menu.x} y={menu.y} path={item.path} isDir onClose={() => setMenu(null)} />
+      ) : null}
     </li>
   );
 }
 
-/** A4/A5 明细：按体积降序（Rust 侧已排），Top 20 + 「N 天未改动」，>180 天标灰 */
-function GroupDetails({ details }: { details: DetailItem[] }) {
+/* ==========================================================================
+   路径右键菜单（spec §7.4）—— 统一走 PopMenu，命名空间与结束进程菜单隔离
+   ========================================================================== */
+
+function PathMenu({
+  x,
+  y,
+  path,
+  isDir,
+  onClose,
+}: {
+  x: number;
+  y: number;
+  path: string;
+  isDir: boolean;
+  onClose: () => void;
+}) {
   const { t } = useI18n();
-  const stale = details.filter((d) => d.ageDays > STALE_DAYS).length;
-  const shown = details.slice(0, 20);
-  const [menu, setMenu] = useState<PathTarget | null>(null);
-  return (
-    <details className="mt-1 pl-2">
-      <summary className="cursor-pointer text-[10px] text-ink-faint hover:text-ink-dim">
-        {t("disk.details.summary", { n: details.length })}
-        {stale > 0 ? t("disk.details.stale", { n: stale, days: STALE_DAYS }) : ""}
-      </summary>
-      <ul className="mt-1 space-y-0.5">
-        {shown.map((d) => (
-          <li
-            key={d.path}
-            className="flex items-baseline gap-2 text-[10.5px]"
-            onContextMenu={(e) => {
-              e.preventDefault();
-              setMenu({ path: d.path, isDir: true, x: e.clientX, y: e.clientY });
-            }}
-            title={t("disk.fileList.title", { path: d.path, tip: t("disk.pathMenu.rootTip") })}
-          >
-            <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
-              {formatBytes(d.bytes)}
-            </span>
-            <span className="w-20 shrink-0 text-ink-faint">{formatAge(d.ageDays, t)}</span>
-            <span
-              className={`min-w-0 flex-1 truncate ${d.ageDays > STALE_DAYS ? "text-ink-faint" : "text-ink-dim"}`}
-            >
-              {d.note ?? d.name}
-            </span>
-          </li>
-        ))}
-        {details.length > shown.length ? (
-          <li className="text-[10px] text-ink-faint">
-            {t("disk.details.more", { n: details.length - shown.length })}
-          </li>
-        ) : null}
-      </ul>
-      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
-    </details>
-  );
-}
-
-/** 右键菜单目标：路径 + 是否目录 + 屏幕坐标 */
-type PathTarget = { path: string; isDir: boolean; x: number; y: number };
-
-function joinPath(root: string, name: string): string {
-  return `${root.replace(/\/+$/, "")}/${name}`;
-}
-
-/**
- * 路径右键菜单：在 Finder 中打开 / 复制路径。
- * 目录直接开窗，文件用 `open -R` 定位选中（Rust 侧 reveal_path）。
- */
-function PathMenu({ target, onClose }: { target: PathTarget; onClose: () => void }) {
-  const [err, setErr] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const { t } = useI18n();
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  // 视口内收口，避免贴边被裁
-  const x = Math.min(target.x, window.innerWidth - 196);
-  const y = Math.min(target.y, window.innerHeight - 112);
 
   const reveal = async () => {
     if (!isTauri()) {
-      setErr(t("disk.err.needsDesktop"));
+      toast(t("disk.err.needsDesktop"), "error");
       return;
     }
     try {
-      await revealPath(target.path);
-      onClose();
+      await revealPath(path);
+      toast(t("disk.pathMenu.revealOk"), "ok");
     } catch (e) {
-      setErr(String(e));
+      toast(String(e), "error");
     }
   };
 
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(target.path);
-      setCopied(true);
-      onClose();
+      await navigator.clipboard.writeText(path);
+      toast(t("disk.pathMenu.copyOk"), "ok");
     } catch {
-      setErr(t("common.action.copyFailed"));
+      toast(t("disk.pathMenu.copyFail"), "error");
     }
   };
 
   return (
-    <>
-      <div
-        className="fixed inset-0 z-40"
-        onClick={onClose}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onClose();
-        }}
-      />
-      <div
-        className="fixed z-50 w-[184px] rounded-lg border border-hairline bg-surface-raised py-1 shadow-2xl shadow-black/50"
-        style={{ left: x, top: y }}
-      >
-        <button
-          type="button"
-          onClick={() => void reveal()}
-          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
-        >
-          {target.isDir ? <FolderIcon size={12} /> : <FileIcon size={12} />}
-          {target.isDir ? t("disk.pathMenu.openDir") : t("disk.pathMenu.revealFile")}
-        </button>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className="flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-[11px] text-ink-dim transition-colors hover:bg-white/[0.06] hover:text-ink"
-        >
-          <span className="w-3 text-center font-mono text-[10px] text-ink-faint">⧉</span>
-          {copied ? t("common.action.copied") : t("disk.pathMenu.copyPath")}
-        </button>
-        {err ? (
-          <p className="border-t border-hairline-soft px-2.5 pt-1.5 pb-1 text-[10px] leading-snug text-danger">
-            {err}
-          </p>
-        ) : null}
-      </div>
-    </>
+    <PopMenu
+      x={x}
+      y={y}
+      onClose={onClose}
+      items={[
+        {
+          label: isDir ? t("disk.pathMenu.openDir") : t("disk.pathMenu.revealFile"),
+          icon: isDir ? <FolderIcon size={12} /> : <FileIcon size={12} />,
+          onSelect: () => void reveal(),
+        },
+        { label: t("disk.pathMenu.copyPath"), icon: <span className="font-mono text-[10px]">⧉</span>, onSelect: () => void copy() },
+      ]}
+    />
   );
 }
 
 /**
  * 一级子项列表：像 Finder 一样逐条列出文件/目录。
- * 明细由独立命令按需加载（du 慢，不拖住预览弹层）；左键直接打开，右键出菜单。
+ * 只在用户点开某条时挂载 —— 旧版对清单里每条都无条件拉一次 `reclaim_children`，
+ * 50 条清单就是 50 次 du，抽屉一开就卡。
  */
 function FileList({ root }: { root: string }) {
   const [children, setChildren] = useState<ReclaimChild[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
-  const [menu, setMenu] = useState<PathTarget | null>(null);
-  const [toast, setToast] = useState<string | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
   const { t } = useI18n();
 
   useEffect(() => {
@@ -715,32 +1017,18 @@ function FileList({ root }: { root: string }) {
     };
   }, [root]);
 
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2600);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  const openInFinder = async (p: string) => {
-    try {
-      await revealPath(p);
-    } catch (e) {
-      setToast(String(e));
-    }
-  };
-
   return (
     <>
-      <ul className="mt-1 max-h-40 overflow-y-auto rounded-md bg-white/[0.02] py-1">
+      <ul className="mt-0.5 max-h-32 overflow-y-auto rounded-ctl bg-surface-sunk py-0.5">
         {children === null ? (
           err ? (
-            <li className="px-2 py-1.5 text-[10px] text-danger">{err}</li>
+            <li className="px-2 py-1 text-[9.5px] text-danger">{err}</li>
           ) : (
             [0, 1, 2].map((i) => (
-              <li key={i} className="flex items-center gap-2 px-2 py-[5px]">
-                <span className="size-3 shrink-0 animate-pulse rounded-sm bg-white/[0.08]" />
-                <span className="h-2 w-40 animate-pulse rounded bg-white/[0.06]" />
-                <span className="ml-auto h-2 w-10 shrink-0 animate-pulse rounded bg-white/[0.05]" />
+              <li key={i} className="flex items-center gap-2 px-2 py-[3px]">
+                <span className="size-3 shrink-0 animate-pulse rounded-sm bg-chip" />
+                <span className="h-2 w-40 animate-pulse rounded bg-chip" />
+                <span className="ml-auto h-2 w-10 shrink-0 animate-pulse rounded bg-chip" />
               </li>
             ))
           )
@@ -751,21 +1039,21 @@ function FileList({ root }: { root: string }) {
               <li key={c.name}>
                 <button
                   type="button"
-                  onClick={() => void openInFinder(full)}
+                  onClick={() =>
+                    void (isTauri()
+                      ? revealPath(full).catch((e) => toast(String(e), "error"))
+                      : toast(t("disk.err.needsDesktop"), "error"))
+                  }
                   onContextMenu={(e) => {
                     e.preventDefault();
-                    setMenu({ path: full, isDir: c.isDir ?? false, x: e.clientX, y: e.clientY });
+                    setMenu({ x: e.clientX, y: e.clientY, path: full, isDir: c.isDir ?? false });
                   }}
-                  className="flex w-full items-center gap-2 px-2 py-[3px] text-left text-[10px] text-ink-dim transition-colors hover:bg-white/[0.05] hover:text-ink"
-                  title={t("disk.fileList.title", {
-                    path: full,
-                    tip: t("disk.pathMenu.openWithTip"),
-                  })}
+                  className="flex w-full items-center gap-2 px-2 py-[2px] text-left text-[9.5px] text-ink-dim transition-colors hover:bg-chip hover:text-ink"
                 >
                   {c.isDir ? (
-                    <FolderIcon size={11} className="shrink-0 text-accent/70" />
+                    <FolderIcon size={10} className="shrink-0 text-accent/70" />
                   ) : (
-                    <FileIcon size={11} className="shrink-0 text-ink-faint" />
+                    <FileIcon size={10} className="shrink-0 text-ink-faint" />
                   )}
                   <span className="min-w-0 flex-1 truncate font-mono">{c.name}</span>
                   <span className="shrink-0 font-mono tabular-nums text-ink-faint">
@@ -777,134 +1065,139 @@ function FileList({ root }: { root: string }) {
           })
         )}
       </ul>
-      {toast ? (
-        <div className="fixed bottom-16 left-5 z-50 rounded-md border border-danger/30 bg-danger/[0.12] px-3 py-2 text-[10.5px] text-danger shadow-xl">
-          {toast}
-        </div>
+      {menu ? (
+        <PathMenu
+          x={menu.x}
+          y={menu.y}
+          path={menu.path}
+          isDir={menu.isDir}
+          onClose={() => setMenu(null)}
+        />
       ) : null}
-      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
     </>
   );
 }
 
-function PreviewPanel() {
-  const preview = useDiskStore((s) => s.preview)!;
-  const execute = useDiskStore((s) => s.execute);
-  const clear = useDiskStore((s) => s.clearPreview);
+function joinPath(root: string, name: string): string {
+  return `${root.replace(/\/+$/, "")}/${name}`;
+}
+
+/* ==========================================================================
+   A1 杀手卡：跨平台二进制
+   ========================================================================== */
+
+function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats }) {
+  const loadPreview = useDiskStore((s) => s.loadPreview);
   const busy = useDiskStore((s) => s.busy);
-  // 说明里的组名要按当前语言渲染：报告在 store 里，组不在（过期）时退回 key。
-  // 不把 `?? []` 写进 selector：每次返回新数组会让 useSyncExternalStore 判定快照变化。
-  const report = useDiskStore((s) => s.report);
-  const groups = report?.groups ?? [];
-  const [confirmed, setConfirmed] = useState(false);
-  const [menu, setMenu] = useState<PathTarget | null>(null);
   const { t, locale } = useI18n();
 
-  // 弹层先出：清单还没生成时只渲染骨架
-  if (!preview) {
-    return (
-      <div className="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-[#0b0e11]/95 px-5 py-3 backdrop-blur-xl">
-        <h3 className="text-[12px] font-medium text-ink">
-          {t("disk.preview.building")}
-          <span className="animate-pulse text-ink-faint">…</span>
-        </h3>
-        <div className="mt-2 space-y-1.5">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="flex items-center gap-2">
-              <span className="h-2.5 w-14 animate-pulse rounded bg-white/[0.06]" />
-              <span className="h-2.5 w-64 animate-pulse rounded bg-white/[0.05]" />
-            </div>
-          ))}
-        </div>
-      </div>
-    );
-  }
-
-  const blocked = preview.needsConfirm && !confirmed;
-  const shown = preview.items.slice(0, 50);
-
   return (
-    <div className="fixed inset-x-0 bottom-0 z-20 border-t border-hairline bg-[#0b0e11]/95 px-5 py-3 backdrop-blur-xl">
-      <div className="flex items-start justify-between gap-4">
+    <section className="mt-2.5 rounded-card border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h3 className="text-[12px] font-medium text-ink">
-            {t("disk.preview.title", { size: formatBytes(preview.totalBytes) })}
-            <span className="ml-1.5 text-[10px] font-normal text-ink-faint">
-              {t("disk.preview.meta", { n: preview.items.length })}
-            </span>
-          </h3>
-          <ul className="mt-1 max-h-56 overflow-y-auto pr-2">
-            {shown.map((it) => (
-              <li key={it.path}>
-                <div
-                  className="flex items-baseline gap-2 text-[10px] text-ink-faint"
-                  onContextMenu={(e) => {
-                    e.preventDefault();
-                    setMenu({ path: it.path, isDir: true, x: e.clientX, y: e.clientY });
-                  }}
-                  title={t("disk.fileList.title", {
-                    path: it.path,
-                    tip: t("disk.pathMenu.rootTip"),
-                  })}
-                >
-                  <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
-                    {formatBytes(it.bytes)}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">{it.label}</span>
-                </div>
-                <div className="ml-[68px]">
-                  <p className="text-[9.5px] text-ink-faint/80">{t("disk.preview.itemTip")}</p>
-                  <FileList root={it.path} />
-                </div>
-              </li>
-            ))}
-            {preview.items.length > shown.length ? (
-              <li className="text-[10px] text-ink-faint">
-                {t("disk.preview.more", { n: preview.items.length - shown.length })}
-              </li>
-            ) : null}
-          </ul>
-          {preview.notes.map((n, i) => (
-            <p key={`${n.code}-${i}`} className="mt-1 text-[10px] text-warn/90">
-              {reclaimNoteText(n, locale, groups)}
-            </p>
-          ))}
+          <h2 className="text-[12px] font-semibold tracking-tight text-ink">
+            🟢 {t("disk.deadweight.title", { size: formatBytes(dw.bytes) })}
+          </h2>
+          <p className="mt-0.5 text-[9.5px] text-ink-faint">
+            {t("disk.deadweight.meta", {
+              label: cacheLabel(group, locale),
+              n: dw.entryCount,
+            })}
+            {dw.ratio != null ? t("disk.deadweight.ratio", { ratio: dw.ratio.toFixed(1) }) : ""}
+            {t("disk.deadweight.native", { size: formatBytes(dw.nativeBytes) })}
+          </p>
         </div>
-
-        <div className="flex shrink-0 flex-col items-end gap-2">
-          {preview.needsConfirm ? (
-            <label className="flex items-center gap-1.5 text-[10.5px] text-warn">
-              <input
-                type="checkbox"
-                checked={confirmed}
-                onChange={(e) => setConfirmed(e.target.checked)}
-                className="size-3 accent-[#34d399]"
-              />
-              {preview.totalBytes > 20 * 1024 ** 3
-                ? t("disk.preview.confirmBig")
-                : t("disk.preview.confirmLevel")}
-            </label>
-          ) : null}
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={clear}
-              className="rounded-md bg-white/[0.05] px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-white/[0.09] hover:text-ink"
-            >
-              {t("common.action.cancel")}
-            </button>
-            <button
-              type="button"
-              disabled={busy || blocked || preview.items.length === 0}
-              onClick={() => void execute(confirmed)}
-              className="rounded-md bg-accent/[0.14] px-2.5 py-1.5 text-[11px] font-medium text-accent transition-colors hover:bg-accent/25 disabled:opacity-40"
-            >
-              {busy ? t("common.action.executing") : t("disk.preview.execute")}
-            </button>
-          </div>
-        </div>
+        <Btn variant="primary" onClick={() => void loadPreview([group.key])} disabled={busy}>
+          {t("disk.deadweight.preview")}
+        </Btn>
       </div>
-      {menu ? <PathMenu target={menu} onClose={() => setMenu(null)} /> : null}
-    </div>
+
+      <div className="mt-1.5 grid grid-cols-2 gap-x-6">
+        {dw.byPlatform.map((p) => (
+          <div key={p.platform} className="flex items-baseline justify-between text-[9.5px]">
+            <span className="font-mono text-ink-dim">{p.platform}</span>
+            <span className="font-mono tabular-nums text-ink-faint">
+              {t("disk.deadweight.platformEntry", { n: p.entryCount, size: formatBytes(p.bytes) })}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* 浪费 vs 可用双段条：「浪费比 3.2 : 1」的比例一眼可见，数字仍保留 */}
+      <StackBar
+        className="mt-2"
+        height={4}
+        ariaLabel={
+          dw.ratio != null
+            ? t("disk.deadweight.ariaRatio", {
+                waste: formatBytes(dw.bytes),
+                native: formatBytes(dw.nativeBytes),
+                ratio: dw.ratio.toFixed(1),
+              })
+            : t("disk.deadweight.aria", {
+                waste: formatBytes(dw.bytes),
+                native: formatBytes(dw.nativeBytes),
+              })
+        }
+        segments={[
+          { key: "waste", label: t("disk.deadweight.segWaste"), value: dw.bytes, tone: "accent" },
+          { key: "native", label: t("disk.deadweight.segNative"), value: dw.nativeBytes, tone: "neutral" },
+        ]}
+      />
+      <p className="mt-1 text-[9.5px] text-ink-faint">
+        {dw.ratio != null
+          ? t("disk.deadweight.summaryRatio", {
+              waste: formatBytes(dw.bytes),
+              native: formatBytes(dw.nativeBytes),
+              ratio: dw.ratio.toFixed(1),
+            })
+          : t("disk.deadweight.summary", {
+              waste: formatBytes(dw.bytes),
+              native: formatBytes(dw.nativeBytes),
+            })}
+      </p>
+
+      {dw.byPlatform.length > 1 ? (
+        <BarList
+          className="mt-1.5"
+          rows={dw.byPlatform.map((p) => ({
+            key: p.platform,
+            label: p.platform,
+            value: p.bytes,
+            display: formatBytes(p.bytes),
+            title: t("disk.deadweight.barTitle", {
+              platform: p.platform,
+              n: p.entryCount,
+              size: formatBytes(p.bytes),
+            }),
+          }))}
+        />
+      ) : null}
+
+      <details className="mt-1.5">
+        <summary className="cursor-pointer text-[9.5px] text-ink-faint hover:text-ink-dim">
+          {t("disk.deadweight.topItems", { n: Math.min(dw.items.length, 10) })}
+        </summary>
+        <ul className="mt-1 space-y-0.5">
+          {dw.items.slice(0, 10).map((it) => (
+            <li key={it.path} className="flex items-baseline gap-2 text-[9.5px]">
+              <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
+                {formatBytes(it.bytes)}
+              </span>
+              <span className="w-16 shrink-0 text-ink-faint">{it.platform ?? "—"}</span>
+              <span className="min-w-0 flex-1 truncate text-ink-dim" title={it.name}>
+                {it.name}
+              </span>
+            </li>
+          ))}
+        </ul>
+      </details>
+
+      {dw.otherBytes > 0 ? (
+        <p className="mt-1.5 text-[9.5px] text-ink-faint">
+          {t("disk.deadweight.other", { size: formatBytes(dw.otherBytes) })}
+        </p>
+      ) : null}
+    </section>
   );
 }
