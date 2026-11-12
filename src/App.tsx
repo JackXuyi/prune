@@ -3,11 +3,19 @@ import { useEffect, useState } from "react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import { isTauri } from "./lib/ipc";
+import { initTheme } from "./lib/theme";
 import { Island } from "./panels/Island";
 import { MenuBarPanel } from "./panels/MenuBarPanel";
 import { useDiskStore } from "./stores/diskStore";
 import { useMemStore } from "./stores/memStore";
 import { MainWindow } from "./windows/MainWindow";
+
+/**
+ * 主题必须在首帧前落到 <html>：模块体在 render 之前执行，
+ * 放到 useEffect 里会先按深色画一帧再翻成浅色（闪白）。
+ * 三个窗口共用 index.html，各自跑一次 initTheme 也无副作用（幂等）。
+ */
+initTheme();
 
 /** 三个窗口共用同一个 index.html，靠窗口 label 分流；浏览器里可用 ?window=panel 强制 */
 function detectWindowLabel(): string {

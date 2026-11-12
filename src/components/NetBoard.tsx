@@ -56,12 +56,10 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
   return (
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-[15px] font-semibold tracking-tight">{t("net.title")}</h1>
-          <p className="mt-0.5 text-[11px] text-ink-faint">
-            {page === "monitor" ? t("net.subMonitor") : t("net.subDiag")}
-          </p>
-        </div>
+        {/* 页名在顶栏（spec §1.3）；副标区分「监控 / 诊断」两个子页，保留 */}
+        <p className="text-[11px] text-ink-faint">
+          {page === "monitor" ? t("net.subMonitor") : t("net.subDiag")}
+        </p>
         <Segmented page={page} onChange={setPage} />
       </div>
 

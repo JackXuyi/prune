@@ -42,7 +42,7 @@ const ITEMS: RailItem[] = [
   { id: "memory", labelKey: "nav.memory", hintKey: "nav.memoryHint", icon: MemoryCloudIcon, color: "var(--color-info)" },
   { id: "disk", labelKey: "nav.disk", hintKey: "nav.diskHint", icon: DatabaseIcon, color: "var(--color-accent)" },
   { id: "net", labelKey: "nav.net", hintKey: "nav.netHint", icon: GlobeIcon, color: "var(--color-domain-net)" },
-  { id: "ports", labelKey: "nav.ports", hintKey: "nav.portsHint", icon: PortJackIcon, color: "var(--color-warn)" },
+  { id: "ports", labelKey: "nav.ports", hintKey: "nav.portsHint", icon: PortJackIcon, color: "var(--color-domain-port)" },
 ];
 
 export function RailNav({
@@ -57,7 +57,7 @@ export function RailNav({
   const { t } = useI18n();
   return (
     <nav
-      className="flex w-14 shrink-0 flex-col items-center border-r border-hairline-soft bg-black/[0.18] py-3"
+      className="flex w-[58px] shrink-0 flex-col items-center border-r border-hairline-soft bg-black/[0.18] py-3"
       aria-label={t("nav.mainAria")}
     >
       {/* Logo：无交互（点击无动作，沿用 UX v3 §5.1） */}
@@ -76,8 +76,8 @@ export function RailNav({
             aria-selected={active}
             title={`${t(it.labelKey)} · ${t(it.hintKey)}`}
             onClick={() => onChange(it.id)}
-            className={`prune-anim relative grid size-11 place-items-center rounded-[10px] transition-colors ${
-              active ? "bg-white/[0.06] text-ink" : "text-ink-faint hover:bg-white/[0.04] hover:text-ink-dim"
+            className={`prune-anim relative grid size-10 place-items-center rounded-[10px] transition-colors ${
+              active ? "bg-chip-hover text-ink" : "text-ink-faint hover:bg-chip hover:text-ink-dim"
             }`}
             style={active ? { color: it.color } : undefined}
           >
@@ -100,7 +100,7 @@ export function RailNav({
         onClick={onOpenSettings}
         title={t("nav.settingsHint")}
         aria-label={t("nav.settings")}
-        className="grid size-11 place-items-center rounded-[10px] text-ink-faint transition-colors hover:bg-white/[0.04] hover:text-ink-dim"
+        className="grid size-10 place-items-center rounded-[10px] text-ink-faint transition-colors hover:bg-chip hover:text-ink-dim"
       >
         <GearIcon size={17} />
       </button>

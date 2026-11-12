@@ -18,7 +18,7 @@ import {
   ChevronRightIcon,
   RefreshIcon,
 } from "../components/icons";
-import { Badge, CompareBar, PressureDot, Stat } from "../components/primitives";
+import { Badge, CompareBar, PressureDot, Stat, ToastHost } from "../components/primitives";
 import type { I18n } from "../i18n";
 import { useI18n } from "../i18n/store";
 import type { NoParamKey } from "../i18n/types";
@@ -61,6 +61,16 @@ const TAB_LABEL: Record<MainTab, NoParamKey> = {
   ports: "nav.ports",
 };
 
+/** 顶栏副标：与 RailNav 的 hover hint 同源，避免两处各写一份说明 */
+const TAB_HINT: Record<MainTab, NoParamKey> = {
+  stats: "nav.statsHint",
+  resources: "nav.resourcesHint",
+  memory: "nav.memoryHint",
+  disk: "nav.diskHint",
+  net: "nav.netHint",
+  ports: "nav.portsHint",
+};
+
 /**
  * 外部 tab 事件（菜单栏面板 openMain → Rust 广播）的旧 id 映射：
  * 合并前有 "apps" / "overview" 两个内存 tab，合并后统一落「内存」。
@@ -93,6 +103,11 @@ export function MainWindow() {
   const [backTo, setBackTo] = useState<MainTab | null>(null);
   /** 设置弹层（齿轮）开关 */
   const [settingsOpen, setSettingsOpen] = useState(false);
+  /**
+   * 已「忽略」的错误文案。存字符串而不是布尔值：
+   * 同一个错误忽略一次就够，换成新错误要立刻重新出现 —— 比存 boolean 少一个副作用。
+   */
+  const [errorMuted, setErrorMuted] = useState<string | null>(null);
   const snapshot = useMemStore((s) => s.snapshot);
   const processes = useMemStore((s) => s.processes);
   const loading = useMemStore((s) => s.loading);
@@ -345,8 +360,14 @@ export function MainWindow() {
       <RailNav value={tab} onChange={(t) => go(t)} onOpenSettings={() => setSettingsOpen(true)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-12 shrink-0 items-center gap-3 border-b border-hairline px-5">
-          <span className="text-[13px] font-semibold tracking-tight">{t(TAB_LABEL[tab])}</span>
+        <header className="flex h-12 shrink-0 items-center gap-2.5 border-b border-hairline-soft px-[18px]">
+          {/* 标题 + 副标：副标来自 rail 的 hover hint，把「这页是干什么的」写进常驻位置 */}
+          <div className="flex min-w-0 items-baseline gap-2">
+            <span className="text-[13.5px] font-semibold tracking-tight whitespace-nowrap">
+              {t(TAB_LABEL[tab])}
+            </span>
+            <span className="truncate text-[10.5px] text-ink-faint">{t(TAB_HINT[tab])}</span>
+          </div>
           <div className="flex-1" />
           {/* 下钻返回（UX v3 §4.2）：所有跨页跳转必须可一键回来源 */}
           {backTo && backTo !== tab ? (
@@ -389,9 +410,32 @@ export function MainWindow() {
           </button>
         </header>
 
-        {error ? (
-          <div className="mx-5 mt-3 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">
-            {error}
+        {/* 全局错误条（spec §6.1）：贴边 32px，只留最高优先级一条；
+            同一时刻多条错误时 store 只暴露一个 error，所以这里天然单一。 */}
+        {error && error !== errorMuted ? (
+          <div className="flex h-8 shrink-0 items-center gap-2 border-b border-danger/25 bg-danger/10 px-[18px] text-[10.5px] text-danger">
+            <svg width="12" height="12" viewBox="0 0 12 12" fill="none" aria-hidden className="shrink-0">
+              <path d="M6 1.6 L11 10.4 H1 Z" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round" />
+              <path d="M6 4.7 v2.4" stroke="currentColor" strokeWidth="1.1" strokeLinecap="round" />
+              <circle cx="6" cy="9" r="0.6" fill="currentColor" />
+            </svg>
+            <span className="min-w-0 flex-1 truncate" title={error}>
+              {error}
+            </span>
+            <button
+              type="button"
+              onClick={onRefresh}
+              className="shrink-0 rounded px-1.5 py-0.5 text-[10.5px] font-medium transition-colors hover:bg-danger/15"
+            >
+              {t("common.action.retry")}
+            </button>
+            <button
+              type="button"
+              onClick={() => setErrorMuted(error)}
+              className="shrink-0 rounded px-1.5 py-0.5 text-[10.5px] opacity-70 transition-colors hover:bg-danger/15 hover:opacity-100"
+            >
+              {t("common.action.dismiss")}
+            </button>
           </div>
         ) : null}
 
@@ -522,6 +566,9 @@ export function MainWindow() {
 
         {killTarget ? <ProcKillMenu target={killTarget} onClose={() => setKillTarget(null)} /> : null}
       </div>
+
+      {/* Toast 单例宿主（spec §3.8）：挂根节点，portal 到 body，不受任何 overflow/transform 裁切 */}
+      <ToastHost />
     </div>
   );
 }
@@ -658,11 +705,9 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
         });
 
   return (
-    <div className="space-y-4">
-      <div>
-        <h1 className="text-[15px] font-semibold tracking-tight">{t("memory.title")}</h1>
-        <p className="mt-0.5 text-[11px] text-ink-faint">{t("memory.subtitle")}</p>
-      </div>
+      <div className="space-y-4">
+        {/* 页名在顶栏（spec §1.3）；副标是本页口径说明，保留 */}
+        <p className="text-[11px] text-ink-faint">{t("memory.subtitle")}</p>
 
       {/* UI v4（§6.3）：左统计 + 右压力环。环比值口径随平台 metrics 不同，
           caption 写明换算，不冒充「占用率」 */}

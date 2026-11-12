@@ -36,6 +36,7 @@ const zh = {
     deepScan: "深探",
     viewDetails: "看明细",
     retry: "重试",
+    dismiss: "忽略",
   },
   progress: {
     scanning: "扫描中…",
@@ -80,6 +81,7 @@ const zh = {
     statsCadence: "内存 / CPU 每 10 s · 网速每 2 s · 端口仅进入端口页时扫描",
     statsPrinciple:
       "统计只呈现事实读数与口径。清理入口在「存储」，结束进程在「内存」与「端口」的实体行上——总览不放破坏性按钮。",
+    proposalNew: "新增提案",
   },
   err: {
     prefix: "不可读：",
@@ -117,6 +119,7 @@ const en: MessageTree<typeof zh> = {
     deepScan: "Deep scan",
     viewDetails: "Details",
     retry: "Retry",
+    dismiss: "Dismiss",
   },
   progress: {
     scanning: "Scanning…",
@@ -162,6 +165,7 @@ const en: MessageTree<typeof zh> = {
       "Memory / CPU every 10 s · network every 2 s · ports only when the Ports tab is open",
     statsPrinciple:
       "Stats show facts and their measurement basis only. Cleanup lives in Storage; killing processes happens on the rows in Memory and Ports — no destructive buttons on the overview.",
+    proposalNew: "Proposed",
   },
   err: {
     prefix: "Unavailable: ",

@@ -92,8 +92,8 @@ export function PortBoard({
     <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
-          <h1 className="text-[15px] font-semibold tracking-tight">{t("ports.title")}</h1>
-          <p className="mt-0.5 text-[11px] text-ink-faint">
+          {/* 页名在顶栏（spec §1.3）；副标区分「端口 / 局域网」两个子页 */}
+          <p className="text-[11px] text-ink-faint">
             {page === "ports" ? t("ports.subPorts") : t("ports.subLan")}
           </p>
         </div>

@@ -12,24 +12,80 @@
   --color-ink-dim: #99a1aa;
   --color-ink-faint: #656d77;
   --color-accent: #34d399;
-  --color-accent-soft: #1f6f56;
+  --color-accent-soft: rgba(52, 211, 153, 0.12);
+  /* 品牌绿上的文字色：深绿底配近黑字，浅色主题的深绿底配白字 */
+  --color-accent-ink: #0b1210;
   --color-warn: #f5b74a;
+  --color-warn-soft: rgba(245, 183, 74, 0.12);
   --color-danger: #f0705f;
+  --color-danger-soft: rgba(240, 112, 95, 0.12);
   --color-info: #6aa9ff;
+  --color-info-soft: rgba(106, 169, 255, 0.12);
 
   /* UI v4「Quiet Cockpit」域色（ui-redesign-v4-plan.md §3.2）：
      颜色即语义 —— 每个资源域一个专属色，贯穿图标 / 图表 / 导航选中态。
      mem/info、port/warn 与旧 token 同值，只补 CPU 与网络两个缺口。 */
   --color-domain-cpu: #a78bfa;
   --color-domain-net: #22d3ee;
+  /* UI v5：端口域色原先借用 warn，红色告警时与「警告」语义撞车，独立一档 */
+  --color-domain-port: #f2a35c;
+  --color-cpu-soft: rgba(167, 139, 250, 0.14);
+  --color-net-soft: rgba(34, 211, 238, 0.12);
+  --color-port-soft: rgba(242, 163, 92, 0.14);
+
+  /* UI v5：把散落各处的 bg-white/[0.0x] 收敛成两级中性面。
+     浅色主题下这两个值翻转为黑底 alpha，组件不必按主题写两套。 */
+  --color-surface-sunk: #0b0e11;
+  --color-chip: rgba(255, 255, 255, 0.045);
+  --color-chip-hover: rgba(255, 255, 255, 0.08);
+  /* L4 不可回收段的斜纹线色 */
+  --color-hatch: rgba(255, 255, 255, 0.1);
 
   /* 大数字字号：Hero 40px / 域卡 24px（§6） */
   --radius-hero: 18px;
+  /* UI v5 圆角三档：卡片 / 控件 / 弹层内块 */
+  --radius-card: 13px;
+  --radius-ctl: 7px;
+  --radius-pop: 8px;
 
   --font-sans:
     -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", "PingFang SC",
     sans-serif;
   --font-mono: ui-monospace, "SF Mono", Menlo, "Roboto Mono", monospace;
+}
+
+/* UI v5 浅色主题（spec §2.3）。
+   @theme 只声明默认值，主题切换靠同名变量覆盖 —— Tailwind 工具类引用的是
+   var(--color-*) 而不是内联色值，所以运行时换主题不需要重新构建。
+   对比度：#0e9e6e on #fff = 4.52:1（AA）；#34d399 只有 1.98:1，浅色下不可用。 */
+:root[data-theme="light"] {
+  --color-surface: #f4f6f8;
+  --color-surface-raised: #ffffff;
+  --color-surface-overlay: #ffffff;
+  --color-surface-sunk: #eef1f4;
+  --color-hairline: #dfe5ea;
+  --color-hairline-soft: #e8edf1;
+  --color-ink: #171c21;
+  --color-ink-dim: #5b656f;
+  --color-ink-faint: #8b949e;
+  --color-accent: #0e9e6e;
+  --color-accent-ink: #ffffff;
+  --color-accent-soft: rgba(14, 158, 110, 0.1);
+  --color-warn: #b97a12;
+  --color-warn-soft: rgba(185, 122, 18, 0.1);
+  --color-danger: #c94f40;
+  --color-danger-soft: rgba(201, 79, 64, 0.1);
+  --color-info: #2273cc;
+  --color-info-soft: rgba(34, 115, 204, 0.1);
+  --color-domain-cpu: #7c5cd6;
+  --color-domain-net: #0e9cba;
+  --color-domain-port: #b87333;
+  --color-cpu-soft: rgba(124, 92, 214, 0.1);
+  --color-net-soft: rgba(14, 156, 186, 0.1);
+  --color-port-soft: rgba(184, 115, 51, 0.12);
+  --color-chip: rgba(0, 0, 0, 0.045);
+  --color-chip-hover: rgba(0, 0, 0, 0.075);
+  --color-hatch: rgba(0, 0, 0, 0.14);
 }
 
 html,
@@ -53,12 +109,12 @@ body {
 }
 
 *::-webkit-scrollbar-thumb {
-  background: #2b323a;
+  background: color-mix(in srgb, var(--color-ink-faint) 35%, transparent);
   border-radius: 999px;
 }
 
 *::-webkit-scrollbar-thumb:hover {
-  background: #3a424c;
+  background: color-mix(in srgb, var(--color-ink-faint) 60%, transparent);
 }
 
 *::-webkit-scrollbar-track {
@@ -109,9 +165,7 @@ body {
   to {
     opacity: 1;
   }
-}
-
-.prune-icon-in {
+}.prune-icon-in {
   animation: prune-icon-in 180ms ease-out both;
 }
 
@@ -119,6 +173,21 @@ body {
   .prune-anim {
     animation: none !important;
     transition: none !important;
+  }
+}
+
+/* UI v5 全局动效兜底（spec §11.2）：
+   上面的 .prune-anim 只管显式标记的元素，遗漏处仍会动。
+   iteration-count:1 是关键 —— 只把 duration 压到 0.01ms 会让 infinite 动画变成
+   高频重绘，比不动更糟。 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
 
@@ -153,4 +222,32 @@ body {
       opacity: 1;
     }
   }
+}
+
+/* 清理抽屉（spec §7.2）：遮罩 160 ms 淡入 + 面板 translateY(100%)→0 220 ms。
+   只在挂载时播一次（`both`），关闭不做退场动画 —— 退场期间按钮仍可点会引发误触。 */
+@keyframes prune-drawer-in {
+  from {
+    transform: translateY(100%);
+  }
+  to {
+    transform: translateY(0);
+  }
+}
+
+@keyframes prune-fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.prune-drawer-in {
+  animation: prune-drawer-in 220ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+.prune-fade-in {
+  animation: prune-fade-in 160ms ease-out both;
 }
