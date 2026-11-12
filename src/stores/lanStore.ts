@@ -69,6 +69,11 @@ export const useLanStore = create<LanStore>((set, get) => ({
   },
 }));
 
+// 浏览器 dev 验收用：动态 import 拿到的是新模块实例，这里把页面真正用的这份挂到 window
+if (import.meta.env.DEV) {
+  (window as unknown as Record<string, unknown>).__useLanStore = useLanStore;
+}
+
 /**
  * 阶段文案：progress 事件驱动，阶段间空档显示最后已知阶段。
  *
