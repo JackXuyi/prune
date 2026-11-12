@@ -216,10 +216,13 @@ export function LanBoard() {
             </p>
           ) : null}
 
-          {view === "topo" ? (
-            // 拓扑画布（M20）：全量设备直渲（离线置灰），不做筛选——chips 语义只属于卡片
+          {/* 拓扑画布（M20）：全量设备直渲（离线置灰），不做筛选——chips 语义只属于卡片。
+              两个视图都保持挂载、用 hidden 切换：卸载会丢掉拖拽后的节点位置（T2 验收） */}
+          <div className={view === "cards" ? "hidden" : ""}>
             <LanTopology devices={devices} onSelect={setSelected} />
-          ) : filter === "inbound" ? (
+          </div>
+          <div className={view === "topo" ? "hidden" : ""}>
+            {filter === "inbound" ? (
             connectedMe.length > 0 ? (
               <DeviceSection
                 title={t("lan.section.inbound")}
@@ -290,7 +293,8 @@ export function LanBoard() {
                 </div>
               ) : null}
             </>
-          )}
+            )}
+          </div>
 
           <p className="mt-3.5 text-[10px] text-ink-faint">
             {t("lan.footer", {

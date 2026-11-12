@@ -21,9 +21,13 @@ const R_MIN = 130;
 const R_MAX = 260;
 /** 本机内圈偏移：网关正下方（spec §3） */
 const SELF_OFFSET = 84;
-/** 拖拽夹紧：节点中心不允许拖出画布内边距（spec §3） */
-const CLAMP_X = 30;
-const CLAMP_Y = 26;
+/** 拖拽夹紧：节点中心不允许拖出画布内边距（spec §3）。
+    节点盒是 110px 宽、约 84px 高（圆 + 两行标签），夹紧值小于半宽会把标签裁掉。 */
+const CLAMP_X = 58;
+const CLAMP_Y = 44;
+/** 画布上下留白：顶部要容下「新」badge 与 ping 环，底部要容下两行标签 */
+const PAD_TOP = 46;
+const PAD_BOTTOM = 62;
 /** 位移超过该值判定为拖拽，抑制紧随的 click（spec §5） */
 const DRAG_THRESHOLD = 4;
 
@@ -44,15 +48,22 @@ function jitterRad(ip: string): number {
 function initialLayout(devices: LanDevice[], w: number, h: number): Record<string, Pos> {
   const pos: Record<string, Pos> = {};
   const cx = w / 2;
-  const cy = h * 0.46;
   const gw = devices.find((d) => d.isGateway);
   const me = devices.find((d) => d.isSelf);
+  const baseR = Math.min(R_MAX, Math.max(R_MIN, Math.min(w, h) / 2 - 100));
+  // 本机在内圈正下方 r=84：环半径若不够，正下方的环节点（n=4 时 90°）会压在本机
+  // 标签上（实测 mi-tv 只剩文字、圆被吃进本机 IP 行）。给本机标签留出净空，
+  // 同时不超过画布上下可用的垂直带——两者冲突时优先不裁切。
+  const needClear = me ? SELF_OFFSET + 92 : 0;
+  const maxRByHeight = Math.max(R_MIN, (h - PAD_TOP - PAD_BOTTOM) / 2);
+  const R = Math.min(R_MAX, Math.max(baseR, Math.min(needClear, maxRByHeight)));
+  // 中心位按 R 反推：保证顶部 badge 与底部标签都落在画布内（h*0.46 只是无约束时的偏好）
+  const cy = Math.min(Math.max(h * 0.46, PAD_TOP + R), h - PAD_BOTTOM - R);
   if (gw) pos[gw.ip] = { x: cx, y: cy };
   if (me) pos[me.ip] = gw ? { x: cx, y: cy + SELF_OFFSET } : { x: cx, y: cy };
   const rest = devices
     .filter((d) => d !== gw && d !== me)
     .sort((a, b) => (a.ip < b.ip ? -1 : 1));
-  const R = Math.min(R_MAX, Math.max(R_MIN, Math.min(w, h) / 2 - 100));
   rest.forEach((d, i) => {
     const angle = (i / rest.length) * Math.PI * 2 - Math.PI / 2 + jitterRad(d.ip);
     pos[d.ip] = { x: cx + R * Math.cos(angle), y: cy + R * Math.sin(angle) };
@@ -90,6 +101,8 @@ export function LanTopology({
     const el = boxRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => {
+      // 视图切到卡片时本画布被 hidden（宽高 0）：不拿 0 去重算布局，否则位置会被算歪
+      if (!el.clientWidth || !el.clientHeight) return;
       setSize({ w: el.clientWidth, h: el.clientHeight });
     });
     ro.observe(el);
@@ -236,10 +249,10 @@ export function LanTopology({
     <div className="mt-3">
       <div
         ref={boxRef}
-        className="relative overflow-hidden rounded-[12px] border border-hairline-soft bg-[#0b0e11]"
+        className="relative overflow-hidden rounded-[12px] border border-hairline-soft bg-surface-sunk"
         style={{
           height: CANVAS_H,
-          backgroundImage: "radial-gradient(rgba(255,255,255,0.05) 1px, transparent 1px)",
+          backgroundImage: "radial-gradient(var(--color-hatch) 1px, transparent 1px)",
           backgroundSize: "16px 16px",
         }}
       >
@@ -260,10 +273,10 @@ export function LanTopology({
                   hl
                     ? isAccent
                       ? "var(--color-accent)"
-                      : "rgba(255,255,255,0.4)"
+                      : "var(--color-ink-dim)"
                     : isAccent
                       ? "var(--color-accent)"
-                      : "rgba(255,255,255,0.15)"
+                      : "var(--color-hairline)"
                 }
                 strokeWidth={hl ? 1.8 : isAccent ? 1.4 : 1.2}
                 strokeDasharray={isAccent ? "5 3" : e.dashed ? "4 3" : undefined}
@@ -289,7 +302,8 @@ export function LanTopology({
                 top: p.y,
                 transform: "translate(-50%, -50%)",
                 touchAction: "none",
-                opacity: dimmed ? 0.45 : 1,
+                // 离线降透明度是刻意弱化；0.45 在浅色主题下 IP 行几乎读不出，取 0.55 折中
+                opacity: dimmed ? 0.55 : 1,
                 zIndex: isHover ? 10 : 1,
               }}
               onPointerDown={(e) => onNodeDown(e, d)}
@@ -309,7 +323,7 @@ export function LanTopology({
                   } ${
                     special
                       ? "border bg-accent/[0.14] text-accent"
-                      : "border border-hairline bg-white/[0.05] text-ink-dim"
+                      : "border border-hairline bg-chip text-ink-dim"
                   } ${
                     d.isGateway
                       ? "border-accent/40"
