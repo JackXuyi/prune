@@ -492,7 +492,7 @@ export function MainWindow() {
         ) : (
           // 内存页（UX v3 §6.3）：左栏家族列表 + 右栏（默认概况，选中进程后为详情）
           <div className="flex min-h-0 flex-1">
-            <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-[#0c0f12]">
+            <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-surface-sunk">
               <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
                 <span className="text-[11px] font-medium tracking-wide text-ink-dim">
                   {t("memory.families.title")}

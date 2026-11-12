@@ -156,12 +156,12 @@ export function tileTone(d: LanDevice): { tile: string; icon: string } {
     case "tablet":
       return { tile: "bg-info/[0.14]", icon: "text-info" };
     case "nas":
-      return { tile: "bg-[#22d3ee]/[0.14]", icon: "text-[#22d3ee]" };
+      return { tile: "bg-net-soft", icon: "text-domain-net" };
     case "tv":
     case "speaker":
     case "camera":
     case "iot":
-      return { tile: "bg-[#a78bfa]/[0.14]", icon: "text-[#a78bfa]" };
+      return { tile: "bg-cpu-soft", icon: "text-domain-cpu" };
     default:
       return { tile: "bg-chip", icon: "text-ink-dim" };
   }
