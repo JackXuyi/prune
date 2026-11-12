@@ -8,9 +8,13 @@ import { Sparkline } from "../Sparkline";
 import { Reading, TagDot } from "./StatsCard";
 
 /**
- * 面板统计行（M16）：高度**锁定 48 px**。
+ * 面板统计行（M16）：高度**锁定 40 px**（v5 由 48 收窄）。
  *
- * 36 px 内容 + 12 px 内边距，行内两段：
+ * 收窄原因：v5 把可回收 CTA 提到第 2 位（spec §5.1），面板 432 的贴合高度
+ * 装不下 6×48 + CTA + 泄漏条——实测第 6 行「端口」被挤出可视区，只能滚动。
+ * 40 px 仍保留两段（读数 + 条形/副读数），信息不丢，只是内边距更紧。
+ *
+ * 结构：
  * - 第一行 18：标签 + 状态点 / 主读数（含单位与共用分母）
  * - 第二行 14：Meter 4 px + 副读数（无占比语义的域整行给文字）
  *
@@ -52,8 +56,8 @@ export function StatsRow({
       onClick={onOpen}
       disabled={!onOpen}
       title={fullText}
-      className={`flex h-12 w-full flex-col justify-center gap-0.5 rounded-md px-1 text-left transition-colors ${
-        onOpen ? "hover:bg-white/[0.04]" : "cursor-default"
+      className={`flex h-10 w-full flex-col justify-center gap-0.5 rounded-md px-1 text-left transition-colors ${
+        onOpen ? "hover:bg-chip" : "cursor-default"
       }`}
     >
       <div className="flex w-full items-center gap-2">
@@ -130,8 +134,8 @@ export function NetDirectionRow({
       onClick={onOpen}
       disabled={!onOpen}
       title={fullText}
-      className={`flex h-12 w-full flex-col justify-center gap-0.5 rounded-md px-1 text-left transition-colors ${
-        onOpen ? "hover:bg-white/[0.04]" : "cursor-default"
+      className={`flex h-10 w-full flex-col justify-center gap-0.5 rounded-md px-1 text-left transition-colors ${
+        onOpen ? "hover:bg-chip" : "cursor-default"
       }`}
     >
       <div className="flex w-full items-center gap-2">

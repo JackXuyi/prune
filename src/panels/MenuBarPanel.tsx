@@ -53,7 +53,7 @@ export function MenuBarPanel() {
 
   return (
     <div className="flex h-screen flex-col p-2">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-white/[0.07] bg-[#0f1216]/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
+      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-raised/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
         <header className="flex h-11 shrink-0 items-center gap-2 px-3.5">
           <ScissorsIcon size={14} className="text-accent" />
           <span className="text-[13px] font-semibold tracking-tight text-ink">Prune</span>
@@ -177,31 +177,10 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
 
   return (
     <section>
-      {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
-      {snapshot?.leaks ? (
-        <div className="mb-1">
-          <LeakBanner report={snapshot.leaks} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
-        </div>
-      ) : null}
-
-      <div className="divide-y divide-hairline-soft">
-        <StatsRow title={t("nav.memory")} readout={mem} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
-        <StatsRow
-          icon={<span className="text-accent">⚡</span>}
-          title={t("nav.disk")}
-          readout={disk}
-          onOpen={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
-        />
-        <StatsRow title="CPU" readout={cpu} />
-        <NetDirectionRow readout={netDown} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
-        <NetDirectionRow readout={netUp} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
-        <StatsRow title={t("nav.ports")} readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
-      </div>
-
-      {/* 底部一条：主 CTA（可回收 → 去清理）+ 应用入口。
-          两个目标分开成两个按钮，不做嵌套；高度沿用原入口的 30 px 预算，
-          面板 432 的贴合高度不变（算式见 tray.rs: PANEL_H）。 */}
-      <div className="mt-0.5 flex items-center gap-1">
+      {/* spec §5.1 序：CTA 紧跟头部（序 2）。可回收是面板第一诉求，
+          之前排在六行统计之后，「瞄一眼」场景里根本滚不到。高度 30 px 预算不变，
+          面板 432 贴合高度不变（算式见 tray.rs: PANEL_H）。 */}
+      <div className="mb-1 flex items-center gap-1">
         <button
           type="button"
           onClick={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
@@ -209,7 +188,7 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
           className={`group flex h-7 min-w-0 flex-1 items-center gap-1 rounded-lg border pl-2 pr-1.5 text-left transition-colors ${
             hasReclaim
               ? "border-accent/25 bg-accent/[0.10] hover:border-accent/45 hover:bg-accent/[0.16]"
-              : "border-white/[0.07] bg-white/[0.03] hover:bg-white/[0.06]"
+              : "border-hairline-soft bg-chip hover:bg-chip-hover"
           }`}
         >
           <span
@@ -249,7 +228,7 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
           type="button"
           onClick={() => fireAndForget(openMain(undefined, "resources"), "open_main")}
           title={t("panel.apps.title")}
-          className="group flex h-7 shrink-0 items-center gap-0.5 rounded-lg px-1.5 text-[10px] text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink-dim"
+          className="group flex h-7 shrink-0 items-center gap-0.5 rounded-lg px-1.5 text-[10px] text-ink-faint transition-colors hover:bg-chip hover:text-ink-dim"
         >
           <span className="leading-none">{t("panel.apps.label", { n: families })}</span>
           <ChevronRightIcon
@@ -258,6 +237,27 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
           />
         </button>
       </div>
+      {/* 泄漏嫌疑只在有命中时露头：没命中就是「沉默即正常」，不占版面 */}
+      {snapshot?.leaks ? (
+        <div className="mb-1">
+          <LeakBanner report={snapshot.leaks} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
+        </div>
+      ) : null}
+
+      <div className="divide-y divide-hairline-soft">
+        <StatsRow title={t("nav.memory")} readout={mem} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
+        <StatsRow
+          icon={<span className="text-accent">⚡</span>}
+          title={t("nav.disk")}
+          readout={disk}
+          onOpen={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
+        />
+        <StatsRow title="CPU" readout={cpu} />
+        <NetDirectionRow readout={netDown} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
+        <NetDirectionRow readout={netUp} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
+        <StatsRow title={t("nav.ports")} readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
+      </div>
+
     </section>
   );
 }
@@ -266,10 +266,10 @@ function Skeleton({ loading }: { loading: boolean }) {
   const { t } = useI18n();
   return (
     <div className="space-y-3">
-      <div className="h-3 w-24 animate-pulse rounded bg-white/[0.06]" />
-      <div className="h-20 animate-pulse rounded-lg bg-white/[0.04]" />
-      <div className="h-3 w-20 animate-pulse rounded bg-white/[0.06]" />
-      <div className="h-24 animate-pulse rounded-lg bg-white/[0.04]" />
+      <div className="h-3 w-24 animate-pulse rounded bg-chip-hover" />
+      <div className="h-20 animate-pulse rounded-lg bg-chip" />
+      <div className="h-3 w-20 animate-pulse rounded bg-chip-hover" />
+      <div className="h-24 animate-pulse rounded-lg bg-chip" />
       <p className="text-[10px] text-ink-faint">
         {loading ? t("panel.skeleton.sampling") : t("panel.skeleton.none")}
       </p>
@@ -292,7 +292,7 @@ function IconButton({
       title={label}
       aria-label={label}
       onClick={onClick}
-      className="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-white/[0.06] hover:text-ink"
+      className="grid size-6 place-items-center rounded-md text-ink-faint transition-colors hover:bg-chip hover:text-ink"
     >
       {children}
     </button>
