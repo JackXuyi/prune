@@ -43,6 +43,9 @@ pub struct ProbeOutcome {
     /// 确认细节：HTTP `Server` 头 / MCP `serverInfo.name` / SSH 版本串。
     /// None = 协议本身没有自述
     pub detail: Option<String>,
+    /// 自述版本（MCP `serverInfo.version`）。None = 协议未提供 / 不适用。
+    /// 与 detail 分开：UI 上「名字」和「版本」的排版位置不同。
+    pub version: Option<String>,
 }
 
 impl ProbeOutcome {
@@ -50,6 +53,16 @@ impl ProbeOutcome {
         Self {
             kind,
             detail: detail.map(|d| d.chars().take(48).collect()),
+            version: None,
+        }
+    }
+
+    /// MCP 命中：name + version 一起拿（server-card 与 initialize 两种响应都带）。
+    fn mcp(name: Option<String>, version: Option<String>) -> Self {
+        Self {
+            kind: ServiceKind::Mcp,
+            detail: name.map(|d| d.chars().take(48).collect()),
+            version: version.map(|v| v.chars().take(24).collect()),
         }
     }
 }
@@ -108,9 +121,9 @@ fn judge_wellknown(raw: &str) -> Option<ProbeOutcome> {
         return None;
     }
     if body.contains("\"serverInfo\"") {
-        Some(ProbeOutcome::new(
-            ServiceKind::Mcp,
+        Some(ProbeOutcome::mcp(
             extract_json_field(body, "serverInfo", "name"),
+            extract_json_field(body, "serverInfo", "version"),
         ))
     } else {
         None
@@ -136,9 +149,9 @@ fn judge_mcp_init(raw: &str) -> Option<ProbeOutcome> {
         return None;
     }
     if body.contains("protocolVersion") && body.contains("serverInfo") {
-        Some(ProbeOutcome::new(
-            ServiceKind::Mcp,
+        Some(ProbeOutcome::mcp(
             extract_json_field(body, "serverInfo", "name"),
+            extract_json_field(body, "serverInfo", "version"),
         ))
     } else {
         None
@@ -301,6 +314,7 @@ mod tests {
         let out = judge_wellknown(&raw).unwrap();
         assert_eq!(out.kind, ServiceKind::Mcp);
         assert_eq!(out.detail.as_deref(), Some("my-mcp"));
+        assert_eq!(out.version.as_deref(), Some("2.1.0"));
     }
 
     #[test]
@@ -336,6 +350,7 @@ mod tests {
         let out = judge_mcp_init(&raw).unwrap();
         assert_eq!(out.kind, ServiceKind::Mcp);
         assert_eq!(out.detail.as_deref(), Some("everything"));
+        assert_eq!(out.version.as_deref(), Some("1.2.3"));
     }
 
     #[test]
@@ -413,6 +428,7 @@ mod tests {
         let out = probe(port).expect("fixture 必须给出 MCP 结论");
         assert_eq!(out.kind, ServiceKind::Mcp);
         assert_eq!(out.detail.as_deref(), Some("my-mcp"));
+        assert_eq!(out.version.as_deref(), Some("2.1.0"));
         handle.join().ok();
     }
 }

@@ -19,6 +19,7 @@ import { Badge } from "../components/primitives";
 import { useI18n } from "../i18n/store";
 import { isTauri } from "../lib/ipc";
 import { getTheme, setTheme, subscribeTheme, type ThemeMode } from "../lib/theme";
+import { usePortStore } from "../stores/portStore";
 
 interface IslandSettings {
   enabled: boolean;
@@ -56,6 +57,10 @@ const DEFAULTS: IslandSettings = {
 
 export function SettingsBoard() {
   const { t } = useI18n();
+  // 端口自动探测（P2）与灵动岛设置不同源：localStorage（同主题约定），
+  // 状态在 portStore——开关拨下去立即对当前快照跑一轮，不用等下次扫描
+  const autoProbe = usePortStore((s) => s.autoProbe);
+  const setAutoProbe = usePortStore((s) => s.setAutoProbe);
 
   const [cfg, setCfg] = useState<IslandSettings | null>(null);
   const [status, setStatus] = useState<IslandStatus | null>(null);
@@ -208,6 +213,27 @@ export function SettingsBoard() {
               checked={cfg.lanWatch}
               onChange={(v) => update({ lanWatch: v })}
               label={t("settings.lanWatch.enable")}
+            />
+          </div>
+        </section>
+
+        {/* 端口服务自动探测（P2）：它发包，默认关——用户显式授权才跑（调研 §5 的纪律）。
+            不随灵动岛开关变灰：这是端口页功能，跟灵动岛无关 */}
+        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-medium">{t("settings.portsProbe.title")}</span>
+                <span className="text-[10px] text-ink-faint">{t("settings.portsProbe.tag")}</span>
+              </div>
+              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
+                {t("settings.portsProbe.desc")}
+              </p>
+            </div>
+            <Switch
+              checked={autoProbe}
+              onChange={setAutoProbe}
+              label={t("settings.portsProbe.enable")}
             />
           </div>
         </section>

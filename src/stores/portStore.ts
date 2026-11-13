@@ -5,7 +5,19 @@ import { tGlobal } from "../i18n/store";
 
 import { devPortSnapshot } from "../lib/devFixture";
 import { isTauri, portProbe, portRefresh, portSetActive, portSnapshot } from "../lib/ipc";
+import { isSystemProcess } from "../types/net";
 import type { PortEntry, PortSnapshot, ProbeOutcome } from "../types/net";
+
+/** 自动探测开关落盘键。与主题同款 localStorage 约定：纯前端偏好，不进 Rust 设置 */
+const AUTO_PROBE_KEY = "prune.ports.autoprobe";
+
+function readAutoProbe(): boolean {
+  try {
+    return typeof localStorage !== "undefined" && localStorage.getItem(AUTO_PROBE_KEY) === "1";
+  } catch {
+    return false; // 隐私模式 / 配额满：退回默认关，探测本来就是用户显式授权的功能
+  }
+}
 
 /** 探针结果的键：`(port, pid, start_time)` 与 Rust 缓存同源 */
 export function probeKey(entry: PortEntry): string {
@@ -36,6 +48,11 @@ interface PortStore {
   probing: Record<string, boolean>;
   /** 探测失败的原因（连接失败 / 服务已退出） */
   probeErrors: Record<string, string>;
+  /**
+   * 设置项「自动探测关注层端口」（P2）。默认关——它发包，
+   * 与行内「探测」按钮共享同一纪律：用户显式授权才跑（调研 §5）。
+   */
+  autoProbe: boolean;
   init: () => Promise<void>;
   refresh: () => Promise<void>;
   setActive: (active: boolean) => Promise<void>;
@@ -46,6 +63,10 @@ interface PortStore {
   hydrate: () => Promise<void>;
   /** L1 探测一行端口。用户显式触发；Rust 侧有缓存，重复点击零网络开销 */
   probe: (entry: PortEntry) => Promise<void>;
+  /** 切换自动探测并落盘。开启后立即对当前快照跑一轮 */
+  setAutoProbe: (v: boolean) => void;
+  /** 对当前快照的关注层 TCP 端口补探缺漏（缓存命中零开销，30 s 轮幂等） */
+  runAutoProbe: () => void;
 }
 
 /** StrictMode 下 effect 跑两次：初始化与订阅只做一次 */
@@ -62,6 +83,7 @@ export const usePortStore = create<PortStore>((set, get) => ({
   probeResults: {},
   probing: {},
   probeErrors: {},
+  autoProbe: readAutoProbe(),
 
   init: async () => {
     if (initStarted) return;
@@ -81,6 +103,7 @@ export const usePortStore = create<PortStore>((set, get) => ({
       set({ snapshot, loading: false });
       // 冷启动：一次都没有 → 立即扫一轮（用户已经站在端口 tab 前了）
       if (!snapshot) await get().refresh();
+      get().runAutoProbe();
     } catch (e) {
       set({ loading: false, error: String(e) });
       return;
@@ -90,9 +113,10 @@ export const usePortStore = create<PortStore>((set, get) => ({
     subscribed = true;
 
     // 30 s 定时轮的产出：定时器只在 tab 可见时跑，事件到来说明用户正在看
-    await listen<PortSnapshot>("port://snapshot", (e) =>
-      set({ snapshot: e.payload, refreshing: false, loading: false }),
-    );
+    await listen<PortSnapshot>("port://snapshot", (e) => {
+      set({ snapshot: e.payload, refreshing: false, loading: false });
+      get().runAutoProbe();
+    });
   },
 
   refresh: async () => {
@@ -103,6 +127,7 @@ export const usePortStore = create<PortStore>((set, get) => ({
       // 命中单飞闸门时 Rust 侧直接返回旧快照：这里必须重新拉，不能假设已变
       const snapshot = await portSnapshot();
       set({ snapshot });
+      get().runAutoProbe();
     } catch (e) {
       set({ error: String(e) });
     } finally {
@@ -151,6 +176,38 @@ export const usePortStore = create<PortStore>((set, get) => ({
       set({ probeErrors: { ...get().probeErrors, [key]: String(e) } });
     } finally {
       set({ probing: { ...get().probing, [key]: false } });
+    }
+  },
+
+  setAutoProbe: (v) => {
+    try {
+      if (v) localStorage.setItem(AUTO_PROBE_KEY, "1");
+      else localStorage.removeItem(AUTO_PROBE_KEY);
+    } catch {
+      // 写盘失败不影响本会话：状态已在内存里，下个会话退回默认关
+    }
+    set({ autoProbe: v });
+    if (v) get().runAutoProbe();
+  },
+
+  /**
+   * 只补关注层 TCP 且有 pid 的行——与行内「探测」按钮同一门控：
+   * - 折叠层不自动碰（内部 IPC 是噪音，探它违背最小打扰）；
+   * - 系统进程不探（AirPlay 5000 会得到一个没有信息量的「Web ✓」）；
+   * - 探测失败过的不重试：服务退出后端口键不变，重试只会每轮空打。
+   */
+  runAutoProbe: () => {
+    const { autoProbe, snapshot, probeResults, probeErrors, probing } = get();
+    if (!autoProbe || !snapshot || !isTauri()) return;
+    for (const e of snapshot.entries) {
+      if (!e.watched || e.proto !== "tcp") continue;
+      const b = e.listeners.find((x) => x.pid != null) ?? e.listeners[0];
+      if (!b || b.pid == null) continue;
+      const owners = e.listeners.filter((x) => x.pid != null);
+      if (owners.length > 0 && owners.every((x) => isSystemProcess(x.comm))) continue;
+      const key = probeKey(e);
+      if (probeResults[key] || probeErrors[key] || probing[key]) continue;
+      void get().probe(e);
     }
   },
 }));

@@ -86,6 +86,8 @@ const zh = {
     action: "探测",
     running: "探测中…",
     failed: "探测失败",
+    /** serverInfo / Server 头的深展示行：detail = 名字 + 版本（有空格分隔） */
+    confirmedLine: "已握手确认：{detail}",
   },
 
   subpage: {
@@ -174,6 +176,7 @@ const en: MessageTree<typeof zh> = {
     action: "Probe",
     running: "Probing…",
     failed: "Probe failed",
+    confirmedLine: "Confirmed by handshake: {detail}",
   },
 
   subpage: {

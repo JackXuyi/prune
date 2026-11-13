@@ -49,6 +49,12 @@ const zh = {
     desc: "有新设备连上 Wi-Fi 时从刘海里说一声。同一设备只提醒一次；换了网络会重新记住，不刷屏。",
     enable: "启用局域网新面孔",
   },
+  portsProbe: {
+    title: "端口服务自动探测",
+    tag: "关注层 TCP 端口 · 本机握手",
+    desc: "开启后端口页每轮扫描会对关注层端口发一次本机握手（Web / MCP / 数据库协议），把「推断」升级为「确认」。只连 127.0.0.1，结果按进程缓存——对 MCP server 不会重复建会话。",
+    enable: "启用自动探测",
+  },
   cpu: {
     title: "CPU 暴走",
     tag: "判定逻辑在 prune-core，可单测",
@@ -128,6 +134,12 @@ const en: MessageTree<typeof zh> = {
     tag: "Neighbor table only, zero active probing",
     desc: "A word from the notch when a new device joins Wi-Fi. Reported once per device; a new network re-baselines.",
     enable: "Enable new-device alerts",
+  },
+  portsProbe: {
+    title: "Auto-probe port services",
+    tag: "Focus-layer TCP ports · local handshake",
+    desc: "When on, each port scan handshakes once with focus-layer ports (Web / MCP / database protocols), upgrading \"inferred\" to \"confirmed\". Only 127.0.0.1 is contacted, and results are cached per process — MCP servers never get duplicate sessions.",
+    enable: "Enable auto-probe",
   },
   cpu: {
     title: "CPU runaway",

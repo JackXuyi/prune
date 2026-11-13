@@ -52,6 +52,8 @@ export interface ProbeOutcome {
   kind: ServiceKind;
   /** HTTP Server 头 / MCP serverInfo.name / SSH 版本串；null = 协议无自述 */
   detail: string | null;
+  /** 自述版本（MCP serverInfo.version）；null = 协议未提供 */
+  version: string | null;
 }
 
 /**

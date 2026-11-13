@@ -362,9 +362,9 @@ function PortRow({
   const probe = usePortStore((s) => s.probe);
   const serviceKind = probeResult?.kind ?? entry.service;
 
+  const probeDetail = [probeResult?.detail, probeResult?.version].filter(Boolean).join(" ");
   const probeTitle = probeResult
-    ? t("ports.service.hintConfirmed") +
-      (probeResult.detail ? ` · ${probeResult.detail}` : "")
+    ? t("ports.service.hintConfirmed") + (probeDetail ? ` · ${probeDetail}` : "")
     : t("ports.service.hintInferred");
 
   return (
@@ -469,6 +469,15 @@ function PortRow({
       {probeError ? (
         <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-warn">
           {t("ports.probe.failed")} · {probeError}
+        </p>
+      ) : null}
+      {/* serverInfo 深展示（P2）：确认细节（MCP serverInfo / Server 头 / banner）摊开在行下，
+          不只藏在 hover 里——名字 + 版本是用户判断「这是谁的服务」的关键证据 */}
+      {probeResult && (probeResult.detail || probeResult.version) ? (
+        <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-accent">
+          {t("ports.probe.confirmedLine", {
+            detail: [probeResult.detail, probeResult.version].filter(Boolean).join(" "),
+          })}
         </p>
       ) : null}
       {/* 开发服务（有 cwd 归属）才给 loopback 地址：GUI 应用那行贴个 URL 只是噪音 */}
