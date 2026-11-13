@@ -157,11 +157,52 @@ fn tool_defs() -> Value {
             "name": "lan_devices",
             "description": "局域网设备与暴露面（只读缓存，不发包）：同网段设备列表（IP/MAC/厂商/类型/在线状态）+ 本机对它们开放的端口。数据来自最近一轮扫描（GUI 点扫描或 prune lan --scan），本工具只读缓存——若返回 status=unavailable，请先让用户扫一轮。设备厂商为 null 可能是随机化 MAC（正常现象），不代表识别失败；mDNS/SSDP 均空时 notes 会说明可能是防火墙拦截。时间线字段：firstSeen（首次发现，Unix 秒）/ lastSeen（最后活跃）/ isNew（10 分钟内新接入，true 时请向用户提示），0 表示旧版缓存无记录。",
             "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "disk_scan",
+            "description": "白名单逐条细分视图（只读，秒级）：每条可回收缓存（包管理器 / AI 应用 / Xcode / 模拟器等 84 条）的实时体积与级别（L1/L2 一键清理类、L3 需逐项确认类），children=true 时附一级子目录占比。与 disk_report 的分工：那个回答「全盘浪费结构」（约 15 秒），本工具回答「某条缓存现在多大、什么占的」。未安装的应用（无对应目录）不会出现在结果里。注意：本工具永不执行清理——清理必须由人在 Prune GUI 确认。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "keys": {
+                        "type": "array",
+                        "items": { "type": "string" },
+                        "description": "只看这些条目（如 [\"cursor-cache\", \"ollama-models\"]）。缺省返回全部。"
+                    },
+                    "children": {
+                        "type": "boolean",
+                        "description": "是否列每条的一级子目录占比（按体积降序），默认 false",
+                        "default": false
+                    },
+                    "childrenTop": {
+                        "type": "number",
+                        "description": "children 开启时最多列几个子目录，默认 8",
+                        "default": 8
+                    }
+                }
+            }
+        },
+        {
+            "name": "net_diag",
+            "description": "端口暴露面诊断结论（只读，约 40-140 ms）：直接给结论而不是原始条目——哪些端口绑定全部网卡（同网段可达）、哪些仅本机回环、权限看不到的监听有多少、TIME_WAIT 内核残留有多少。port_listeners 适合「谁占着 3000」这类点查；本工具适合「这台机器对外开着什么」这类体检。绑定具体网卡地址（192.168.x.x）与 0.0.0.0 都算局域网可达，结论里均标 attention。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "number",
+                        "description": "只诊断这个端口。缺省 = 全量体检。"
+                    }
+                }
+            }
         }
     ])
 }
 
 /// 工具分发。返回值是放进 content[0].text 的 JSON。
+///
+/// **底线（M29 信任叙事的代码层）**：本表只允许只读查询。任何执行类请求
+/// 在这里被显式拒绝（报「MCP 通道只读」而不是 unknown tool），清理执行
+/// 只能由人在 GUI 确认——白名单 / 废纸篓 / 20 GB 熔断三层护栏全在 GUI 侧。
 pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
     match name {
         "mem_snapshot" => Ok(tool_mem_snapshot()),
@@ -174,9 +215,20 @@ pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
             Ok(tool_mem_leaks(since_hours))
         }
         "disk_report" => Ok(tool_disk_report()),
+        "disk_scan" => Ok(tool_disk_scan(args)),
         "port_listeners" => Ok(tool_port_listeners(args)),
+        "net_diag" => Ok(tool_net_diag(args)),
         "app_resources" => Ok(tool_app_resources(args)),
         "lan_devices" => Ok(tool_lan_devices()),
+        // 执行类请求显式拒绝（M29）：让 Agent 与读代码的人都直接看到底线，
+        // 而不是落进 unknown tool 的笼统报错。此清单只增不减。
+        "reclaim" | "clean" | "clean_item" | "execute" | "delete" | "remove" | "kill" | "write"
+        | "trash" => Err(
+            "MCP 通道只读（代码层底线，测试固化）：清理执行只能由人在 Prune GUI 里确认 \
+             （白名单 + 废纸篓 + 20 GB 熔断三层护栏在 GUI 侧）。\
+             如需了解可回收体量，请改用只读工具 disk_scan / disk_report。"
+                .into(),
+        ),
         other => Err(format!("unknown tool: {other}")),
     }
 }
@@ -194,6 +246,225 @@ fn tool_lan_devices() -> Value {
             "note": "尚无局域网扫描缓存。请在 Prune GUI 的「局域网」分段点扫描，或运行 prune lan --scan。"
         }),
     }
+}
+
+/// M29 `disk_scan`（f13 §2.1）：白名单逐条细分视图，只读，不执行任何清理。
+/// 与 disk_report 分工：那边回答「全盘浪费结构」（~15 s 重扫），
+/// 这边回答「某条白名单缓存现在多大、里面什么占的」（resolve + 并发测体积，秒级）。
+fn tool_disk_scan(args: &Value) -> Value {
+    use prune_core::disk::whitelist::Level;
+
+    let home = prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    let keys: Option<Vec<String>> = args.get("keys").and_then(|v| v.as_array()).map(|a| {
+        a.iter()
+            .filter_map(|k| k.as_str().map(String::from))
+            .collect()
+    });
+    let with_children = args
+        .get("children")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let children_top = args
+        .get("childrenTop")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(8)
+        .clamp(1, 20) as usize;
+
+    let resolved: Vec<_> = prune_core::disk::whitelist::resolve(&home)
+        .into_iter()
+        .filter(|(e, _)| {
+            keys.as_ref()
+                .map(|ks| ks.iter().any(|k| k == e.key))
+                .unwrap_or(true)
+        })
+        .collect();
+
+    // 并发测体积：CoreSimulator/Devices 3.5 GB 量级也在秒级（复用磁盘扫描线程池）
+    let sized = prune_core::disk::parallel_map(resolved, 8, |(e, path)| {
+        let exists = path.is_dir();
+        let size = if exists { disk::tree_size(path) } else { 0 };
+        let children: Vec<(String, u64)> = if with_children && exists {
+            let mut ch = disk::first_level_sizes(path);
+            ch.sort_by_key(|(_, s)| std::cmp::Reverse(*s));
+            ch.truncate(children_top);
+            ch
+        } else {
+            Vec::new()
+        };
+        (*e, path.clone(), exists, size, children)
+    });
+
+    let mut cleanable_bytes = 0u64;
+    let mut confirm_bytes = 0u64;
+    let mut present = 0usize;
+    let entries: Vec<Value> = sized
+        .iter()
+        .map(|(e, path, exists, size, children)| {
+            if *exists {
+                present += 1;
+                match e.level {
+                    Level::L1 | Level::L2 => cleanable_bytes += size,
+                    Level::L3 => confirm_bytes += size,
+                    Level::L4 => {} // 容器类只列不计量，本来就不进清理通道
+                }
+            }
+            json!({
+                "key": e.key,
+                "label": e.label,
+                "level": e.level.as_str(),
+                "cleanable": e.level.default_cleanable(),
+                "path": path.display().to_string(),
+                "exists": exists,
+                "sizeBytes": size,
+                "children": children
+                    .iter()
+                    .map(|(n, s)| json!({ "name": n, "sizeBytes": s }))
+                    .collect::<Vec<_>>(),
+            })
+        })
+        .collect();
+
+    json!({
+        "readonly": true,
+        "summary": {
+            "entries": entries.len(),
+            "present": present,
+            "cleanableBytes": cleanable_bytes,
+            "confirmBytes": confirm_bytes,
+        },
+        "entries": entries,
+        "note": "只读视图：cleanableBytes 是 GUI 里可一键清理的体量，confirmBytes 需逐项确认。\
+                 MCP 通道永不执行清理——执行必须由人在 Prune GUI 确认（白名单 + 废纸篓 + 20 GB 熔断）。\
+                 children 仅一级子目录，children=true 才计算，未安装的应用 exists=false。",
+    })
+}
+
+/// M29 `net_diag`（f13 §2.2）：端口暴露面诊断结论。port_listeners 给原始条目，
+/// 本工具直接给「这台机器对外开着什么」的结论。scan 是系统调用，结论部分
+/// 拆成纯函数 `diag_conclusions` 可单测。
+fn tool_net_diag(args: &Value) -> Value {
+    let port = args
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .filter(|p| *p > 0 && *p <= 65535)
+        .map(|p| p as u16);
+
+    let snap = prune_core::net::ports::scan(None);
+    let entries: Vec<&prune_core::net::PortEntry> = snap
+        .entries
+        .iter()
+        .filter(|e| port.map(|p| e.port == p).unwrap_or(true))
+        .collect();
+
+    let exposed: Vec<Value> = entries
+        .iter()
+        .filter(|e| {
+            matches!(
+                e.exposure,
+                prune_core::net::BindScope::Any | prune_core::net::BindScope::Interface
+            )
+        })
+        .map(|e| {
+            let comms: Vec<String> = {
+                let mut v: Vec<String> = e.listeners.iter().map(|b| b.comm.clone()).collect();
+                v.sort();
+                v.dedup();
+                v
+            };
+            json!({
+                "port": e.port,
+                "exposure": e.exposure,
+                "processes": comms,
+                "project": e.listeners.iter().find_map(|b| b.project_label.clone()),
+                "conns": e.conns,
+                "note": e.note,
+            })
+        })
+        .collect();
+
+    let conclusions = diag_conclusions(&entries, snap.coverage.invisible(), snap.time_wait);
+
+    json!({
+        "readonly": true,
+        "port": port,
+        "exposed": exposed,
+        "conclusions": conclusions,
+        "coverage": snap.coverage,
+        "timeWait": snap.time_wait,
+        "scanMs": snap.scan_ms,
+        "note": "exposure=any/interface 都是局域网可达（区别：通配绑定 vs 绑定具体网卡地址）。\
+                 coverage 的 listenTotal 与 attributed 差额是权限看不到的部分，「没查到」不等于端口空闲。",
+    })
+}
+
+/// 诊断结论纯函数：入口条目 + 可见性差额 + TIME_WAIT 残留 → 结论列表。
+/// 与 BindScope 的「安全语义」同口径，不发明新判定。
+fn diag_conclusions(
+    entries: &[&prune_core::net::PortEntry],
+    invisible: usize,
+    time_wait: Option<u32>,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+
+    let any: Vec<&&prune_core::net::PortEntry> = entries
+        .iter()
+        .filter(|e| e.exposure == prune_core::net::BindScope::Any)
+        .collect();
+    for e in &any {
+        let comm = e
+            .listeners
+            .first()
+            .map(|b| b.comm.as_str())
+            .unwrap_or("未知进程");
+        let proj = e
+            .listeners
+            .iter()
+            .find_map(|b| b.project_label.as_deref())
+            .map(|p| format!("，项目归属 {p}"))
+            .unwrap_or_default();
+        out.push(json!({
+            "severity": "attention",
+            "text": format!("端口 {}（{comm}）绑定全部网卡（0.0.0.0/[::]）：同网段设备可达{proj}。若非有意暴露，建议改绑 127.0.0.1 或在防火墙收口。", e.port),
+        }));
+    }
+
+    let iface_count = entries
+        .iter()
+        .filter(|e| e.exposure == prune_core::net::BindScope::Interface)
+        .count();
+    if iface_count > 0 {
+        out.push(json!({
+            "severity": "attention",
+            "text": format!("另有 {iface_count} 个端口绑定在本机网卡地址（192.168.x.x 等）：局域网同样可达，明细见 exposed。"),
+        }));
+    }
+
+    if out.is_empty() {
+        let loopback = entries
+            .iter()
+            .all(|e| e.exposure == prune_core::net::BindScope::Loopback);
+        let text = if loopback && !entries.is_empty() {
+            "所有可见监听都只绑在本机回环（127.0.0.1/::1），无对外暴露面。"
+        } else {
+            "没有可见的对外监听。"
+        };
+        out.push(json!({ "severity": "ok", "text": text }));
+    }
+
+    if invisible > 0 {
+        out.push(json!({
+            "severity": "note",
+            "text": format!("权限差额：内核共 {invisible} 个监听无法归属到进程（未授权/系统保留）——「没查到」不等于端口空闲。在 Prune GUI 授权后可见性会提升。"),
+        }));
+    }
+    if let Some(tw) = time_wait.filter(|t| *t > 0) {
+        out.push(json!({
+            "severity": "note",
+            "text": format!("{tw} 个 TIME_WAIT 内核残留连接：无持有进程，约 30-120 秒自动消失，不是占用。"),
+        }));
+    }
+
+    out
 }
 
 fn probe_top(procs: &mut [prune_core::mem::ProcMem], top: usize) {
@@ -514,7 +785,9 @@ mod tests {
                 "disk_report",
                 "port_listeners",
                 "app_resources",
-                "lan_devices"
+                "lan_devices",
+                "disk_scan",
+                "net_diag"
             ]
         );
         for t in defs.as_array().unwrap() {
@@ -526,6 +799,98 @@ mod tests {
     #[test]
     fn run_tool_rejects_unknown() {
         assert!(run_tool("write_files", &Value::Null).is_err());
+    }
+
+    /// M29 只读底线（f13 §3）：工具名不得含执行词根；执行类请求必须显式
+    /// 报「只读」错而不是 unknown tool。这是信任叙事的代码层，不许回退。
+    #[test]
+    fn mcp_channel_is_readonly() {
+        // 词根黑名单：出现即说明有人把执行通道接进了 MCP
+        const DESTRUCTIVE: [&str; 7] = [
+            "clean", "delete", "remove", "execute", "reclaim", "kill", "write",
+        ];
+        let defs = tool_defs();
+        for t in defs.as_array().unwrap() {
+            let name = t["name"].as_str().unwrap();
+            for root in DESTRUCTIVE {
+                assert!(
+                    !name.to_lowercase().contains(root),
+                    "工具 {name} 含执行词根「{root}」，违反 MCP 只读底线"
+                );
+            }
+        }
+        // 显式拒绝：错误信息必须让人能看懂是底线而不是没实现
+        for name in ["reclaim", "clean", "execute", "delete", "remove", "kill"] {
+            let err = run_tool(name, &Value::Null).unwrap_err();
+            assert!(
+                err.contains("只读"),
+                "执行类工具 {name} 应显式拒绝并说明只读底线，实际报错：{err}"
+            );
+        }
+    }
+
+    #[test]
+    fn disk_scan_returns_structure_and_respects_keys() {
+        // keys 过滤到单条（本机未必装 Cursor，两种结果都合法）：
+        // 只断言结构，不断言机器状态
+        let v = run_tool(
+            "disk_scan",
+            &json!({ "keys": ["cursor-cache"], "children": true }),
+        )
+        .expect("disk_scan 应可调用");
+        assert_eq!(v["readonly"], true);
+        assert_eq!(v["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(v["entries"][0]["key"], "cursor-cache");
+        assert!(v["entries"][0]["sizeBytes"].is_u64());
+        assert!(v["entries"][0]["children"].is_array());
+        assert!(v["summary"]["cleanableBytes"].is_u64());
+        assert!(v["summary"]["confirmBytes"].is_u64());
+        assert!(v["note"].as_str().unwrap().contains("只读"));
+    }
+
+    #[test]
+    fn diag_conclusions_flags_exposure_and_invisible() {
+        let mk_binding = |addr: &str| prune_core::net::PortBinding {
+            port: 3000,
+            proto: prune_core::net::Proto::Tcp,
+            scope: prune_core::net::BindScope::from_addr(addr),
+            addr: addr.into(),
+            v6: false,
+            pid: Some(42),
+            comm: "vite".into(),
+            start_time: 1,
+            project: None,
+            project_label: Some("prune".into()),
+        };
+        let mk_entry =
+            |exposure: prune_core::net::BindScope, addr: &str| prune_core::net::PortEntry {
+                port: 3000,
+                proto: prune_core::net::Proto::Tcp,
+                listeners: vec![mk_binding(addr)],
+                conns: Some(0),
+                exposure,
+                watched: true,
+                note: None,
+            };
+        let loopback = mk_entry(prune_core::net::BindScope::Loopback, "127.0.0.1");
+        let wildcard = mk_entry(prune_core::net::BindScope::Any, "0.0.0.0");
+
+        // 全回环 → ok，且不误报暴露
+        let ok = diag_conclusions(&[&loopback], 0, Some(0));
+        assert_eq!(ok[0]["severity"], "ok");
+
+        // 通配绑定 → attention，含端口、进程、项目与收口建议
+        let attn = diag_conclusions(&[&wildcard], 3, Some(7));
+        assert_eq!(attn[0]["severity"], "attention");
+        let text = attn[0]["text"].as_str().unwrap();
+        assert!(text.contains("3000") && text.contains("vite") && text.contains("prune"));
+        // 权限差额与 TIME_WAIT 都要提示
+        assert!(attn
+            .iter()
+            .any(|c| c["severity"] == "note" && c["text"].as_str().unwrap().contains("权限差额")));
+        assert!(attn
+            .iter()
+            .any(|c| c["text"].as_str().unwrap().contains("TIME_WAIT")));
     }
 
     #[test]
