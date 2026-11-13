@@ -15,7 +15,8 @@
 
 ### 同批搭载
 
-- **端口服务类型识别（前后端）**：`ServiceKind` 分类 + L0 静态推断（端口表 / 进程名 / argv，零网络副作用）+ L1 主动探针（Web HEAD / MCP initialize / DB·SSH banner，`(pid,port,start_time)` 缓存防重探）；端口页 Badge「推断 / 确认」双强度与 exposure 并列
+- **端口服务类型识别（前后端）**：`ServiceKind` 分类 + L0 静态推断（端口表 / 进程名 / argv，零网络副作用）+ L1 主动探针（Web HEAD / MCP initialize / DB·SSH banner，`(pid,port,start_time)` 缓存防重探）；端口页 Badge「推断 / 确认」双强度与 exposure 并列；确认细节（MCP `serverInfo` 名字 + 版本 / HTTP `Server` 头）摊开在行下展示
+- **端口服务自动探测（设置项，默认关）**：开启后每轮端口扫描对关注层 TCP 端口自动握手，把「推断」升级为「确认」——它发包，与行内「探测」按钮同一纪律：用户显式授权才跑；只连 127.0.0.1，结果按进程缓存（对 MCP server 不重复建会话），系统进程与失败过的行不探
 
 ## 0.9.4
 
