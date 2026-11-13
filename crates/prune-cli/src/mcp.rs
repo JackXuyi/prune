@@ -831,21 +831,38 @@ mod tests {
 
     #[test]
     fn disk_scan_returns_structure_and_respects_keys() {
-        // keys 过滤到单条（本机未必装 Cursor，两种结果都合法）：
-        // 只断言结构，不断言机器状态
-        let v = run_tool(
-            "disk_scan",
-            &json!({ "keys": ["cursor-cache"], "children": true }),
-        )
-        .expect("disk_scan 应可调用");
+        // key 必须选跨平台条目（npm 是 Os::All）：原先用 cursor-cache 是 Os::MacOnly，
+        // 在 Linux CI 上被 resolve() 过滤成空数组，而断言写死 len == 1 → 本机绿、CI 红。
+        // resolve() 不按「路径是否存在」过滤（不存在的条目 size=0 但仍在列表里），
+        // 所以这条断言与机器状态无关。
+        let v = run_tool("disk_scan", &json!({ "keys": ["npm"], "children": true }))
+            .expect("disk_scan 应可调用");
         assert_eq!(v["readonly"], true);
-        assert_eq!(v["entries"].as_array().unwrap().len(), 1);
-        assert_eq!(v["entries"][0]["key"], "cursor-cache");
-        assert!(v["entries"][0]["sizeBytes"].is_u64());
-        assert!(v["entries"][0]["children"].is_array());
+        let entries = v["entries"].as_array().unwrap();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0]["key"], "npm");
+        assert!(entries[0]["sizeBytes"].is_u64());
+        assert!(entries[0]["children"].is_array());
         assert!(v["summary"]["cleanableBytes"].is_u64());
         assert!(v["summary"]["confirmBytes"].is_u64());
         assert!(v["note"].as_str().unwrap().contains("只读"));
+    }
+
+    /// 平台专属条目（Os::MacOnly）在异平台必须被 `resolve()` 静默过滤成空，
+    /// 既不能报错，也不能冒充「存在且为 0 字节」。v0.9.2 的 CI 红灯就是这个边界
+    /// 没被守住——用一条显式用例把它钉住。
+    #[test]
+    fn disk_scan_filters_platform_specific_keys() {
+        let v = run_tool("disk_scan", &json!({ "keys": ["cursor-cache"] }))
+            .expect("disk_scan 应可调用");
+        let entries = v["entries"].as_array().unwrap();
+        #[cfg(target_os = "macos")]
+        assert_eq!(entries.len(), 1, "macOS 上 cursor-cache 应可见");
+        #[cfg(not(target_os = "macos"))]
+        assert!(
+            entries.is_empty(),
+            "非 macOS 不应返回 mac 专属条目，实际：{entries:?}"
+        );
     }
 
     #[test]

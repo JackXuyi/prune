@@ -2,13 +2,15 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
-## 0.9.2
+## 0.9.3
 
-> v0.9.1 的 tag 因 CI 门禁红灯未产出安装包，内容合并到 0.9.2 一并发布（版本号不复用 tag）。
+> v0.9.1 / v0.9.2 的 tag 均因 CI 门禁红灯、未产出任何安装包，内容合并到 0.9.3 一并发布（版本号不复用 tag）。两轮红灯全是同一类盲区：**本地 macOS 编译不到的 Linux 分支**。
 
 ### CI 门禁修复
 
-- **Linux 上的 unused import**：`mem/system.rs` 的 `PressureMetric` 只在 macOS（内核压力等级）与 Windows（占用率分档）分支里构造，Linux 的 `read_pressure()` 直接返回 `None`，类型名根本不出现。原导入没有按平台 gate，`clippy -- -D warnings` 在 ubuntu runner 上直接报错——而 macOS 本地永远编译不到那个组合，属于「本机全绿、CI 必红」的盲区。已改为 `#[cfg(any(target_os = "macos", windows))] use super::PressureMetric;`
+- **Linux 上的 unused import（v0.9.1 红灯）**：`mem/system.rs` 的 `PressureMetric` 只在 macOS（内核压力等级）与 Windows（占用率分档）分支里构造，Linux 的 `read_pressure()` 直接返回 `None`，类型名根本不出现。原导入没有按平台 gate，`clippy -- -D warnings` 在 ubuntu runner 上直接报错。已改为 `#[cfg(any(target_os = "macos", windows))] use super::PressureMetric;`
+- **跨平台测试写成了本机断言（v0.9.2 红灯）**：`mcp::tests::disk_scan_returns_structure_and_respects_keys` 用 `cursor-cache`（`Os::MacOnly`）做 key 过滤，却断言结果恰有 1 条；`resolve()` 在 Linux 上按 os 过滤后返回空数组，断言必然失败。注释本身写着「只断言结构，不断言机器状态」，实现与意图相反。现主用例改用 `Os::All` 的 `npm`，并新增 `disk_scan_filters_platform_specific_keys` 把「平台专属条目在异平台必须静默过滤成空」这条边界显式钉住
+- **CI 一次性报全失败**：测试步骤加 `--no-fail-fast`。默认「一个测试二进制失败就中止」，而 Linux 专属失败本地根本复现不了（v0.9.2 那轮 prune-cli 的 bin 测试先挂，prune-core 的测试压根没跑到），逐轮修代价过高。退出码仍为非 0，门禁强度不变
 
 ### M30 修复：归档不再卡死（诊断 → [diag-m30-archive-freeze.md](./docs/diag-m30-archive-freeze.md)）
 

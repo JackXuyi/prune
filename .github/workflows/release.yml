@@ -171,8 +171,11 @@ jobs:
       - name: Rust clippy (-D warnings)
         run: cargo clippy -p prune-core -p prune-cli --all-targets -- -D warnings
 
+      # --no-fail-fast：默认一个测试二进制失败就中止，Linux 专属的失败（本地 macOS
+      # 编译不到的 cfg 分支）只能在这里暴露，逐轮修代价太大。一次跑完所有二进制，
+      # 让一次运行报全所有失败用例；退出码仍为非 0，门禁强度不变。
       - name: Rust unit tests (prune-core + prune-cli)
-        run: cargo test -p prune-core -p prune-cli
+        run: cargo test -p prune-core -p prune-cli --no-fail-fast
 
   # ---------------------------------------------------------------------------
   # 三平台打包
