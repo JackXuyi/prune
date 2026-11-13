@@ -51,13 +51,19 @@ type FlatOf<T, P extends string = ""> = {
 
 type FlatMessages = FlatOf<typeof zh>;
 
-/** 取某个 key 的模板串 */
-type TemplateOf<K> = Extract<FlatMessages, { key: K }> extends { tpl: infer S } ? S : never;
+/**
+ * key → 参数名 的直接查表。
+ *
+ * 为什么不做 `TemplateOf<K> = Extract<FlatMessages, { key: K }>` 再逐 key 抽参数：
+ * 那条路每次查询都要在几百成员的联合里过滤一遍，`NoParamKey` 对每个 key 都查
+ * 一次就是 O(n²)——catalog 每加一批 key 都可能顶爆 TS 的实例化深度上限
+ * （TS2589，ports.service 一批 key 实测触发）。用 `as` 重映射建一次表，
+ * 之后所有查询都是 O(1) 下标，语义与原来逐 key 过滤完全一致。
+ */
+type ParamTable = { [M in FlatMessages as M["key"]]: ExtractParams<M["tpl"]> };
 
-/** `K extends keyof FlatMessages` 这一层判断是给 tsc 看的：直接下标它证明不了 */
-type ParamNames<K extends MessageKey> = K extends MessageKey
-  ? ExtractParams<TemplateOf<K>>
-  : never;
+/** 某个 key 的参数名联合（`{n}` → "n"；无参数 → never） */
+type ParamNames<K extends MessageKey> = ParamTable[K];
 
 /**
  * 复数条目的前缀：`unit.items.one` / `unit.items.other` → `"unit.items"`。
@@ -82,7 +88,6 @@ export type Args<K extends MessageKey> = [ParamNames<K>] extends [never]
 export type NoParamKey = {
   [K in MessageKey]: [ParamNames<K>] extends [never] ? K : never;
 }[MessageKey];
-
 export type WithParamKey = Exclude<MessageKey, NoParamKey>;
 
 /** 某个 key 的具名参数表（重载里用） */

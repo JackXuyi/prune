@@ -443,9 +443,7 @@ pub fn scan_cached(
             Some(b) => b,
             None => continue,
         };
-        let ident = b
-            .pid
-            .and_then(|p| identities.and_then(|m| m.get(&p)));
+        let ident = b.pid.and_then(|p| identities.and_then(|m| m.get(&p)));
         e.service = super::service::infer(
             e.port,
             e.proto,

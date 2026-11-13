@@ -64,10 +64,7 @@ impl PortState {
     }
 
     /// 探针缓存读取。未命中 = None（不是「不是服务」）。
-    pub fn probe_get(
-        &self,
-        key: &(u16, i32, u64),
-    ) -> Option<prune_core::net::probe::ProbeOutcome> {
+    pub fn probe_get(&self, key: &(u16, i32, u64)) -> Option<prune_core::net::probe::ProbeOutcome> {
         self.probe_cache
             .lock()
             .unwrap_or_else(|e| e.into_inner())

@@ -319,7 +319,10 @@ pub fn is_watched(port: u16, scope: BindScope, comms: &[&str], has_project: bool
     // 极可能是 dev server。Windows 无 cwd → has_project 恒空，没有这条
     // uvicorn :8765 这类非标端口服务会被错误折叠。多看一条无害：
     // 折叠规则的本意是压 Electron / 微信类 IPC 噪音，解释器进程不属于该类。
-    if scope == BindScope::Loopback && port >= 1024 && comms.iter().any(|c| service::is_runtime_comm(c)) {
+    if scope == BindScope::Loopback
+        && port >= 1024
+        && comms.iter().any(|c| service::is_runtime_comm(c))
+    {
         return true;
     }
     has_project
@@ -460,10 +463,20 @@ mod tests {
             false
         ));
         // 运行时解释器进程的 loopback 高位端口：进关注层（Windows 无 cwd 的兜底）
-        assert!(is_watched(8765, BindScope::Loopback, &["python3.11"], false));
+        assert!(is_watched(
+            8765,
+            BindScope::Loopback,
+            &["python3.11"],
+            false
+        ));
         assert!(is_watched(8766, BindScope::Loopback, &["node.exe"], false));
         // 同端口但进程不是解释器：仍折叠
-        assert!(!is_watched(8765, BindScope::Loopback, &["Cursor Helper"], false));
+        assert!(!is_watched(
+            8765,
+            BindScope::Loopback,
+            &["Cursor Helper"],
+            false
+        ));
         // 系统进程占着全部网卡：折叠（否则每个 Mac 都会看到 rapportd）
         assert!(!is_watched(58578, BindScope::Any, &["rapportd"], false));
         // 端口 0 永远不关注

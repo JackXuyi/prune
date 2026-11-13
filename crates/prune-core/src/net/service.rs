@@ -68,9 +68,11 @@ impl ProcIdentity {
 pub fn is_runtime_comm(comm: &str) -> bool {
     let c = comm.to_lowercase();
     // 前缀匹配：python3.11 / python.exe / node-v18 …都是同一族
-    ["node", "deno", "bun", "python", "java", "dotnet", "ruby", "php", "perl"]
-        .iter()
-        .any(|p| c.starts_with(p))
+    [
+        "node", "deno", "bun", "python", "java", "dotnet", "ruby", "php", "perl",
+    ]
+    .iter()
+    .any(|p| c.starts_with(p))
 }
 
 /// 端口 → 服务类型（L0 静态表）。
@@ -83,16 +85,16 @@ const PORT_SERVICES: &[(u16, ServiceKind)] = &[
     (3001, ServiceKind::DevServer),
     (3002, ServiceKind::DevServer),
     (3003, ServiceKind::DevServer),
-    (4200, ServiceKind::DevServer),   // Angular
-    (4173, ServiceKind::DevServer),   // vite preview
-    (4321, ServiceKind::DevServer),   // Astro
-    (5173, ServiceKind::DevServer),   // Vite
+    (4200, ServiceKind::DevServer), // Angular
+    (4173, ServiceKind::DevServer), // vite preview
+    (4321, ServiceKind::DevServer), // Astro
+    (5173, ServiceKind::DevServer), // Vite
     (5174, ServiceKind::DevServer),
     (5175, ServiceKind::DevServer),
-    (6006, ServiceKind::DevServer),   // Storybook
+    (6006, ServiceKind::DevServer), // Storybook
     (7000, ServiceKind::DevServer),
     (7001, ServiceKind::DevServer),
-    (5000, ServiceKind::DevServer),   // Flask / Django 默认
+    (5000, ServiceKind::DevServer), // Flask / Django 默认
     (5001, ServiceKind::DevServer),
     (8000, ServiceKind::DevServer),
     (8001, ServiceKind::DevServer),
@@ -104,22 +106,22 @@ const PORT_SERVICES: &[(u16, ServiceKind)] = &[
     (8081, ServiceKind::Web),
     (8082, ServiceKind::Web),
     // 数据库 / 中间件
-    (3306, ServiceKind::Database),    // MySQL
-    (5432, ServiceKind::Database),    // PostgreSQL
-    (6379, ServiceKind::Database),    // Redis
-    (27017, ServiceKind::Database),   // MongoDB
+    (3306, ServiceKind::Database),  // MySQL
+    (5432, ServiceKind::Database),  // PostgreSQL
+    (6379, ServiceKind::Database),  // Redis
+    (27017, ServiceKind::Database), // MongoDB
     (27018, ServiceKind::Database),
-    (9200, ServiceKind::Database),    // Elasticsearch
+    (9200, ServiceKind::Database), // Elasticsearch
     (9300, ServiceKind::Database),
-    (11211, ServiceKind::Database),   // memcached
-    (5672, ServiceKind::Database),    // RabbitMQ
-    (15672, ServiceKind::Database),   // RabbitMQ 管理
-    (9092, ServiceKind::Database),    // Kafka
-    (2181, ServiceKind::Database),    // ZooKeeper
+    (11211, ServiceKind::Database), // memcached
+    (5672, ServiceKind::Database),  // RabbitMQ
+    (15672, ServiceKind::Database), // RabbitMQ 管理
+    (9092, ServiceKind::Database),  // Kafka
+    (2181, ServiceKind::Database),  // ZooKeeper
     // 代理 / 调试 / 其他
-    (1080, ServiceKind::Proxy),       // socks
+    (1080, ServiceKind::Proxy), // socks
     (1087, ServiceKind::Proxy),
-    (9229, ServiceKind::Debug),       // node inspector
+    (9229, ServiceKind::Debug), // node inspector
     (9230, ServiceKind::Debug),
 ];
 
@@ -307,7 +309,14 @@ mod tests {
     fn system_processes_never_inferred() {
         // AirPlay 的 5000 端口绝不能标成 Web
         assert_eq!(
-            infer(5000, super::super::Proto::Tcp, "ControlCenter", None, &[], None),
+            infer(
+                5000,
+                super::super::Proto::Tcp,
+                "ControlCenter",
+                None,
+                &[],
+                None
+            ),
             None
         );
         assert_eq!(
@@ -318,7 +327,17 @@ mod tests {
 
     #[test]
     fn udp_never_inferred() {
-        assert_eq!(infer(5353, super::super::Proto::Udp, "mDNSResponder", None, &[], None), None);
+        assert_eq!(
+            infer(
+                5353,
+                super::super::Proto::Udp,
+                "mDNSResponder",
+                None,
+                &[],
+                None
+            ),
+            None
+        );
     }
 
     #[test]
@@ -454,7 +473,14 @@ mod tests {
         std::fs::write(dir.join("next.config.mjs"), "export default {}").unwrap();
         // 非标端口 + 万金油进程 + 无 cmd：项目嗅探兜底
         assert_eq!(
-            infer(8123, super::super::Proto::Tcp, "node", None, &[], Some(dir.to_str().unwrap())),
+            infer(
+                8123,
+                super::super::Proto::Tcp,
+                "node",
+                None,
+                &[],
+                Some(dir.to_str().unwrap())
+            ),
             Some(ServiceKind::DevServer)
         );
         std::fs::remove_dir_all(&dir).ok();

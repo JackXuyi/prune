@@ -910,6 +910,7 @@ mod tests {
                 exposure,
                 watched: true,
                 note: None,
+                service: None,
             };
         let loopback = mk_entry(prune_core::net::BindScope::Loopback, "127.0.0.1");
         let wildcard = mk_entry(prune_core::net::BindScope::Any, "0.0.0.0");

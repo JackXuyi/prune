@@ -122,7 +122,10 @@ fn judge_web(raw: &str) -> Option<ProbeOutcome> {
     if !raw.starts_with("HTTP/") {
         return None;
     }
-    Some(ProbeOutcome::new(ServiceKind::Web, header_value(raw, "server")))
+    Some(ProbeOutcome::new(
+        ServiceKind::Web,
+        header_value(raw, "server"),
+    ))
 }
 
 /// initialize 判定：2xx + 响应体含 `protocolVersion` 与 `serverInfo` → MCP。
@@ -190,7 +193,10 @@ fn extract_json_field(body: &str, anchor: &str, field: &str) -> Option<String> {
     let after_anchor = body.split(anchor).nth(1)?;
     let pattern = format!("\"{field}\"");
     let idx = after_anchor.find(&pattern)? + pattern.len();
-    let rest = after_anchor[idx..].trim_start().strip_prefix(':')?.trim_start();
+    let rest = after_anchor[idx..]
+        .trim_start()
+        .strip_prefix(':')?
+        .trim_start();
     let rest = rest.strip_prefix('"')?;
     let end = rest.find('"')?;
     let val = &rest[..end];
@@ -259,7 +265,10 @@ fn banner_probe(port: u16) -> Option<ProbeOutcome> {
             return Some(ProbeOutcome::new(ServiceKind::Other, Some(ver)));
         }
         if text.contains("mysql") || text.contains("mariadb") {
-            return Some(ProbeOutcome::new(ServiceKind::Database, Some("MySQL".into())));
+            return Some(ProbeOutcome::new(
+                ServiceKind::Database,
+                Some("MySQL".into()),
+            ));
         }
     }
     // Redis：连接后沉默，PING 才答
@@ -269,7 +278,10 @@ fn banner_probe(port: u16) -> Option<ProbeOutcome> {
     let mut buf = [0u8; 64];
     let n = stream.read(&mut buf).unwrap_or(0);
     if n >= 4 && &buf[..4] == b"+PON" {
-        return Some(ProbeOutcome::new(ServiceKind::Database, Some("Redis".into())));
+        return Some(ProbeOutcome::new(
+            ServiceKind::Database,
+            Some("Redis".into()),
+        ));
     }
     None
 }
@@ -284,7 +296,8 @@ mod tests {
 
     #[test]
     fn wellknown_confirms_mcp() {
-        let raw = format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{WELLKNOWN_BODY}");
+        let raw =
+            format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\n\r\n{WELLKNOWN_BODY}");
         let out = judge_wellknown(&raw).unwrap();
         assert_eq!(out.kind, ServiceKind::Mcp);
         assert_eq!(out.detail.as_deref(), Some("my-mcp"));
@@ -299,7 +312,7 @@ mod tests {
     #[test]
     fn web_head_with_server_header() {
         let raw = "HTTP/1.1 200 OK\r\nServer: Caddy\r\nContent-Type: text/html\r\n\r\n";
-        let out = judge_web(&raw).unwrap();
+        let out = judge_web(raw).unwrap();
         assert_eq!(out.kind, ServiceKind::Web);
         assert_eq!(out.detail.as_deref(), Some("Caddy"));
     }
@@ -327,9 +340,7 @@ mod tests {
 
     #[test]
     fn init_sse_form_also_confirms() {
-        let raw = format!(
-            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n{INIT_SSE}"
-        );
+        let raw = format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n{INIT_SSE}");
         let out = judge_mcp_init(&raw).unwrap();
         assert_eq!(out.kind, ServiceKind::Mcp);
         assert_eq!(out.detail.as_deref(), Some("sse-server"));
@@ -345,7 +356,7 @@ mod tests {
     #[test]
     fn sse_transport_confirms_mcp() {
         let raw = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\nevent: endpoint\ndata: /messages\r\n\r\n";
-        let out = judge_sse(&raw).unwrap();
+        let out = judge_sse(raw).unwrap();
         assert_eq!(out.kind, ServiceKind::Mcp);
     }
 
@@ -364,7 +375,10 @@ mod tests {
 
     #[test]
     fn extract_field_edge_cases() {
-        assert_eq!(extract_json_field(INIT_JSON, "serverInfo", "name"), Some("everything".into()));
+        assert_eq!(
+            extract_json_field(INIT_JSON, "serverInfo", "name"),
+            Some("everything".into())
+        );
         // anchor 不存在
         assert_eq!(extract_json_field("{\"a\":1}", "serverInfo", "name"), None);
         // 字段为空串

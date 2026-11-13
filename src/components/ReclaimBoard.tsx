@@ -4,7 +4,8 @@ import { useI18n } from "../i18n/store";
 import type { I18n } from "../i18n";
 import { formatBytes, formatPercent, formatRelative } from "../lib/format";
 import { useDialogA11y } from "../lib/dialogA11y";
-import { isTauri, reclaimChildren, revealPath } from "../lib/ipc";
+import { isTauri, reclaimChildren, revealPath, activationReport, reclaimPreview, reclaimExecute, diskReport, type ActivationSummary } from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { useDiskStore } from "../stores/diskStore";
 import { StackBar } from "./charts/StackBar";
 import { BarList } from "./charts/BarList";
@@ -62,6 +63,31 @@ export function ReclaimBoard() {
   /** 当前展开的级 */
   const [openTier, setOpenTier] = useState<Level | null>(null);
   const [drawer, setDrawer] = useState(false);
+  // ------------------------------------------------- M2 激活闭环（DP-3 裁 B）
+  /** 激活读数：firstCutTs == null = 从未清理过 → 首扫完成页显示引导卡 */
+  const [activation, setActivation] = useState<ActivationSummary | null>(null);
+  /** 成绩单弹窗：一键🟢 成功后即时呈现（R07），非阻塞、可关 */
+  const [scorecard, setScorecard] = useState<{ bytes: number; moved: number } | null>(null);
+  /** 引导卡关闭（localStorage 记忆；一旦清理过就永久不再出现——链路是单向的） */
+  const [guideDismissed, setGuideDismissed] = useState(
+    () => localStorage.getItem("prune.guide.dismissed") === "1",
+  );
+  /** 一键🟢 进行中 */
+  const [greenBusy, setGreenBusy] = useState(false);
+  /** 征募点「复制 6 个数字」成功标记 */
+  const [copied, setCopied] = useState(false);
+
+  // 激活读数只在挂载时取一次（首扫完成页判定 + 征募点数字）
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    activationReport()
+      .then((a) => alive && setActivation(a))
+      .catch(() => {});
+    return () => {
+      alive = false;
+    };
+  }, []);
 
   const groups = useMemo(() => report?.groups ?? [], [report]);
 
@@ -156,6 +182,82 @@ export function ReclaimBoard() {
   const closeDrawer = () => {
     setDrawer(false);
     clearPreview();
+  };
+
+  // ------------------------------------------------- M2 激活闭环（DP-3 裁 B）
+
+  /** L1 零后悔组：有死重切片的分组，「一键🟢」只碰这些（绝不替用户做 L2+ 的主） */
+  const l1Groups = groups.filter((g) => g.deadweight != null && reclaimableOf(g) > 0);
+  const l1Bytes = l1Groups.reduce((n, g) => n + reclaimableOf(g), 0);
+  /** 引导卡只出现在「首扫完成 → 从未清理」这个窗口（firstCutTs == null），
+   *  链路闭环（清理过）或用户明确关掉后不再打扰——不在「惊讶」前设卡（DP-3） */
+  const showGuide =
+    !scanning && l1Bytes > 0 && !guideDismissed && activation != null && activation.firstCutTs == null;
+
+  const dismissGuide = () => {
+    setGuideDismissed(true);
+    localStorage.setItem("prune.guide.dismissed", "1");
+  };
+
+  /** 一键🟢：L1 组走既有 dry-run → 执行链路（confirmed=true；L1 无需确认但无害），
+   *  成功后即时呈现成绩单弹窗（R07），并刷新激活读数（firstCutTs 落定 → 卡片退场） */
+  const oneClickGreen = async () => {
+    const keys = l1Groups.map((g) => g.key);
+    if (keys.length === 0 || greenBusy) return;
+    setGreenBusy(true);
+    try {
+      const preview = await reclaimPreview(keys);
+      if (preview.items.length === 0) {
+        toast(t("disk.guide.nothing"), "info");
+        return;
+      }
+      const result = await reclaimExecute(preview.items, true);
+      setScorecard({ bytes: result.bytes, moved: result.moved });
+      setActivation(await activationReport().catch(() => null));
+      // 清理后 Rust 侧会自动增量重扫并推 disk://done；这里拉一次兜底
+      const rep = await diskReport().catch(() => null);
+      if (rep) useDiskStore.setState({ report: rep });
+    } catch (e) {
+      toast(String(e), "err");
+    } finally {
+      setGreenBusy(false);
+    }
+  };
+
+  /**
+   * 征募点（RK-5 红线内）：只在首扫完成页出现，只提供「复制 6 个数字」——
+   * 零遥测，数字不出剪贴板就不出设备。M-B 访谈（v0.10.0 发布后第 2–4 周）用。
+   */
+  const copySixNumbers = async () => {
+    if (!activation || !report) return;
+    const vol = report.volume;
+    const usedPct =
+      vol && vol.totalBytes > 0
+        ? Math.round(
+            (Math.max(0, vol.totalBytes - vol.userAvailableBytes) / vol.totalBytes) * 100,
+          )
+        : -1;
+    const days =
+      activation.firstScanTs != null
+        ? Math.max(0, Math.floor((Date.now() / 1000 - activation.firstScanTs) / 86_400))
+        : -1;
+    const in24h =
+      activation.firstCutTs != null &&
+      activation.firstBootTs != null &&
+      activation.firstCutTs - activation.firstBootTs <= 86_400
+        ? 1
+        : 0;
+    const text = [
+      usedPct,
+      report.totals.reclaimable,
+      activation.cutTotalBytes,
+      activation.cutSessions,
+      days,
+      in24h,
+    ].join(", ");
+    const ok = await writeClipboard(text);
+    setCopied(ok);
+    setTimeout(() => setCopied(false), 2000);
   };
 
   return (

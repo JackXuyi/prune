@@ -519,29 +519,23 @@ impl Store {
     pub fn activation_summary(&self) -> rusqlite::Result<ActivationSummary> {
         let conn = self.lock();
         let first_boot: Option<i64> = conn
-            .query_row(
-                "SELECT value FROM meta WHERE key = 'first_boot'",
-                [],
-                |r| r.get::<_, String>(0),
-            )
+            .query_row("SELECT value FROM meta WHERE key = 'first_boot'", [], |r| {
+                r.get::<_, String>(0)
+            })
             .ok()
             .and_then(|v| v.parse().ok());
-        let (first_scan, scan_count): (Option<i64>, i64) = conn.query_row(
-            "SELECT MIN(ts), COUNT(*) FROM scan_log",
-            [],
-            |r| Ok((r.get(0)?, r.get(1)?)),
-        )?;
+        let (first_scan, scan_count): (Option<i64>, i64) =
+            conn.query_row("SELECT MIN(ts), COUNT(*) FROM scan_log", [], |r| {
+                Ok((r.get(0)?, r.get(1)?))
+            })?;
         let (first_cut, cut_bytes, cut_rows): (Option<i64>, i64, i64) = conn.query_row(
             "SELECT MIN(ts), COALESCE(SUM(bytes), 0), COUNT(*) FROM cut_log",
             [],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         )?;
         // 清理「次数」= 一次清理的各分组共享同一 ts（见 cut_log 表注释）→ COUNT(DISTINCT ts)
-        let cut_sessions: i64 = conn.query_row(
-            "SELECT COUNT(DISTINCT ts) FROM cut_log",
-            [],
-            |r| r.get(0),
-        )?;
+        let cut_sessions: i64 =
+            conn.query_row("SELECT COUNT(DISTINCT ts) FROM cut_log", [], |r| r.get(0))?;
         Ok(ActivationSummary {
             first_boot_ts: first_boot,
             first_scan_ts: first_scan,
@@ -1137,7 +1131,10 @@ mod tests {
         store.scan_log_add(200, "incr").unwrap();
         // 同一次清理三个分组共享同一 ts：次数 = 1，不是 3
         store
-            .cut_add(&[("npm 缓存", 100), ("pip 缓存", 200), ("yarn 缓存", 300)], 300)
+            .cut_add(
+                &[("npm 缓存", 100), ("pip 缓存", 200), ("yarn 缓存", 300)],
+                300,
+            )
             .unwrap();
 
         let a = store.activation_summary().unwrap();
