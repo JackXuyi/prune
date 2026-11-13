@@ -148,9 +148,13 @@ impl Scanner {
                 let name = p.name().to_string_lossy().to_string();
                 let exe = p.exe().map(|e| e.to_string_lossy().to_string());
                 let family = classify(&name, exe.as_deref());
-                // argv 只为工作区归属保留（M2.5）：只有编辑器类家族需要，
-                // 其余进程不复制 argv，避免 10 s 轮次做无用的字符串分配
-                let cmd = if super::workspace::workspace_capable(&family) {
+                // argv 复制范围（M2.5 + 服务类型推断）：编辑器家族要给工作区归属，
+                // 运行时解释器进程（node/python/java…）要给端口服务推断
+                // （`node …/vite`、`python -m http.server`、`node …/mcp-server-x`）。
+                // 两类之外不复制，避免 10 s 轮次做无用的字符串分配
+                let cmd = if super::workspace::workspace_capable(&family)
+                    || crate::net::service::is_runtime_comm(&name)
+                {
                     p.cmd()
                         .iter()
                         .map(|c| c.to_string_lossy().to_string())

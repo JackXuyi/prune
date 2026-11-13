@@ -820,6 +820,7 @@ mod tests {
             listeners,
             watched,
             note: None,
+            service: None,
         }
     }
 

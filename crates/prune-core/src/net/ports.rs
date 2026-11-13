@@ -15,6 +15,7 @@
 use std::process::Command;
 
 use super::host;
+use super::service::ProcIdentity;
 use super::{BindScope, Coverage, PortBinding, PortSnapshot, Proto};
 
 /// cwd 查询并发：单次 20 ms，通常 8–20 个监听进程，12 路可压到 2 轮以内
@@ -363,21 +364,22 @@ pub fn parse_netstat(text: &str) -> KernelTcp {
 
 // ---------------------------------------------------------------- 主入口
 
-/// 一轮完整端口采样：TCP + UDP + 内核交叉校验 + 项目归属。
+/// 一轮完整端口采样：TCP + UDP + 内核交叉校验 + 项目归属 + 服务类型推断（L0）。
 ///
-/// `proc_names` 用于补齐进程名：macOS 的 lsof 自带 `c` 行，传 None 即可；
-/// Windows 的 iphlpapi 只给 pid，由上层（MemState 的全量进程表）提供映射。
+/// `identities` 用于补齐进程身份：macOS 的 lsof 自带 `c` 行，传 None 即可；
+/// Windows 的 iphlpapi 只给 pid，由上层（MemState 的全量进程表）提供映射，
+/// exe/cmd 有的话一并带上（L0 推断的 Windows 主证据源，见 service.rs）。
 ///
 /// 失败不 panic：lsof 不可用时返回 `unavailable` 快照，`coverage.note` 写清原因——
 /// 「无数据」与「没有端口」必须是两种不同的状态。
-pub fn scan(proc_names: Option<&std::collections::HashMap<i32, String>>) -> PortSnapshot {
-    scan_cached(proc_names, &mut host::ProjectCache::new())
+pub fn scan(identities: Option<&std::collections::HashMap<i32, ProcIdentity>>) -> PortSnapshot {
+    scan_cached(identities, &mut host::ProjectCache::new())
 }
 
 /// 同上，但复用跨轮的项目归属缓存（GUI 常驻路径用这个：
 /// 冷扫 137 ms → 热扫约 50 ms，差别全在 cwd 查询上）。
 pub fn scan_cached(
-    proc_names: Option<&std::collections::HashMap<i32, String>>,
+    identities: Option<&std::collections::HashMap<i32, ProcIdentity>>,
     cache: &mut host::ProjectCache,
 ) -> PortSnapshot {
     let started = std::time::Instant::now();
@@ -426,13 +428,33 @@ pub fn scan_cached(
         }
         // Windows 分支只拿到 pid：用进程表补名字（关注度判定依赖 comm）
         if b.comm.is_empty() {
-            if let Some(name) = b.pid.and_then(|p| proc_names.and_then(|m| m.get(&p))) {
-                b.comm = name.clone();
+            if let Some(ident) = b.pid.and_then(|p| identities.and_then(|m| m.get(&p))) {
+                b.comm = ident.comm.clone();
             }
         }
     }
 
-    let entries = super::group(bindings, &tcp_scan.conns);
+    let mut entries = super::group(bindings, &tcp_scan.conns);
+
+    // 服务类型推断（L0）：主绑定进程的 comm / exe / cmd + 端口 + 项目文件嗅探。
+    // group() 是纯函数没有 exe/cmd，这里回填；推断不出保持 None，不猜。
+    for e in &mut entries {
+        let b = match e.primary() {
+            Some(b) => b,
+            None => continue,
+        };
+        let ident = b
+            .pid
+            .and_then(|p| identities.and_then(|m| m.get(&p)));
+        e.service = super::service::infer(
+            e.port,
+            e.proto,
+            &b.comm,
+            ident.and_then(|i| i.exe.as_deref()),
+            ident.map(|i| i.cmd.as_slice()).unwrap_or(&[]),
+            b.project.as_deref(),
+        );
+    }
 
     let listen_total = kernel.as_ref().map(|k| k.listen_total).unwrap_or(0);
     let attributed = tcp_listen_rows;

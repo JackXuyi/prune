@@ -24,6 +24,10 @@ pub mod lan_history;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
 pub mod ports;
+/// 端口服务类型（docs/research/port-service-type-research.md）：
+/// L0 静态推断（`service.rs`）+ L1 主动探针（`probe.rs`，用户显式触发）。
+pub mod probe;
+pub mod service;
 /// M14：系统口径总网速 + 每日流量（网卡分类 / 本地日期 / 数据契约）
 pub mod traffic;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof
@@ -123,6 +127,11 @@ pub struct PortEntry {
     pub watched: bool,
     /// 内置解释（目前只有 AirPlay 5000/7000）。有就显示，没有就不占位。
     pub note: Option<String>,
+    /// 服务类型（L0 静态推断）。None = 推断不出，**不是「不是服务」**。
+    /// L1 探针（`probe.rs`）的确认结果不落这里——它是快照外的即时数据，
+    /// 由前端按 `(pid, port, start_time)` 叠加显示。
+    #[serde(default)]
+    pub service: Option<service::ServiceKind>,
 }
 
 impl PortEntry {
@@ -306,6 +315,13 @@ pub fn is_watched(port: u16, scope: BindScope, comms: &[&str], has_project: bool
     if scope == BindScope::Any && !comms.iter().any(|c| is_system_process(c)) {
         return true;
     }
+    // 平台无关兜底（服务类型调研 §2）：运行时解释器进程监听的 loopback 高位端口
+    // 极可能是 dev server。Windows 无 cwd → has_project 恒空，没有这条
+    // uvicorn :8765 这类非标端口服务会被错误折叠。多看一条无害：
+    // 折叠规则的本意是压 Electron / 微信类 IPC 噪音，解释器进程不属于该类。
+    if scope == BindScope::Loopback && port >= 1024 && comms.iter().any(|c| service::is_runtime_comm(c)) {
+        return true;
+    }
     has_project
 }
 
@@ -362,6 +378,8 @@ pub fn group(bindings: Vec<PortBinding>, conns: &[(u16, u32)]) -> Vec<PortEntry>
             exposure,
             watched,
             note,
+            // 推断需要 exe/cmd（group 只有 comm），由 scan_cached 按 ProcIdentity 回填
+            service: None,
         });
     }
     out
@@ -441,6 +459,11 @@ mod tests {
             &["Cursor Helper"],
             false
         ));
+        // 运行时解释器进程的 loopback 高位端口：进关注层（Windows 无 cwd 的兜底）
+        assert!(is_watched(8765, BindScope::Loopback, &["python3.11"], false));
+        assert!(is_watched(8766, BindScope::Loopback, &["node.exe"], false));
+        // 同端口但进程不是解释器：仍折叠
+        assert!(!is_watched(8765, BindScope::Loopback, &["Cursor Helper"], false));
         // 系统进程占着全部网卡：折叠（否则每个 Mac 都会看到 rapportd）
         assert!(!is_watched(58578, BindScope::Any, &["rapportd"], false));
         // 端口 0 永远不关注

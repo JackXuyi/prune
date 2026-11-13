@@ -940,22 +940,32 @@ async fn port_snapshot_source(app: &AppHandle) -> Option<prune_core::net::PortSn
     let state_clone: std::sync::Arc<crate::port_sampler::PortState> = state.inner().clone();
     let handle = app.clone();
     tauri::async_runtime::spawn_blocking(move || {
-        // Windows 的 iphlpapi 只给 pid：进程名从内存轮的全量进程表借（与 port_round 同源）
-        let names: Option<std::collections::HashMap<i32, String>> = handle
-            .try_state::<std::sync::Arc<crate::sampler::MemState>>()
-            .map(|ms| {
-                ms.processes
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .iter()
-                    .map(|p| (p.pid, p.name.clone()))
-                    .collect()
-            });
+        // Windows 的 iphlpapi 只给 pid：进程身份从内存轮的全量进程表借（与 port_round 同源）
+        let identities: Option<std::collections::HashMap<i32, prune_core::net::service::ProcIdentity>> =
+            handle
+                .try_state::<std::sync::Arc<crate::sampler::MemState>>()
+                .map(|ms| {
+                    ms.processes
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .iter()
+                        .map(|p| {
+                            (
+                                p.pid,
+                                prune_core::net::service::ProcIdentity {
+                                    comm: p.name.clone(),
+                                    exe: p.exe.clone(),
+                                    cmd: p.cmd.clone(),
+                                },
+                            )
+                        })
+                        .collect()
+                });
         let mut cache = state_clone
             .project_cache()
             .lock()
             .unwrap_or_else(|e| e.into_inner());
-        net_ports::scan_cached(names.as_ref(), &mut cache)
+        net_ports::scan_cached(identities.as_ref(), &mut cache)
     })
     .await
     .ok()

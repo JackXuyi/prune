@@ -140,18 +140,28 @@ pub async fn port_round(app: &AppHandle, force: bool) -> Result<(), String> {
     let scan_state = state.clone();
     let handle = app.clone();
     let snap = tauri::async_runtime::spawn_blocking(move || {
-        // Windows 的 iphlpapi 只给 pid，进程名从内存轮的全量进程表借；
-        // macOS 的 lsof 自带 `c` 行，传 None 即可。
-        let names: Option<HashMap<i32, String>> = handle.try_state::<Arc<MemState>>().map(|ms| {
-            ms.processes
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .iter()
-                .map(|p| (p.pid, p.name.clone()))
-                .collect()
-        });
+        // Windows 的 iphlpapi 只给 pid，进程身份从内存轮的全量进程表借；
+        // macOS 的 lsof 自带 `c` 行，exe/cmd 由进程表补（服务推断用）。
+        let identities: Option<HashMap<i32, prune_core::net::service::ProcIdentity>> =
+            handle.try_state::<Arc<MemState>>().map(|ms| {
+                ms.processes
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .iter()
+                    .map(|p| {
+                        (
+                            p.pid,
+                            prune_core::net::service::ProcIdentity {
+                                comm: p.name.clone(),
+                                exe: p.exe.clone(),
+                                cmd: p.cmd.clone(),
+                            },
+                        )
+                    })
+                    .collect()
+            });
         let mut cache = scan_state.cache.lock().unwrap_or_else(|e| e.into_inner());
-        net_ports::scan_cached(names.as_ref(), &mut cache)
+        net_ports::scan_cached(identities.as_ref(), &mut cache)
     })
     .await
     .map_err(|e| format!("端口扫描线程失败: {e}"))?;
