@@ -14,6 +14,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicU8, Ordering};
 use std::sync::{Arc, Mutex};
 
 use prune_core::appdisk::{AppDisk, AppDiskCache, BundleQuery, BundleSize};
@@ -645,6 +646,67 @@ pub fn app_history_daily(
 
 // ---------------------------------------------------------------- M30 项目休眠归档（F14）
 
+/// 进度事件名（前端 `listen` 同名）
+const ARCHIVE_PROGRESS_EVENT: &str = "archive://progress";
+/// 进度节流窗口：node_modules 十几万条目，逐条 emit 会把 IPC 打满
+const PROGRESS_THROTTLE_MS: u64 = 200;
+/// 归档区残留 `.part` 的清理阈值（秒）。进行中的打包 mtime 是新鲜的，
+/// 只有强杀 / 断电留下的陈旧半成品才会被扫掉。
+const STALE_PART_SECS: u64 = 600;
+
+/// 归档/恢复的串行闸门：同一时刻只允许一个任务。压缩是 CPU 密集操作，
+/// 并行只会互相拖慢并把磁盘打满；第二个请求**立即返回**而不是排队——
+/// 排队会让用户以为「点了没反应」，正是 0.9.0 卡死投诉的同一个心理模型。
+static ARCHIVE_BUSY: AtomicBool = AtomicBool::new(false);
+/// 当前任务的取消令牌：`archive_cancel` 置位，每次开新任务时清零
+static ARCHIVE_CANCEL: AtomicBool = AtomicBool::new(false);
+
+/// 闸门守卫：Drop 时自动放行，panic / 提前 return 都不会把应用锁死
+struct ArchiveGuard;
+
+impl ArchiveGuard {
+    fn acquire() -> Result<Self, String> {
+        ARCHIVE_BUSY
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .map(|_| {
+                ARCHIVE_CANCEL.store(false, Ordering::SeqCst);
+                ArchiveGuard
+            })
+            .map_err(|_| "上一个归档任务还在进行中，请等它完成或先取消".to_string())
+    }
+}
+
+impl Drop for ArchiveGuard {
+    fn drop(&mut self) {
+        ARCHIVE_BUSY.store(false, Ordering::SeqCst);
+    }
+}
+
+/// 进度节流：阶段切换、每 200 ms、以及「跑满」这三种情况才发事件。
+///
+/// 为什么按「字节 + 阶段」而不是按条目：进度条只关心字节进度；一次归档
+/// 十几万条目，逐条发事件会把 IPC 和渲染线程打满——那是把「卡死」换成
+/// 「卡顿」，不算修好。
+fn progress_sink(app: AppHandle) -> impl Fn(&prune_core::archive::Progress) + Send + 'static {
+    let base = std::time::Instant::now();
+    let last_ms = AtomicU64::new(0);
+    let last_stage = AtomicU8::new(u8::MAX);
+    move |p: &prune_core::archive::Progress| {
+        let stage = p.stage as u8;
+        let ms = base.elapsed().as_millis() as u64;
+        let prev_stage = last_stage.load(Ordering::Relaxed);
+        // 收尾必须发：否则前端进度条停在 97% 直到任务返回
+        let full = p.total_bytes > 0 && p.done_bytes >= p.total_bytes;
+        let due = ms.saturating_sub(last_ms.load(Ordering::Relaxed)) >= PROGRESS_THROTTLE_MS;
+        if stage == prev_stage && !due && !full {
+            return;
+        }
+        last_stage.store(stage, Ordering::Relaxed);
+        last_ms.store(ms, Ordering::Relaxed);
+        let _ = app.emit(ARCHIVE_PROGRESS_EVENT, p);
+    }
+}
+
 /// 归档区根（`<config>/com.xuyi.prune/archive`）。
 fn archive_root_or_err() -> Result<PathBuf, String> {
     prune_core::archive::system_archive_root().ok_or_else(|| "找不到应用配置目录".to_string())
@@ -656,42 +718,82 @@ fn deps_of(project_root: &str) -> PathBuf {
     PathBuf::from(project_root).join("node_modules")
 }
 
+/// 归档账本（顺带清理异常中断留下的 `.part`）。
+///
+/// 只读小 JSON，保留同步写法；清理动作只碰归档区里陈旧的 `.part`。
 #[tauri::command]
 pub fn archive_list() -> Result<Vec<prune_core::archive::ArchiveEntry>, String> {
-    Ok(prune_core::archive::list(&archive_root_or_err()?))
+    let root = archive_root_or_err()?;
+    prune_core::archive::cleanup_stale_parts(&root, STALE_PART_SECS);
+    Ok(prune_core::archive::list(&root))
 }
 
-/// dry-run：统计依赖目录体积与目标归档路径，不写任何文件
+/// dry-run：统计依赖目录体积与目标归档路径，不写任何文件。
+///
+/// **必须 spawn_blocking**：统计要遍历十几万条目，同步调用会占住主线程
+/// （Tauri v2 的同步 command 跑在主线程，见 docs/diag-m30-archive-freeze.md）。
 #[tauri::command]
-pub fn archive_plan(project_root: String) -> Result<prune_core::archive::ArchivePlan, String> {
-    prune_core::archive::plan(&deps_of(&project_root), &archive_root_or_err()?, now_secs())
+pub async fn archive_plan(
+    project_root: String,
+) -> Result<prune_core::archive::ArchivePlan, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = archive_root_or_err()?;
+        prune_core::archive::plan(&deps_of(&project_root), &root, now_secs())
+    })
+    .await
+    .map_err(|e| format!("归档线程异常：{e}"))?
 }
 
 /// 执行归档：必须 `confirmed`（先预览再执行）。校验通过后才删原件。
+///
+/// 全程在阻塞线程池里跑，进度以 `archive://progress` 事件推出，可被
+/// `archive_cancel` 取消（取消后原件不动、不留 `.part`、不记账）。
 #[tauri::command]
-pub fn archive_create(
+pub async fn archive_create(
+    app: AppHandle,
     project_root: String,
     confirmed: bool,
 ) -> Result<prune_core::archive::ArchiveEntry, String> {
     if !confirmed {
         return Err("归档需要确认：请先预览再执行".into());
     }
-    prune_core::archive::create(&deps_of(&project_root), &archive_root_or_err()?, now_secs())
+    let _guard = ArchiveGuard::acquire()?;
+    let cancel: &'static AtomicBool = &ARCHIVE_CANCEL;
+    let sink = progress_sink(app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = archive_root_or_err()?;
+        prune_core::archive::create_guarded(
+            &deps_of(&project_root),
+            &root,
+            now_secs(),
+            &sink,
+            Some(cancel),
+        )
+    })
+    .await
+    .map_err(|e| format!("归档线程异常：{e}"))?
 }
 
 /// dry-run：恢复目标 / 体积 / 冲突标记，不写任何文件
 #[tauri::command]
-pub fn archive_restore_preview(id: String) -> Result<prune_core::archive::RestorePreview, String> {
-    let root = archive_root_or_err()?;
-    let entry = prune_core::archive::find(&root, &id)
-        .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
-    Ok(prune_core::archive::restore_preview(&entry))
+pub async fn archive_restore_preview(
+    id: String,
+) -> Result<prune_core::archive::RestorePreview, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = archive_root_or_err()?;
+        let entry = prune_core::archive::find(&root, &id)
+            .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
+        Ok(prune_core::archive::restore_preview(&entry))
+    })
+    .await
+    .map_err(|e| format!("归档线程异常：{e}"))?
 }
 
 /// 执行恢复：`confirmed` 必填；`overwrite` 用于目标已存在时的二次确认
-/// （覆盖也走废纸篓）。校验失败会把解压产物移入废纸篓并报错。
+/// （覆盖也走废纸篓）。校验失败会把解压产物移入废纸篓。
 #[tauri::command]
-pub fn archive_restore(
+pub async fn archive_restore(
+    app: AppHandle,
     id: String,
     confirmed: bool,
     overwrite: bool,
@@ -699,22 +801,41 @@ pub fn archive_restore(
     if !confirmed {
         return Err("恢复需要确认：请先预览再执行".into());
     }
-    let root = archive_root_or_err()?;
-    let entry = prune_core::archive::find(&root, &id)
-        .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
-    prune_core::archive::restore(&entry, overwrite)
+    let _guard = ArchiveGuard::acquire()?;
+    let cancel: &'static AtomicBool = &ARCHIVE_CANCEL;
+    let sink = progress_sink(app);
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = archive_root_or_err()?;
+        let entry = prune_core::archive::find(&root, &id)
+            .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
+        prune_core::archive::restore_guarded(&entry, overwrite, &sink, Some(cancel))
+    })
+    .await
+    .map_err(|e| format!("归档线程异常：{e}"))?
 }
 
 /// 删除归档：归档文件走废纸篓 + 移除账本条目（归档区不是只进不出）
 #[tauri::command]
-pub fn archive_delete(id: String, confirmed: bool) -> Result<(), String> {
+pub async fn archive_delete(id: String, confirmed: bool) -> Result<(), String> {
     if !confirmed {
         return Err("删除归档需要确认".into());
     }
-    let root = archive_root_or_err()?;
-    let entry = prune_core::archive::find(&root, &id)
-        .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
-    prune_core::archive::delete(&entry, &root)
+    let _guard = ArchiveGuard::acquire()?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let root = archive_root_or_err()?;
+        let entry = prune_core::archive::find(&root, &id)
+            .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
+        prune_core::archive::delete(&entry, &root)
+    })
+    .await
+    .map_err(|e| format!("归档线程异常：{e}"))?
+}
+
+/// 取消当前归档/恢复。返回「是否真的有一个任务在跑」，前端据此决定文案。
+#[tauri::command]
+pub fn archive_cancel() -> bool {
+    ARCHIVE_CANCEL.store(true, Ordering::SeqCst);
+    ARCHIVE_BUSY.load(Ordering::SeqCst)
 }
 
 #[cfg(test)]

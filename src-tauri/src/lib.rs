@@ -85,6 +85,7 @@ pub fn run() {
             commands::archive_restore_preview,
             commands::archive_restore,
             commands::archive_delete,
+            commands::archive_cancel,
             net_sampler::net_speed_snapshot,
             net_sampler::net_speed_set_active,
             net_sampler::net_total_snapshot,
