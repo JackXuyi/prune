@@ -12,7 +12,7 @@
 //! 编解码与工具分发拆成纯函数（`handle_message` / `run_tool`），可直接单测。
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
@@ -252,9 +252,15 @@ fn tool_lan_devices() -> Value {
 /// 与 disk_report 分工：那边回答「全盘浪费结构」（~15 s 重扫），
 /// 这边回答「某条白名单缓存现在多大、里面什么占的」（resolve + 并发测体积，秒级）。
 fn tool_disk_scan(args: &Value) -> Value {
+    let home = prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."));
+    tool_disk_scan_in(&home, args)
+}
+
+/// 可注入 HOME 的实现：生产路径读真实 HOME，测试传临时目录，
+/// 保证断言只考察代码逻辑而不考察机器上恰好装了什么。
+fn tool_disk_scan_in(home: &Path, args: &Value) -> Value {
     use prune_core::disk::whitelist::Level;
 
-    let home = prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."));
     let keys: Option<Vec<String>> = args.get("keys").and_then(|v| v.as_array()).map(|a| {
         a.iter()
             .filter_map(|k| k.as_str().map(String::from))
@@ -270,7 +276,7 @@ fn tool_disk_scan(args: &Value) -> Value {
         .unwrap_or(8)
         .clamp(1, 20) as usize;
 
-    let resolved: Vec<_> = prune_core::disk::whitelist::resolve(&home)
+    let resolved: Vec<_> = prune_core::disk::whitelist::resolve(home)
         .into_iter()
         .filter(|(e, _)| {
             keys.as_ref()
@@ -831,30 +837,45 @@ mod tests {
 
     #[test]
     fn disk_scan_returns_structure_and_respects_keys() {
-        // key 必须选跨平台条目（npm 是 Os::All）：原先用 cursor-cache 是 Os::MacOnly，
-        // 在 Linux CI 上被 resolve() 过滤成空数组，而断言写死 len == 1 → 本机绿、CI 红。
-        // resolve() 不按「路径是否存在」过滤（不存在的条目 size=0 但仍在列表里），
-        // 所以这条断言与机器状态无关。
-        let v = run_tool("disk_scan", &json!({ "keys": ["npm"], "children": true }))
-            .expect("disk_scan 应可调用");
+        // 历史 CI 红灯教训：resolve() 按「路径是否存在」过滤（见 whitelist::
+        // resolve 的 is_dir 判断），直接打真实 HOME 时断言依赖机器上恰好装了
+        // 什么——本机绿、CI 红。这里改用临时 HOME 预置 npm 缓存，断言完全确定。
+        let home = std::env::temp_dir().join(format!("prune-mcp-scan-{}", std::process::id()));
+        let cacache = home.join(".npm/_cacache/content-v2/sha512");
+        std::fs::create_dir_all(&cacache).unwrap();
+        std::fs::write(cacache.join("blob.bin"), vec![0u8; 4096]).unwrap();
+
+        let v = tool_disk_scan_in(&home, &json!({ "keys": ["npm"], "children": true }));
         assert_eq!(v["readonly"], true);
         let entries = v["entries"].as_array().unwrap();
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0]["key"], "npm");
-        assert!(entries[0]["sizeBytes"].is_u64());
+        assert_eq!(entries[0]["exists"], true);
+        assert_eq!(entries[0]["sizeBytes"], 4096, "预置文件应被计入");
         assert!(entries[0]["children"].is_array());
+        assert_eq!(entries[0]["children"].as_array().unwrap().len(), 1);
         assert!(v["summary"]["cleanableBytes"].is_u64());
         assert!(v["summary"]["confirmBytes"].is_u64());
         assert!(v["note"].as_str().unwrap().contains("只读"));
+
+        // keys 过滤：不存在的 key 不得冒充条目
+        let v = tool_disk_scan_in(&home, &json!({ "keys": ["no-such-key"] }));
+        assert!(v["entries"].as_array().unwrap().is_empty());
+
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     /// 平台专属条目（Os::MacOnly）在异平台必须被 `resolve()` 静默过滤成空，
     /// 既不能报错，也不能冒充「存在且为 0 字节」。v0.9.2 的 CI 红灯就是这个边界
-    /// 没被守住——用一条显式用例把它钉住。
+    /// 没被守住——用一条显式用例把它钉住。临时 HOME 预置路径，断言只考察平台
+    /// 过滤逻辑，不考察机器上是否真装了 Cursor。
     #[test]
     fn disk_scan_filters_platform_specific_keys() {
-        let v = run_tool("disk_scan", &json!({ "keys": ["cursor-cache"] }))
-            .expect("disk_scan 应可调用");
+        let home = std::env::temp_dir().join(format!("prune-mcp-plat-{}", std::process::id()));
+        let cache = home.join("Library/Application Support/Cursor/Cache");
+        std::fs::create_dir_all(&cache).unwrap();
+
+        let v = tool_disk_scan_in(&home, &json!({ "keys": ["cursor-cache"] }));
         let entries = v["entries"].as_array().unwrap();
         #[cfg(target_os = "macos")]
         assert_eq!(entries.len(), 1, "macOS 上 cursor-cache 应可见");
@@ -863,6 +884,7 @@ mod tests {
             entries.is_empty(),
             "非 macOS 不应返回 mac 专属条目，实际：{entries:?}"
         );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
