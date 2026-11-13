@@ -120,10 +120,22 @@ prune app <家族名> [--json]         # 一个应用的资源画像：进程/�
 prune mcp                           # MCP stdio server（AI Agent 查询入口）
 ```
 
-MCP 工具：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）/
-`port_listeners`（端口反查，只读；`coverage` 说明权限可见范围，`timeWait` 说明内核残留连接）/
-`app_resources`（应用维度五域画像，只读；连接多 ≠ 流量大，磁盘含 APFS 克隆共享部分）。
-安全底线：`reclaim` 不带 `--yes` 绝不删除；白名单 + 20GB 熔断在 prune-core 代码层兜底。
+MCP 工具（8 个，全部只读）：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）/
+`disk_scan`（白名单逐条细分：每条缓存实时体积 + 一级子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明权限可见范围）/
+`net_diag`（暴露面诊断结论：谁在对外监听、权限差额、TIME_WAIT 残留）/ `app_resources`（应用维度五域画像）/
+`lan_devices`（局域网设备，只读缓存不发包）。
+
+### AI Agent 友好（信任叙事，代码层而非文档层）
+
+Prune 是唯一把「**AI 只读、人执行**」写进代码层的系统工具：
+
+1. **Agent 能看**：MCP 的 8 个工具全部是查询——内存、端口、磁盘、局域网，一扇执行的门都没有
+2. **人才能删**：清理只能发生在 GUI——白名单路径 + 废纸篓 + 20 GB 熔断三层护栏，Agent 连提交删除请求的通道都不存在
+3. **分发层显式拒绝**：MCP 对 `reclaim` / `clean` / `execute` / `delete` 等执行类请求直接报错并说明底线（不是笼统的 unknown tool），有单测固化，回退即红
+4. **白名单兜底**：即使未来开放任何执行通道，可操作的也只有预定义的可再生缓存路径——自由输入路径在 prune-core 层就被拒绝
+
+对比同类：把「AI 建议清理」做成「AI 自己执行」的工具，权限面永远比「AI 只读 + 人执行」大一圈。Prune 选择后者。
+
 
 ## 开发
 

@@ -102,7 +102,7 @@
 | 立即 | **M26 修复与诚信** | 工程欠账清零 + 文档归真 | 发布与商业化的前提（✅ 0.8.4） |
 | 近期 | **M27 AI 缓存白名单** | 补最大功能差距（P0） | DevCleaner/CacheCleaner/Mole 全支持（✅ 一期 0.8.3 / 二期 0.8.5） |
 | 近期 | **M28 Xcode 深扫专项** | 白名单低成本高收益（P0） | 一期 0.8.3（含 Devices 整目录）+ 残余 5 条 0.8.5（f12：DerivedData / XCTestDevices / DeveloperDiskImages / Temp / DVTDownloads） |
-| 中期 | **M29 MCP 深化 + AI 信任叙事** | 只读 MCP 扩面 + 「AI 只读、人执行」差异化 | Vitals 1.4/1.7 agent 方向 |
+| 中期 | **M29 MCP 深化 + AI 信任叙事** | 只读 MCP 扩面 + 「AI 只读、人执行」差异化 | Vitals 1.4/1.7 agent 方向（✅ 0.8.5） |
 | 中期 | **M30 项目休眠归档（Pro 候选）** | 商业化锚点功能 | DevCleaner Pro 独家 |
 | 版本 | **v1.0 商业化卡位** | 定价/渠道/官网 | 抢在 Vitals storage map 落地前 |
 | 长期 | **M31 Windows 完整化决策** | 二平台还是单平台深耕 | DevCleaner 已支持 Linux 授权 |
@@ -144,12 +144,12 @@
 - 白名单登记 + 负面测试（继承护栏测试组模式）
 - **落地记录**：一期（含 `CoreSimulator/Devices` 整目录 L3）随 0.8.3 及更早发布；残余 5 条（DerivedData 显式 L2 / XCTestDevices / DeveloperDiskImages / Simulator Temp / DVTDownloads）随 0.8.5，方案见 f12
 
-### M29 MCP 深化 + AI 信任叙事（差异化主线，不追 Vitals 广度）
+### M29 MCP 深化 + AI 信任叙事（差异化主线，不追 Vitals 广度）✅ 已落地（0.8.5）
 
 - 补只读 MCP 工具：`disk_scan`（细分视图）、`net_diag`（诊断结论）、`app_resources` 已有；**reclaim 在 MCP 通道保持不可执行**（底线不动）
 - 借鉴 Vitals「AI 请求 → 人确认」交互：若未来开放任何执行通道，必须走 GUI 确认窗口
 - README/官网新增「AI Agent 友好」叙事：Prune 是唯一把「AI 只读 + 人执行 + 白名单兜底」写进代码层的工具
-- 触发条件：Vitals storage map 上线时，官网对比表同步更新
+- **落地记录**（f13）：两工具随 0.8.5 上线；底线在分发层显式拒绝执行类请求并测试固化；README 叙事段完成。官网对比表更新留给 Vitals storage map 上线触发
 
 ### M30 项目休眠归档（Pro 功能候选）
 

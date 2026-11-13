@@ -28,6 +28,14 @@
 - 红线测试：CoreSimulator 禁止登记文件路径（`RuntimeMap.plist` 等）与单设备 UUID 目录；Xcode `UserData` 根禁止登记（KeyBindings / xcuserstate 用户状态）；`simulator` 保持 L3 重置语义不许降级；新条目全部 `Os::MacOnly`
 - 明确不做：`Devices/<UUID>` 单设备粒度（需 simctl 状态采集，超出纯路径机制）、`/Library/Developer/CoreSimulator/Volumes`（系统级 cryptex，非用户域）
 
+### M29：MCP 只读深化 + 「AI 只读、人执行」信任叙事（F13）
+
+- **新增 MCP 工具 `disk_scan`**：白名单逐条细分视图（只读，秒级）——84 条登记项的实时体积 + 级别 + 可选一级子目录占比（复用自建线程池并发测体积，CoreSimulator 3.5 GB 量级秒级）；与 `disk_report` 分工：那边回答全盘浪费结构（~15 s），这边回答「某条缓存现在多大、什么占的」。真机实测：DerivedData 68 MB 细分到单个项目 47 MB
+- **新增 MCP 工具 `net_diag`**：端口暴露面诊断结论——直接给「谁在对外监听」的结论而不是原始条目；`exposure=any/interface` 都按局域网可达标 attention（附进程与项目归属、收口建议），权限差额与 TIME_WAIT 残留单独提示；结论拆成纯函数 `diag_conclusions` 单测。真机实测：抓到 ControlCenter AirPlay 5000/7000 与 rapportd 的 0.0.0.0 暴露
+- **只读底线代码化**：MCP 分发层对 `reclaim` / `clean` / `execute` / `delete` / `remove` / `kill` / `write` / `trash` 等执行类请求**显式拒绝**并说明「清理只能由人在 GUI 确认」（不是笼统 unknown tool）；新增测试固化——工具名禁含执行词根、执行类请求必须报只读错，回退即红
+- README 新增「AI Agent 友好（信任叙事）」段：Agent 能看（8 只读工具）、人才能删（GUI 三层护栏）、分发层显式拒绝、白名单兜底——四条全部代码层可验证
+- 明确不做：MCP 写通道、`reclaim --yes` 的 MCP 包装、GUI 远程触发（方案 [f13](./docs/f13-m29-mcp-trust-plan.md)）
+
 ## 0.8.4
 
 ### M26 修复与诚信（工程门禁 + 发版安全 + 文档校准）
