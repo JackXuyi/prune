@@ -166,8 +166,42 @@ if (assets.length === 0) {
 // ---------------------------------------------------------------- 4. 提交 + tag
 if (!SKIP_BUILD && !DRY) {
   step('提交版本变更并打 tag')
-  execSync(`git add -A && git commit -m "chore(release): ${tag}" || true`, { cwd: root, stdio: 'inherit' })
-  execSync(`git tag -f ${tag}`, { cwd: root, stdio: 'inherit' })
+
+  // tag 已存在 = 拒绝。updater 以 tag 判断「有没有新版本」，用 -f 覆盖已有 tag
+  // 会产生「同一个版本号对应两份不同产物」的不可复现状态：已经下过 v0.8.3 的
+  // 用户再也收不到更新，而仓库里的 v0.8.3 已经是另一份代码。
+  let tagExists = false
+  try {
+    git(`rev-parse -q --verify refs/tags/${tag}`)
+    tagExists = true
+  } catch {
+    tagExists = false
+  }
+  if (tagExists) {
+    console.error(`tag ${tag} 已存在，拒绝覆盖。`)
+    console.error(`  换个版本号：pnpm bump patch`)
+    console.error(`  或先确认无产物依赖后删除：git tag -d ${tag}`)
+    process.exit(1)
+  }
+
+  execSync('git add -A', { cwd: root, stdio: 'inherit' })
+  // 有变更才提交；一旦提交失败（hook 拒绝 / 冲突）必须中止 —— 原先的
+  // `|| true` 会把这个失败吞掉，随后 tag 仍打在不含本次版本变更的 commit 上
+  let hasStaged = true
+  try {
+    execSync('git diff --cached --quiet', { cwd: root, stdio: 'ignore' })
+    hasStaged = false
+  } catch {
+    hasStaged = true
+  }
+  if (hasStaged) {
+    execSync(`git commit -m "chore(release): ${tag}"`, { cwd: root, stdio: 'inherit' })
+    ok(`版本变更已提交`)
+  } else {
+    warn('工作区无变更（版本号已是目标值），跳过提交')
+  }
+
+  execSync(`git tag ${tag}`, { cwd: root, stdio: 'inherit' })
   ok(`tag ${tag} 已创建`)
   if (NO_PUSH) {
     warn(`--no-push：未推送，请手动 git push ${giteeRemote.name} master --tags`)
@@ -220,11 +254,23 @@ async function api(path, init = {}) {
   return { ok: res.ok, status: res.status, data }
 }
 
-const headers = { 'Content-Type': 'application/json', Authorization: `token ${token}` }
+// 令牌只走请求头，不进 URL：query string 会落进代理日志 / ps 输出 / Gitee 访问日志。
+// Gitee v5 的对象接口支持 `Authorization: Bearer <token>`；极少数老接口不认头，
+// 因此 GET 保留一次 query 降级 —— 但会明确打印警告，让「令牌进日志」这件事可见，
+// 而不是像原先那样静默地把 token 拼在每一个 URL 上。
+const headers = {
+  'Content-Type': 'application/json',
+  Authorization: `Bearer ${token}`,
+}
 
 step('查找已有 Release')
 let release = null
-const found = await api(`/repos/${OWNER}/${REPO}/releases/tags/${tag}?access_token=${token}`)
+const releasePath = `/repos/${OWNER}/${REPO}/releases/tags/${tag}`
+let found = await api(releasePath, { headers })
+if (!found.ok && (found.status === 401 || found.status === 403)) {
+  warn('请求头鉴权被拒，降级为 query token（本次令牌会出现在 URL / 日志中）')
+  found = await api(`${releasePath}?access_token=${encodeURIComponent(token)}`)
+}
 if (found.ok && found.data?.id) {
   release = found.data
   ok(`复用已有 Release #${release.id}（${release.name}）`)

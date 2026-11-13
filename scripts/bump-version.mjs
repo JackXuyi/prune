@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 /**
- * 统一递增版本号：package.json / src-tauri/tauri.conf.json / src-tauri/Cargo.toml / Cargo.lock
+ * 统一递增版本号：package.json / src-tauri/tauri.conf.json / Cargo.toml（workspace + src-tauri）/ Cargo.lock
  *
  * 用法：
  *   pnpm bump            # patch: 0.1.0 -> 0.1.1
@@ -46,9 +46,11 @@ const confPath = join(root, 'src-tauri', 'tauri.conf.json')
 const confRaw = readFileSync(confPath, 'utf8')
 const conf = JSON.parse(confRaw)
 if (conf.version && conf.version !== target) {
+  // 先记旧值再改：原来 push 的是改后的 conf.version，日志会打成「0.8.4 -> 0.8.4」
+  const confFrom = conf.version
   conf.version = target
   writeFileSync(confPath, JSON.stringify(conf, null, 2) + '\n')
-  results.push(['src-tauri/tauri.conf.json', conf.version, target])
+  results.push(['src-tauri/tauri.conf.json', confFrom, target])
 }
 
 // 3. 根 Cargo.toml（workspace.package.version —— prune-core / prune-cli 通过
@@ -94,10 +96,14 @@ if (changed || wsChanged) {
     console.warn('⚠️ 未找到 cargo，请手动运行: cargo update -p prune-app -p prune-core -p prune-cli')
   } else {
     try {
-      execSync(
-        `${cargoBin} update -p prune-app --precise ${target} -p prune-core --precise ${target} -p prune-cli --precise ${target}`,
-        { cwd: root, stdio: 'ignore' },
-      )
+      // 不能写成 `-p prune-app --precise X -p prune-core --precise X ...`：
+      // --precise 只作用于它前面最近的那个包，多包混写会让 cargo 直接报错
+      // （0.8.4 发版时实测失败，锁文件停在旧版本）。workspace 成员不需要
+      // --precise，重新解析就会跟随 Cargo.toml 的新版本。
+      execSync(`${cargoBin} update -p prune-app -p prune-core -p prune-cli`, {
+        cwd: root,
+        stdio: 'ignore',
+      })
       results.push(['Cargo.lock', current, target])
     } catch {
       console.warn(`⚠️ cargo update 失败，请手动运行: cargo update -p prune-app -p prune-core -p prune-cli`)
