@@ -20,6 +20,8 @@
 
 pub mod appdisk;
 pub mod appicon;
+/// M30 项目休眠归档（F14）：依赖目录 tar.gz 归档 + 校验后才删原件 + 可完整还原
+pub mod archive;
 pub mod base64;
 pub mod classify;
 pub mod db;
