@@ -643,6 +643,80 @@ pub fn app_history_daily(
         .map_err(|e| fill(t.app_day_history_read, &[("err", &e.to_string())]))
 }
 
+// ---------------------------------------------------------------- M30 项目休眠归档（F14）
+
+/// 归档区根（`<config>/com.xuyi.prune/archive`）。
+fn archive_root_or_err() -> Result<PathBuf, String> {
+    prune_core::archive::system_archive_root().ok_or_else(|| "找不到应用配置目录".to_string())
+}
+
+/// 项目根 → 依赖目录。**不接受前端传任意路径**：只拼 `node_modules`，
+/// 再由 prune-core 的护栏校验（目录名 / 绝对路径 / 非 symlink）。
+fn deps_of(project_root: &str) -> PathBuf {
+    PathBuf::from(project_root).join("node_modules")
+}
+
+#[tauri::command]
+pub fn archive_list() -> Result<Vec<prune_core::archive::ArchiveEntry>, String> {
+    Ok(prune_core::archive::list(&archive_root_or_err()?))
+}
+
+/// dry-run：统计依赖目录体积与目标归档路径，不写任何文件
+#[tauri::command]
+pub fn archive_plan(project_root: String) -> Result<prune_core::archive::ArchivePlan, String> {
+    prune_core::archive::plan(&deps_of(&project_root), &archive_root_or_err()?, now_secs())
+}
+
+/// 执行归档：必须 `confirmed`（先预览再执行）。校验通过后才删原件。
+#[tauri::command]
+pub fn archive_create(
+    project_root: String,
+    confirmed: bool,
+) -> Result<prune_core::archive::ArchiveEntry, String> {
+    if !confirmed {
+        return Err("归档需要确认：请先预览再执行".into());
+    }
+    prune_core::archive::create(&deps_of(&project_root), &archive_root_or_err()?, now_secs())
+}
+
+/// dry-run：恢复目标 / 体积 / 冲突标记，不写任何文件
+#[tauri::command]
+pub fn archive_restore_preview(id: String) -> Result<prune_core::archive::RestorePreview, String> {
+    let root = archive_root_or_err()?;
+    let entry = prune_core::archive::find(&root, &id)
+        .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
+    Ok(prune_core::archive::restore_preview(&entry))
+}
+
+/// 执行恢复：`confirmed` 必填；`overwrite` 用于目标已存在时的二次确认
+/// （覆盖也走废纸篓）。校验失败会把解压产物移入废纸篓并报错。
+#[tauri::command]
+pub fn archive_restore(
+    id: String,
+    confirmed: bool,
+    overwrite: bool,
+) -> Result<prune_core::archive::RestoreReport, String> {
+    if !confirmed {
+        return Err("恢复需要确认：请先预览再执行".into());
+    }
+    let root = archive_root_or_err()?;
+    let entry = prune_core::archive::find(&root, &id)
+        .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
+    prune_core::archive::restore(&entry, overwrite)
+}
+
+/// 删除归档：归档文件走废纸篓 + 移除账本条目（归档区不是只进不出）
+#[tauri::command]
+pub fn archive_delete(id: String, confirmed: bool) -> Result<(), String> {
+    if !confirmed {
+        return Err("删除归档需要确认".into());
+    }
+    let root = archive_root_or_err()?;
+    let entry = prune_core::archive::find(&root, &id)
+        .ok_or_else(|| "归档记录不存在（账本可能已被修改）".to_string())?;
+    prune_core::archive::delete(&entry, &root)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

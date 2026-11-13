@@ -1,7 +1,18 @@
 /** 与 Rust 侧 IPC 命令的薄封装（契约见 docs/m2-memory-plan.md §6 / docs/m1-disk-plan.md §8）。 */
 import { invoke } from "@tauri-apps/api/core";
 
-import type { DiskReport, ReclaimChild, ReclaimItem, ReclaimPreview, ReclaimReport, VolumeInfo } from "../types/disk";
+import type {
+  ArchiveEntry,
+  ArchivePlan,
+  DiskReport,
+  ReclaimChild,
+  ReclaimItem,
+  ReclaimPreview,
+  ReclaimReport,
+  RestorePreview,
+  RestoreReport,
+  VolumeInfo,
+} from "../types/disk";
 import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { DailyBucket, HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
@@ -298,4 +309,36 @@ export function lanSnapshot(): Promise<LanSnapshot | null> {
 /** 全段扫描一轮（探测 ~5s + mDNS 30s 窗口），进度走 lan://progress 事件 */
 export function lanScan(): Promise<LanSnapshot> {
   return invoke<LanSnapshot>("lan_scan");
+}
+
+// ---- M30 项目休眠归档（docs/f14-m30-archive-plan.md）----
+
+/** 归档账本（按归档时间倒序） */
+export function archiveList(): Promise<ArchiveEntry[]> {
+  return invoke<ArchiveEntry[]>("archive_list");
+}
+
+/** dry-run：统计依赖目录体积与目标归档路径，不写任何文件 */
+export function archivePlan(projectRoot: string): Promise<ArchivePlan> {
+  return invoke<ArchivePlan>("archive_plan", { projectRoot });
+}
+
+/** 执行归档（必须 confirmed）：校验通过后才删原件 */
+export function archiveCreate(projectRoot: string, confirmed: boolean): Promise<ArchiveEntry> {
+  return invoke<ArchiveEntry>("archive_create", { projectRoot, confirmed });
+}
+
+/** dry-run：恢复目标 / 体积 / 冲突标记 */
+export function archiveRestorePreview(id: string): Promise<RestorePreview> {
+  return invoke<RestorePreview>("archive_restore_preview", { id });
+}
+
+/** 执行恢复（必须 confirmed）：overwrite 用于目标已存在的二次确认 */
+export function archiveRestore(id: string, confirmed: boolean, overwrite: boolean): Promise<RestoreReport> {
+  return invoke<RestoreReport>("archive_restore", { id, confirmed, overwrite });
+}
+
+/** 删除归档（必须 confirmed）：归档文件走废纸篓 + 移除账本条目 */
+export function archiveDelete(id: string, confirmed: boolean): Promise<void> {
+  return invoke<void>("archive_delete", { id, confirmed });
 }

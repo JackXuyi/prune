@@ -112,6 +112,47 @@ export interface ProjectHealth {
   verdict: ProjectVerdict;
 }
 
+// ---------------------------------------------------------------- M30 项目休眠归档（f14）
+
+/** 一条归档账本记录（prune-core/archive.rs ArchiveEntry 一一对应） */
+export interface ArchiveEntry {
+  id: string;
+  projectName: string;
+  projectRoot: string;
+  depsPath: string;
+  bytes: number;
+  files: number;
+  /** Unix 秒 */
+  archivedAt: number;
+  archivePath: string;
+}
+
+/** 归档前预览：目标路径 / 体积 / 将写入的归档文件 */
+export interface ArchivePlan {
+  id: string;
+  projectName: string;
+  projectRoot: string;
+  depsPath: string;
+  files: number;
+  bytes: number;
+  archivePath: string;
+}
+
+/** 恢复前预览：冲突 = 目标已存在（需二次确认覆盖） */
+export interface RestorePreview {
+  id: string;
+  target: string;
+  files: number;
+  bytes: number;
+  conflict: boolean;
+}
+
+export interface RestoreReport {
+  target: string;
+  filesRestored: number;
+  bytesRestored: number;
+}
+
 export interface DiskReport {
   scannedAt: number;
   scanElapsedMs: number;
