@@ -2,6 +2,21 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.9.1
+
+### M30 修复：归档不再卡死（诊断 → [diag-m30-archive-freeze.md](./docs/diag-m30-archive-freeze.md)）
+
+- **根因**：6 条 `archive_*` 命令是同步 Tauri command，跑在 macOS 主线程上——900 MB 依赖的 50–90 秒压缩把事件循环整个占死，界面定格 + 彩虹球。连「处理中…」都画不出来：那次 React 重绘同样要主线程。全仓只有这 6 条同步命令做重活，`reclaim_execute` / `app_disk` 早就是 `async + spawn_blocking`，M30 是唯一破例
+- **命令全面异步化**：`archive_plan / create / restore / restore_preview / delete` 改 `async fn + spawn_blocking`，主线程占用从分钟级降到微秒级
+- **进度可见**：新增 `archive://progress` 事件（阶段 + 已处理/总字节 + 文件数），按 200 ms 或阶段切换节流——十几万条目逐条发事件会把渲染线程打满，那是把「卡死」换成「卡顿」；前端进度条带阶段文案与剩余时间估算
+- **可取消**：`archive_cancel` 置位原子令牌，打包 / 校验 / 解压每条目间检查。取消后原件不动、不留半成品、不记账；任务进行中对话框把「取消」换成「取消任务」，不再允许「关掉对话框假装取消」
+- **中断安全**：归档改 `.part` 原子发布（写 `.part` → 校验 → rename），强杀 / 断电最多留 `.part`；`archive_list` 顺手清理超过 10 分钟的陈旧半成品。0.9.0 直写最终路径会留下「UI 看不见、删不掉、纯占空间」的孤儿归档
+- **压缩参数**：level 6 → 1（`Compression::fast`）。真机 817 MB / 30,984 文件：归档整体 **11.1 s**、归档体积 291 MB（0.9.0 同口径 ≥ 50 s）
+- **串行闸门**：同一时刻只允许一个归档任务，第二个请求立即返回而非排队（排队会让用户以为点了没反应）
+- **顺带修掉一个真缺陷**：tar 0.4.46 的 `append_link` 不会替调用方设 `entry_type`，符号链接会落成 size=0 的普通文件——pnpm 的 `node_modules` 恢复出来是坏的。已按 `EntryType::Symlink` 显式标记，并用「链接目标逐字还原」测试锁住
+- **不做**：zlib-rs 后端。实测打包反而慢 9%（12.1 s vs 11.1 s）、归档大 7.5%（313 vs 291 MB），只有解压快（6.4 s vs 9.5 s）——主路径是打包，不换
+- 测试 441 → 447：进度阶段顺序、取消无残留、陈旧 `.part` 清理、pnpm 链接往返、恢复取消、事件字段契约
+
 ## 0.9.0
 
 ### M30 项目休眠归档（Pro 首个交付，F14）

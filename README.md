@@ -172,7 +172,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M27** AI 应用缓存白名单：一期 Cursor 6 / Claude 3 / Ollama 2 + Xcode 补扫（0.8.3）→ 二期 OpenAI 家族（ChatGPT / Codex）+ Codex CLI + HuggingFace / LM Studio 权重（🟡 逐项确认）+ Windows 侧 AI 条目（0.8.5）；用户状态红线（state.vscdb / sessions / browser-data）测试固化，**Atlas 整目录因登录态混放永不登记**（[方案](./docs/f11-ai-cache-2-plan.md)）
 - [x] **M28** Xcode 深扫专项：一期 DerivedData / DeviceSupport / Archives / 模拟器 runtime + `CoreSimulator/Devices` 整目录（🟡 重置语义，0.8.3 及更早）→ 残余 DerivedData 显式 L2 + XCTest 设备克隆 / 设备磁盘映像 / Simulator Temp / 组件下载缓存（0.8.5）；CoreSimulator 文件与单设备 UUID、`UserData` 根红线测试固化（[方案](./docs/f12-xcode-deep-plan.md)）
 - [x] **M29** MCP 只读深化：`disk_scan`（白名单逐条细分）+ `net_diag`（暴露面诊断结论）+ 只读底线代码化（执行类请求分发层显式拒绝、词根测试固化）；README「AI Agent 友好」信任叙事（[方案](./docs/f13-m29-mcp-trust-plan.md)）
-- [x] **M30** 项目休眠归档（Pro 首个交付，0.9.0）：僵尸/偏胖项目的 `node_modules` 打包进受管归档区（tar.gz + 账本）——**打包 → 校验条目数与字节数 → 通过才删原件（走废纸篓）**；恢复先做冲突检测，解压后再校验；用户代码永不进归档（[方案](./docs/f14-m30-archive-plan.md)）
+- [x] **M30** 项目休眠归档（Pro 首个交付，0.9.0）：僵尸/偏胖项目的 `node_modules` 打包进受管归档区（tar.gz + 账本）——**打包 → 校验条目数与字节数 → 通过才删原件（走废纸篓）**；恢复先做冲突检测，解压后再校验；用户代码永不进归档（[方案](./docs/f14-m30-archive-plan.md)）。**0.9.1 修复归档卡死**：命令异步化（不再占主线程）+ 进度事件 + 可取消 + `.part` 原子发布（[诊断](./docs/diag-m30-archive-freeze.md)）
 
 > 编号说明：`docs/m18–m20-*.md` 是局域网线（L1–L3）的方案文件，其文件名里的 M18–M20 与 f 系列里程碑（f4 端口保镖 = M19、f1 宠物 = M20）曾经重号；README 起将局域网线记为 L1–L3，避免读路线图时误认。0.5.0 的两处托盘动画条目原标 M21/M22（与后来的成绩单/侦探档案撞号），已在 CHANGELOG 改标 M11-b/M11-c。
 
