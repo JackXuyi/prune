@@ -13,6 +13,7 @@
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 
+import { AboutSection } from "./AboutSection";
 import { LanguageSection } from "./LanguageSection";
 import { Badge } from "../components/primitives";
 import { useI18n } from "../i18n/store";
@@ -316,6 +317,9 @@ export function SettingsBoard() {
             })}
           </p>
         </section>
+
+        {/* 关于（docs/version-info-plan.md）：应用名 + 版本号，沉底惯例 */}
+        <AboutSection />
 
         <div className="flex h-4 items-center gap-2 text-[10.5px]">
           {error ? (
