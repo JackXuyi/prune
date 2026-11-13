@@ -18,6 +18,17 @@
 - **端口服务类型识别（前后端）**：`ServiceKind` 分类 + L0 静态推断（端口表 / 进程名 / argv，零网络副作用）+ L1 主动探针（Web HEAD / MCP initialize / DB·SSH banner，`(pid,port,start_time)` 缓存防重探）；端口页 Badge「推断 / 确认」双强度与 exposure 并列；确认细节（MCP `serverInfo` 名字 + 版本 / HTTP `Server` 头）摊开在行下展示
 - **端口服务自动探测（设置项，默认关）**：开启后每轮端口扫描对关注层 TCP 端口自动握手，把「推断」升级为「确认」——它发包，与行内「探测」按钮同一纪律：用户显式授权才跑；只连 127.0.0.1，结果按进程缓存（对 MCP server 不重复建会话），系统进程与失败过的行不探
 
+### README 双语重构（M3 分发入口前段 + GEO 批次二；纯文档，无功能变更）
+
+- **`README.md` 改为英文默认版，新增 `README.zh-CN.md` 中文版**，两版顶部互挂语言切换；结构对齐（定位否定句 → 带时点的 n=1 实测表 → 谁适合谁不适合 → 六 tab → 护栏 → CLI/MCP → 安装 → 状态），事实两边逐条一致。此前仓库只有中文版，这是 GEO 交付里「零英文版 = 信源孤证」那条缺口的落地
+- **定位陈述按九条事实基线重写**：显式否定「内存监控 / 系统清理」，避免 README 自称与产品实际能力漂移；Windows 一律带 `beta`；内存口径补「Windows 是近似而非等价」
+- **改写残留清理（GEO S 阶段清单）**：「零误删」→「固定白名单 + 废纸篓可恢复」；「iStat / Stats 已足够好」→「Prune 不读任何传感器」的范围直陈；实测数字全部补 `n = 1` 时点语境（防被 AI 普适化引用）
+- **修 F9 白名单计数漂移（68 ↔ 84）**：`mcp.rs` 的 `disk_scan` 描述不再硬编码条目数（改「白名单条目」），README 双版统一声明 **68 条**（53 一键 / 12 逐项确认 / 3 只给命令，可对回 `whitelist.rs` 的 `ENTRIES`）——此前 84 与代码矛盾，任何引用条目数的文案都会同时给出两个出处
+- **门禁扩容**：`check-docs-honesty` 的 MCP 对账改为**中英双版各查一遍**（缺文件即红，声明段 × 工具清单 × 代码三方一致），排他 sweep 5 份（新增 `README.zh-CN.md`）；负向实测两种漂移都会报红（改计数 9 个 / 改工具名）
+- **版本徽章改动态**：`status-v0.10.0` 硬编码淡出，改用 shields 的 `github/v/release` 与 `github/downloads`——README 版本号不再是需要人工跟随的第五个漂移源；正文只声明「源码版本 0.10.0」并指向 Releases 页
+- **多端支持章节（新增）**：README 双版各加「平台支持」矩阵（macOS 参考平台 / Windows 10+ beta / Linux 源码可用）+「Windows 上具体差在哪」20 行差异表——白名单 52 ↔ 28 条、Private Bytes 不含换出量故受害者榜隐藏、按应用网速与磁盘三层不可用、事件流未实现、托盘改彩色帧、端口反查反而不漏但无「项目目录」列；正文中 4 处 macOS 专属表述就地标注（内存换出量、按应用 Top 8、灵动岛、Linux 无 GUI 构建），口径全部取自 `windows-support-plan.md` §5–§7.2 与代码分支（`footprint.rs` / `net_sampler.rs` / `appdisk.rs` / `workspace.rs` / `island_stub.rs` / `tray_icon.rs`）
+
+
 ## 0.9.4
 
 ### M1 诚信归真（2027 H1 Roadmap §4；发布门禁项，纯门禁修复、无新功能）

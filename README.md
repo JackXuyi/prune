@@ -1,211 +1,309 @@
-# Prune 🔪
+# Prune
 
-**你的 Mac 上，存着一批你这辈子都加载不了的文件。Prune 负责把它们找出来。**
+**English** · [简体中文](./README.zh-CN.md)
 
-> 🔍 macOS 开发机资源守门员 —— 不是内存监控，不是系统清理，是「浪费探测器」。
+### Your Mac is holding files it can never load. Prune finds them.
 
-![平台](https://img.shields.io/badge/platform-macOS%2013+%20·%20Windows%2010+%20beta-black)
+A free, MIT-licensed desktop app for developer machines: it finds **disk space you can actually reclaim** — cross-platform binaries, duplicate package-manager stores, whitelisted dev caches, Xcode and simulator debris — and it reports **memory the way the OS accounts for it**, including everything that has been swapped out to disk.
 
-![技术栈](https://img.shields.io/badge/Tauri%202%20·%20Rust%20·%20React%2019-blue)
+**Prune is not a memory monitor and not a general system cleaner.** It is a waste finder: it names what has been wasted, shows the evidence, and leaves the decision to you. It reads no sensors, keeps no cloud account, and has no "optimize" button.
 
-![隐私](https://img.shields.io/badge/零埋点-零遥测-green)
+Tauri 2 · Rust · React 19 · no account · no telemetry · no elevated permissions.
 
-![状态](https://img.shields.io/badge/status-v0.10.0-blue)
+[![release](https://img.shields.io/github/v/release/JackXuyi/prune?label=release&color=blue)](https://github.com/JackXuyi/prune/releases/latest)
+[![platform](https://img.shields.io/badge/platform-macOS%2013%2B%20%C2%B7%20Windows%2010%2B%20beta-black)](#install)
+[![license](https://img.shields.io/github/license/JackXuyi/prune?color=green)](./LICENSE)
+[![stack](https://img.shields.io/badge/stack-Tauri%202%20%C2%B7%20Rust%20%C2%B7%20React%2019-informational)](#build-from-source)
+[![telemetry](https://img.shields.io/badge/telemetry-zero-brightgreen)](#agents-read-humans-delete)
+[![downloads](https://img.shields.io/github/downloads/JackXuyi/prune/total?label=downloads)](https://github.com/JackXuyi/prune/releases)
 
 ---
 
-## 为什么做这个
+## Contents
 
-三件实测出来的事实（2026-10，一台真实开发机）：
+- [Why this exists](#why-this-exists)
+- [Who it is for](#who-it-is-for)
+- [Platform support](#platform-support)
+- [What Prune does](#what-prune-does)
+- [The six tabs](#the-six-tabs)
+- [Menu bar: the number that matters](#menu-bar-the-number-that-matters)
+- [Cleanup: three levels, four guardrails](#cleanup-three-levels-four-guardrails)
+- [Memory and apps](#memory-and-apps)
+- [Network, ports, LAN](#network-ports-lan)
+- [Event stream: the Dynamic Island](#event-stream-the-dynamic-island)
+- [First two minutes](#first-two-minutes)
+- [CLI](#cli)
+- [MCP server](#mcp-server)
+- [Agents read, humans delete](#agents-read-humans-delete)
+- [Install](#install)
+- [Build from source](#build-from-source)
+- [Status and roadmap](#status-and-roadmap)
+- [Docs](#docs)
+- [Keywords](#keywords)
+- [License](#license)
 
-| 事实                                                                                 | 数字                      |
-| ---------------------------------------------------------------------------------- | ----------------------- |
-| Yarn 缓存里躺着 **334 个跨平台二进制包**（linux 196 / win32 74 / android 25），arm64 机器上**永远加载不了** | **7.74 GB**，浪费比 8.3 : 1 |
-| npm + Yarn + pnpm 三套包管理器**重复存着同一批依赖**                                              | **29.25 GB**            |
-| 活动监视器显示 next-server 只占 113 MB，**真实占用是 3432 MB**（97% 已被换出到磁盘）                       | RSS 口径撒了谎               |
+## Why this exists
 
-没人管这些：系统监控工具不碰磁盘，清理工具不认识包管理器缓存。**Prune 站在中间。**
+Three measurements taken on one real developer Mac (2026-10, sample size n = 1 — expect different numbers on your machine, but the same three mechanisms):
 
-## 它做什么 / 不做什么
+| Measurement | Number |
+| --- | --- |
+| Yarn cache holding **334 cross-platform binary packages** (linux 196 / win32 74 / android 25) that an arm64 machine will never load | **7.74 GB**, waste ratio 8.3 : 1 |
+| npm + Yarn + pnpm storing **the same dependencies three times over** | **29.25 GB** |
+| Activity Monitor showing `next-server` at **113 MB**, while its real footprint was **3432 MB** (97% swapped to disk) | RSS was lying |
 
-| ✅ 做                                    | ❌ 不做                       |
-| -------------------------------------- | -------------------------- |
-| 探测本机架构**永远加载不了**的缓存（零误删）               | 通用硬件监控（iStat / Stats 已足够好） |
-| 统计三套包管理器的重复存储                          | 「释放内存让 Mac 变快」（伪科学）        |
-| 显示进程**真实**内存占用（phys_footprint 口径，含换出量） | 全盘扫描、用户文档、照片去重             |
-| Swap 仪表盘：内存压力正在吃掉多少磁盘                  | 任何不在白名单内的删除                |
-| 「疑似内存泄漏」判定（概率 + 曲线 + 克制措辞）             | 提升任何权限（root / 全盘访问 / 辅助功能） |
-| 端口反查：谁占着 3000 / 3118，以及它属于哪个项目       | 防火墙、抓包、按域名/对端拆流量            |
-| 应用维度资源卡：进程 / 内存 / CPU / 端口 / 连接 / 磁盘一次看全 | 按域名/对端拆流量、按应用的历史流量、GPU/能耗 |
-| 统计 tab（默认页）：内存 / 硬盘占用大小、CPU 百分比、端口数量、下载 / 上传速率 | 历史趋势图表（只有 CPU 10 min 与网络 5 min 走势，不做任意指标的时间序列） |
-| 应用资源 tab：每个应用一张卡（进程 / CPU / 内存 / 磁盘 / 端口 / 连接 / 网速），默认 Top 12、可排序 | 按域名/对端拆流量、Windows 按进程网速（需 ETW）、跨应用磁盘清理 |
-| 网络 tab：系统口径下载 / 上传速率 + 5 min 走势 + 网卡分布 + 按应用 Top 8 + 今日 / 近 7 天流量（每日落 SQLite） | 限速 / 断网 / 掐连接、按域名拆流量、跨设备或路由器的流量 |
-| 网络诊断：DNS / 网关 / 出口三层探测 + 分层主因结论（阈值透明）+ captive portal 检测 + Markdown 报告复制（双平台）；macOS 另有系统测速 + RPM | Wi-Fi 信号 / SNR（v2）、一键切 DNS（写系统配置）、信道扫描、诊断历史落库 |
-| 灵动岛：CPU 持续暴走 / 内存异常（内核压力 + swap 破阈值）时从刘海里长出一条提报，折叠态「图标 + 事件标签 + 读数」，悬停展开看「谁在烧 / 谁被换出」，后触发者抢占前者，6 秒自走（不常驻、不抢焦点） | 常驻挂件、岛内输入框、音乐控制、文件拖拽收纳 |
+System monitors do not look at disk. Cleaners do not understand package-manager caches. Prune sits in between — and it reports `phys_footprint` instead of RSS, so the memory number matches what the machine actually pays.
 
-## 首屏长什么样
+The same product-rule ran through everything afterwards: **report what is verifiable, delete only what is provably regenerable, and never decide on the user's behalf.**
+
+## Who it is for
+
+**Prune is for you if** you develop on a 256–512 GB machine, you keep AI tools and Node projects running all day, you have seen "Your startup disk is almost full", and you would like to know which cache is 8 GB before deleting one.
+
+**Prune is probably not for you if** you want a "clean everything automatically" button (Prune has never shipped one), a general hardware monitor (Prune reads no sensors at all), full-disk scanning, photo dedupe, malware scanning, or fleet telemetry dashboards.
+
+## Platform support
+
+Prune is macOS-first, not macOS-only: one Rust core, three delivery shapes.
+
+| Platform | GUI | CLI + MCP | Status |
+| --- | --- | --- | --- |
+| **macOS 13+** (Apple Silicon / Intel) | `.dmg` | ✓ | Reference platform. Data sources: `footprint`, `lsof`, `nettop`, `networkQuality` |
+| **Windows 10+ x64** | `.exe` / `.msi` | builds from source (`scripts/check-windows.sh` cross-compiles and links it) | **Beta** — code complete and installers ship on every release; the real-device checklist (tray position, dark taskbar, Temp deletion) has not been walked yet |
+| **Linux** | — | `prune-core` + `prune-cli` compile and are covered by the test suite in CI (ubuntu runner) | No build is published and no Linux desktop has been walked through — source-only |
+
+### What differs on Windows
+
+Nothing below is simulated: a field with no equivalent is hidden, never faked.
+
+| Capability | macOS | Windows |
+| --- | --- | --- |
+| Cache whitelist | 52 entries active (40 macOS-only + 12 shared) | 28 entries active (16 Windows-only + 12 shared) |
+| Cross-platform binary detection (A1) | Yarn v6 — the directory name carries the platform | not applied; Yarn stays out of A1 until it is measured on Windows |
+| Duplicate npm / Yarn / pnpm stores | ✓ | ✓ (`%LOCALAPPDATA%` layout) |
+| Cleanup (whitelist + Trash + 20 GB breaker), project health, archive | ✓ | ✓ |
+| Real process memory | `phys_footprint`, swapped bytes included | Private Bytes — an approximation that **excludes** the swapped-out part |
+| Swap gauge | total / used + swapfile count + new today | total / used only |
+| Memory pressure | kernel pressure level | `dwMemoryLoad` occupancy bands (< 80 / 80–91 / ≥ 92) |
+| Evicted-victim ranking | ✓ | hidden (no swapped figure exists to rank by) |
+| Leak case files | ✓ | ✓ (on Private Bytes) |
+| Project attribution for a process | handle + tag + inheritance | tag + inheritance (no `lsof` equivalent) |
+| Per-app disk layers (bundle / cache / data) | ✓ | not available — all three resolve from `.app` + `~/Library` paths |
+| Per-app network speed, per-app Top 8 | `nettop`, 1 s diff | unavailable — needs an ETW real-time session |
+| System throughput + 5-min trend + daily totals | ✓ | ✓ (`sysinfo` counters) |
+| Network diagnosis (DNS / gateway / egress) | ✓ + system speed test & RPM | diagnosis only; the speed-test card hides itself |
+| Port reverse lookup | `lsof` — unprivileged runs lose other users' processes, and `coverage` says how many | `GetExtendedTcpTable` — complete without admin, but the "which project" column stays empty |
+| LAN devices / timeline / topology | `arp -an` + `lsof` peers | `GetIpNetTable2` + `GetExtendedTcpTable` |
+| Event stream (Dynamic Island) | native panel in the notch | not implemented — the island commands exist as no-ops |
+| Tray icon animation + pet moods | template icon, system inverts it | colour frames (a black template icon is invisible on a dark taskbar) |
+| Menu bar panel | native popover | tray-anchored window with a 300 ms focus grace period |
+| UI language (中文 / English) | ✓ | ✓ |
+
+Windows is ahead in one place: port lookup needs no admin and misses nothing, while macOS hides other users' listeners. Everywhere else the gap is a missing OS facility, not a missing feature.
+
+## What Prune does
+
+| Does | Does not |
+| --- | --- |
+| Detect caches your machine **can never load** (cross-platform binaries); every deletion stays inside a fixed whitelist and lands in the Trash | General hardware monitoring |
+| Attribute duplicate storage across npm / Yarn / pnpm | "Free up memory to make your Mac faster" |
+| Report **real** process memory (`phys_footprint`, swapped bytes included) — swap is an active mechanism, not junk | Full-disk scanning, documents, photo dedupe |
+| Swap dashboard: how much disk memory pressure is eating, and who got evicted | Any deletion outside a fixed whitelist |
+| Leak *suspicion* as a case file (evidence + curve + conservative wording) | Claiming a verdict it cannot prove |
+| Port reverse lookup: who owns 3000 / 3118, and which project it belongs to | Firewalls, packet capture, per-domain traffic |
+| Per-app resource cards: processes / CPU / memory / disk / ports / connections / speed | GPU and energy metrics |
+| Network tab: system-wide throughput, 5-minute trend, per-interface split, per-app Top 8, today / last 7 days | Rate limiting, disconnecting, killing connections |
+| Network diagnosis: DNS / gateway / egress latency, captive portal, one verdict with published thresholds, Markdown report | Wi-Fi signal, DNS switching (writes system config), channel scanning |
+| Dynamic Island events: CPU spike, memory anomaly, port conflict, new LAN face | Always-on widgets, music control, file drop |
+
+Some rows are macOS-only today (per-app network speed, per-app disk layers, the event stream), and the memory rows read Private Bytes instead of `phys_footprint` on Windows. [Platform support](#platform-support) lists exactly which.
+
+## The six tabs
+
+| Tab | What it answers |
+| --- | --- |
+| **Overview** (default) | Reclaimable GB, memory / CPU / disk, listening ports, download & upload — six read-only cards, all navigational |
+| **Apps** | One card per app: processes, CPU, memory, disk, ports, connections, network speed. Top 12 by default, six-field sorting, 24 h / 7 d / 30 d history |
+| **Memory** | Real footprint, swap gauge, evicted-victim ranking, process families, leak case files |
+| **Storage** | Volume capacity, reclaimable breakdown by level, per-entry detail, cleanup, project health, archive |
+| **Network** | Download / upload rates (physical interfaces only), trends, per-app Top 8, daily traffic, network diagnosis |
+| **Ports** | Who is listening, on which address, owned by which project; LAN devices, timeline, topology |
+
+Everything is read-only except the Storage tab's cleanup actions and the archive/restore flow — and those are the only two places where a file can move at all.
+
+## Menu bar: the number that matters
 
 ```
-菜单栏  ⚡ 54.9 GB 可回收        压力 ● 绿
-├────────────────────────────────────────┤
-│ 一、内存                                │
-│   ⚠ swap 14.0 GB（93% 上限）            │
-│   ↳ 正在吃掉磁盘 16 GB · 今日 +6        │
-│   ▸ 换出受害者：next-server 3.2 GB(97%) │
-│ 二、可回收                              │
-│   🟢 7.74 GB  跨平台二进制（永远用不上）│
-│   🟢 22.5 GB  包管理器等缓存            │
-│   🟡 21.7 GB  项目依赖 / 模拟器         │
-│   🔴 3.0 GB   Docker（只给命令，不执行）│
-└────────────────────────────────────────┘
+menu bar  ⚡ 54.9 GB reclaimable        pressure ● green
+├──────────────────────────────────────────┤
+│ 1. Memory                                │
+│   ⚠ swap 14.0 GB (93% of cap)            │
+│   ↳ eating 16 GB of disk · +6 today      │
+│   ▸ victims: next-server 3.2 GB (97%)    │
+│ 2. Reclaimable                           │
+│   🟢  7.74 GB  cross-platform binaries   │
+│   🟢 22.5 GB   package-manager caches    │
+│   🟡 21.7 GB   project deps / simulators │
+│   🔴  3.0 GB   Docker (command only)     │
+└──────────────────────────────────────────┘
 ```
 
-**首屏主数字是「可回收 GB」，不是内存百分比** —— 百分比是描述性的，GB 是可行动的。
+The headline number is **reclaimable GB**, not a memory percentage: a percentage describes, gigabytes are actionable. The menu bar panel (380 × 432) renders the same readings as the main window from one shared formatting layer (`lib/statsReadout.ts`), so the two screens can never disagree.
 
-主窗口的默认页是**统计 tab**：内存（已用 / 总量）、CPU（整机每核平均 + load）、硬盘（已用 / 总量，
-statvfs 粗略口径）、端口（监听数 / 关注层 / 对外 / 活跃连接）、下载与上传（↓/↑ 实时速率 + 各自归一化的
-5 min 走势，按方向各一张卡）。六张卡只读、只导航——清理与结束进程的入口在各自的明细 tab。
+The tray icon is also a reading: the scissors' cutting speed (or the cat's jump rate) encodes CPU busy-ness, and the tooltip carries the exact value (`Prune · CPU 12%`).
 
-**菜单栏面板打开就是同一套读数**：380×432（高度贴合内容，不留底部空白）的六行紧凑版
-（内存 / 存储 / CPU / 下载 / 上传 / 端口），数字与主窗口同源（`lib/statsReadout.ts`），只是排版密度不同
-——不存在「两块屏各算一遍」的口径分叉。面板只有这一屏、没有 tab 切换：内存压力与换出受害者
-属于主窗口「内存」tab。
+## Cleanup: three levels, four guardrails
 
-**网络 tab** 是同一套只读原则：下载 / 上传两个主数字（**只算物理网卡**，`utun`/`awdl` 等虚拟口
-单列不计入，否则开 VPN 会双计）、两条各自归一化的 5 min 走势、本次会话峰值与累计、
-物理网卡分布、按应用 Top 8（`nettop` 口径）、今日与近 7 天流量。**不给限速、断网、杀进程**。
+**68 registered cache locations** — 53 are one-click safe (🟢), 12 need per-item confirmation (🟡: project deps, simulators, model weights), 3 are command-only and never executed (🔴: Docker VM, OrbStack, Colima).
 
-**网络诊断**（双平台，参考 whyfi.network 的分层思路）回答「为什么慢」：手动一轮探测
-**DNS / 网关(LAN) / 出口(WAN)** 三层连接耗时（TCP connect，不是 ICMP ping）+ captive portal
-检测 + 一条主因结论（阈值逐行展示，不搞黑盒），一键复制 Markdown 报告给 AI 分析。
-macOS 另有系统级测速 + RPM（bufferbloat 官方口径）；Windows 无系统等价物，测速卡隐藏。
-**Wi-Fi 信号层 / 切 DNS / 信道扫描不做**（信号留 v2；切 DNS 是写系统配置的破坏性动作）。
+| Guardrail | Implementation |
+| --- | --- |
+| Path whitelist | Cleanup accepts only registered paths; free-form input is rejected in `prune-core` |
+| Trash, never `rm -rf` | Every deletion goes through the system trash (`trash` crate) and is recoverable |
+| Dry-run first | First execution lists the manifest before touching anything |
+| Byte breaker | A single run above 20 GB requires a second explicit confirmation, even at 🟢 |
 
-> 口径两条硬约束：「今日」是**Prune 运行期间累计**（未运行时段无法回填，系统计数器只给「开机至今」）；
-> 读不到时显示「不可读 + 原因」，**不显示 0** —— 0 和「读不到」是两件事。
+Prune never asks for root, full disk access, or accessibility permissions. The one macOS privacy prompt ("local network") appears only when you actively run a LAN scan.
 
-**菜单栏图标也是读数**：剪刀的开合速度 / 小猫的跳跃频率 = CPU 繁忙程度——图标不显示数字、
-不变颜色，只编码「快慢」一个维度；精确值放在 tooltip（`Prune · CPU 12%`）。右键菜单可关闭
-动画（设置持久化）。
+**Project health** turns "N node_modules at X GB" into a per-project ledger: dependency size, last install, last project activity, competing lockfiles. Verdicts are stated as facts (dormant ≥ 60 days, heavy ≥ 1.5 GB) and never auto-deleted.
 
-## 安全护栏（代码层约束，不是 UI 提示）
+**Archive** is the reversible alternative: a dormant project's `node_modules` is packed to `tar.gz` in a managed archive, then re-read and verified (entry count + byte count) — **only if verification passes is the original moved to the trash**. Restore previews conflicts first, and user code is never archived.
 
-1. **路径白名单**：只删除预定义的可再生缓存路径，拒绝任何自由输入路径
-2. **废纸篓而非 `rm -rf`**：所有删除可恢复
-3. **Dry-run 前置**：首次执行先列出清单确认
-4. **熔断**：单次删除 > 20 GB 强制二次确认（即使 🟢 级）
-5. **永不提权**：不要 root、不要全盘访问、不要辅助功能；macOS「本地网络」授权是唯一一次隐私弹窗，且只在用户主动点击局域网扫描时触发
-6. Docker 等高风险项**只输出命令，永不执行**
+## Memory and apps
 
-## 技术方案
+- Data source is the system's own `/usr/bin/footprint -p <pid> -j` — non-privileged, JSON, with a swapped breakdown. No Mach API, no entitlements. On Windows the basis is `GetProcessMemoryInfo` private bytes — an approximation of the macOS footprint number, not an equivalent of it, because it cannot see the swapped-out part; fields that cannot be read (swapped bytes, the victim ranking) are not rendered at all.
+- Sampling: a cheap RSS sweep every 10 s, a deep footprint pass over the top N every 5 minutes (8 concurrent ≈ 0.6 s).
+- **Leak suspicion as a case file**: a case is opened (`CASE-MMDD-NN`), evidence accumulates (growth curve + numbers), and it closes itself when the suspect leaves and does not reappear. The wording rule is fixed: suspicion, never a verdict.
+- Unreadable values are shown as "unavailable + reason", never as 0 — 0 and "could not read" are different facts.
 
-- **Tauri 2 + React 19 + TypeScript + TailwindCSS 4 + Zustand**
-- **Rust 核心（`prune-core` crate）**：GUI 与 CLI 共享
-- 内存数据源：系统自带 `/usr/bin/footprint -p <pid> -j`（非特权、JSON、含 swapped 明细）—— **不碰 Mach API、不要任何权限**；Windows 走 `GetProcessMemoryInfo` 的 Private Bytes（W2），读不到的字段直接不渲染
-- 磁盘扫描：自建线程池 + `std::thread::scope` 并行（6336 个 node_modules，shell 要 4 分钟，Rust < 15 s；不用 ignore/rayon——定点目录不需要 gitignore 语义）
-- 删除：`trash` crate 走废纸篓
-- 采样：10 s 廉价 RSS 全量 + 5 min 对 Top N 深探 footprint（并发 8 路 ≈ 0.6 s）
+## Network, ports, LAN
 
-## CLI 与 MCP
+**Network** counts physical interfaces only (`utun` / `awdl` are listed separately and excluded from totals, so a VPN cannot double-count), plus per-app Top 8 via `nettop` (macOS only), today's and last-7-days traffic persisted to SQLite, and a diagnosis pass that measures real TCP connect latency to DNS, gateway and egress, checks for a captive portal, and prints one verdict with every threshold shown (50 / 100 / 30 / 300 ms). One click copies a Markdown report. macOS adds the system speed test with RPM (bufferbloat); Windows has no equivalent, so that card hides itself.
 
-单二进制双形态（`cargo build --release -p prune-cli` → `target/release/prune`）：
+**Ports** answers "who owns 3000" with the owning process, bind address, project directory and established connections — plus `coverage`, which tells you how many listeners were invisible to an unprivileged process. "Not found" is never reported as "free". Service fingerprinting labels each listener with an *inferred* or *confirmed* badge (static inference first; the active probe is opt-in).
+
+**LAN** has two speeds. The background event stream is an observer: it reads the neighbour table (60 s cadence, no probing, no `lsof`). The LAN tab's scan is your explicit action, and only then does it probe the subnet. Either way it keeps a stable-MAC identity across sessions, shows first-seen / last-seen, draws a topology view, and raises one event when a face appears that has never been seen before.
+
+## Event stream: the Dynamic Island
+
+Four event types can grow out of the notch, each with its own rate limit and cooldown:
+
+1. **CPU spike** — sustained burn, with hysteresis so a single compile does not fire it
+2. **Memory anomaly** — kernel pressure critical, or swap over threshold
+3. **Port conflict** — a watched port goes from free to taken, or gains a second holder
+4. **New LAN face** — an unseen device appears on the subnet
+
+The collapsed state is icon + label + reading; hovering expands to show *who* is burning CPU or *who* got swapped out. It dismisses itself after 6 s, never takes focus, and never sits there as a widget.
+
+**macOS only.** The panel is an `NSPanel` positioned against the notch; on Windows the island commands are no-ops, so no event ever fires.
+
+## First two minutes
+
+1. Launch. The storage tab starts scanning immediately — no five-step onboarding, no sign-up.
+2. The first scan ends on a card that reports the 🟢 total only.
+3. One click reclaims it: dry-run → whitelist → trash, all on 🟢 entries.
+4. A receipt appears: what this run removed and what has been removed cumulatively.
+
+There is no account, no network call, and no "rate your experience" prompt. The only optional action on that screen copies six numbers to the clipboard so you can paste them into a bug report or an interview.
+
+## CLI
+
+One binary, two shapes: `cargo build --release -p prune-cli` produces `target/release/prune`, sharing `prune-core` with the GUI.
 
 ```bash
-prune scan [--json]                 # 全盘扫描：主数字 / A1 明细 / A3 重复 / A6 Docker 命令提示
-prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run；--yes 才真删，走废纸篓）
-prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
-prune mem --watch [--interval N]    # 持续采样，每 60s 输出泄漏嫌疑判定（序列不落盘）
-prune port [PORT] [--json] [--all]  # 谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
-prune app <家族名> [--json]         # 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
-prune mcp                           # MCP stdio server（AI Agent 查询入口）
+prune scan [--json]                 # full disk scan: headline / cross-platform detail / duplicate stores / Docker hints
+prune reclaim [--level green]       # preview reclaimable items (dry-run by default; --yes deletes, via trash)
+prune mem [--swapped] [--json]      # one-shot memory reading (footprint, deep probe top 20)
+prune mem --watch [--interval N]    # continuous sampling with a leak-suspicion verdict every 60 s
+prune port [PORT] [--json] [--all]  # who owns this port (no PORT: watched layer; --all: internal IPC)
+prune app <family> [--json]         # one app's resource profile: processes/memory/CPU/ports/conns/disk
+prune lan [--scan] [--json]         # LAN devices (default: cache only; --scan probes the subnet)
+prune mcp                           # MCP server over stdio (agent query entry point)
 ```
 
-MCP 工具（8 个，全部只读）：`mem_snapshot`（一次性读数）/ `mem_leaks`（泄漏嫌疑，读 GUI 序列库）/ `disk_report`（全盘扫描）/
-`disk_scan`（白名单逐条细分：每条缓存实时体积 + 一级子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明权限可见范围）/
-`net_diag`（暴露面诊断结论：谁在对外监听、权限差额、TIME_WAIT 残留）/ `app_resources`（应用维度五域画像）/
-`lan_devices`（局域网设备，只读缓存不发包）。
+## MCP server
 
-### AI Agent 友好（信任叙事，代码层而非文档层）
+**MCP tools (8, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
 
-「**AI 只读、人执行**」在 Prune 里不是宣传语，是四条可验证的代码层约束：
+Wire it into any MCP-capable agent and ask questions like "what is eating disk on this machine", "is anything of mine exposed on the LAN", or "is this process leaking" — the agent reads, you decide.
 
-1. **Agent 能看**：MCP 的 8 个工具全部是查询——内存、端口、磁盘、局域网，一扇执行的门都没有
-2. **人才能删**：清理只能发生在 GUI——白名单路径 + 废纸篓 + 20 GB 熔断三层护栏，Agent 连提交删除请求的通道都不存在
-3. **分发层显式拒绝**：MCP 对 `reclaim` / `clean` / `execute` / `delete` 等执行类请求直接报错并说明底线（不是笼统的 unknown tool），有单测固化，回退即红
-4. **白名单兜底**：即使未来开放任何执行通道，可操作的也只有预定义的可再生缓存路径——自由输入路径在 prune-core 层就被拒绝
+## Agents read, humans delete
 
-对比同类：把「AI 建议清理」做成「AI 自己执行」的工具，权限面永远比「AI 只读 + 人执行」大一圈。Prune 选择后者。
+This is a code-level property, not a slogan, and it is covered by tests:
 
-## 安装（普通用户看这里）
+1. **Agents can look.** All 8 MCP tools are queries. There is no execution tool.
+2. **Only a human can delete.** Cleanup happens in the GUI, behind whitelist + trash + 20 GB breaker. There is no IPC command an agent could call to delete anything.
+3. **The dispatcher refuses by name.** `reclaim` / `clean` / `execute` / `delete` and friends return an explicit read-only error that says why — not a generic "unknown tool". A test asserts that arm exists.
+4. **Whitelist as the last line.** Even if an execution path were opened later, only registered regenerable paths could be touched; free-form paths die in `prune-core`.
 
-从 [Releases](https://github.com/JackXuyi/prune/releases/latest) 下载对应平台的最新安装包：
+Plus the product-level commitment: **zero telemetry**. No analytics SDK, no phone-home, no URL with a device id. The activation numbers Prune records stay in a local SQLite file and leave the machine only if you copy them.
 
-| 平台 | 下载哪个文件 |
-|---|---|
-| macOS（Apple Silicon，M1 及之后） | `Prune_*_aarch64.dmg` |
-| macOS（Intel） | `Prune_*_x64.dmg` |
-| Windows 10+ x64 | `Prune_*_x64-setup.exe`（推荐）或 `Prune_*_x64_en-US.msi` |
+## Install
 
-**macOS 安装三步**：
+Download the latest build from [Releases](https://github.com/JackXuyi/prune/releases/latest):
 
-1. 双击 dmg，把 **Prune 拖进 Applications**
-2. 首次打开：在启动台/Launchpad 点击 Prune，若弹出「无法打开，因为无法验证开发者」——到 **系统设置 → 隐私与安全性**，滚到底部点 **「仍要打开」**（只需一次，之后正常双击打开）
-3. 若没有「仍要打开」按钮（部分 macOS 版本行为不同），在终端执行一次：
+| Platform | File |
+| --- | --- |
+| macOS Apple Silicon (M1 and later) | `Prune_*_aarch64.dmg` |
+| macOS Intel | `Prune_*_x64.dmg` |
+| Windows 10+ x64 (beta) | `Prune_*_x64-setup.exe` (recommended) or `Prune_*_x64_en-US.msi` |
+
+**macOS, three steps**
+
+1. Open the dmg and drag **Prune** into **Applications**.
+2. Launch it. If macOS says it "cannot be opened because the developer cannot be verified", go to **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway** (once).
+3. If that button is missing on your macOS version, run once in Terminal:
    `xattr -dr com.apple.quarantine /Applications/Prune.app`
 
-**Windows 安装**：双击 `Prune_*_x64-setup.exe`；若 SmartScreen 弹「Windows 已保护你的电脑」，点 **更多信息 → 仍要运行**。
+**Windows**: run `Prune_*_x64-setup.exe`; if SmartScreen warns you, choose **More info → Run anyway**.
 
-**为什么会有这一步**：Prune 目前采用 ad-hoc 签名（未购买 Apple 开发者账号公证），Gatekeeper 不认识它——这是拦截弹窗的全部原因。安装包本身完整可校验；自动更新不走这条链路（updater 有独立验签），装好后通过托盘菜单「检查更新」升级不会再遇到弹窗。这一段不是免责声明，是把事实摆在你面前，判断留给你。
+**Linux**: no GUI build is published. `cargo build --release -p prune-cli` gives you the CLI/MCP binary — see [Platform support](#platform-support) for what it can and cannot read there.
 
-## 开发
+**Why this is needed**: the build is ad-hoc signed — no paid Apple Developer account, no notarization — so Gatekeeper does not recognize it. That is the entire reason for the prompt. The bundles are complete, and in-app updates do not use this path (the updater verifies its own signatures), so upgrading from the tray menu will not show this again. This is not a disclaimer: it is the fact, and the choice is yours.
+
+## Build from source
 
 ```bash
 pnpm install
-pnpm tauri dev      # 开发调试
-pnpm tauri build    # 打包 .app / .dmg
+pnpm tauri dev      # development
+pnpm tauri build    # package .app / .dmg
+cargo build --release -p prune-cli   # CLI + MCP binary
+cargo test --workspace               # Rust test suite
+pnpm check:docs                      # docs honesty gate (MCP tool reconciliation + public-claim sweep)
 ```
 
-## 路线图
+Requirements: Node 20+, pnpm 9+, Rust stable, and the Tauri 2 platform prerequisites.
 
-- [x] **M0** 可行性验证：Tauri tray 定位 / footprint 并发耗时 / 扫描性能
-- [x] **M1** 磁盘浪费探测 MVP：跨平台二进制探测 + 🟢 级清理 + 菜单栏
-- [x] **M2** 内存真相：footprint 口径 + swap 仪表 + 换出受害者榜
-- [x] **M3** 泄漏嫌疑判定（B5）+ CLI + MCP + A6 只读（NSPopover 原生化推迟，tray 方案实测可用）
-- [x] **M8** 应用维度资源卡：连接统计（M7 同源）+ 磁盘三层（本体/缓存/数据，按需 du）+ `prune app`
-- [x] **M9** 统计 tab（默认页）：内存 / 硬盘大小 + CPU 百分比 + 端口数量，四卡只读总览
-- [x] **M10** 应用资源 tab：每个应用一张卡（进程 / CPU / 内存 / 磁盘 / 端口 / 连接 / 网速），默认 Top 12 折叠 + 六字段排序；网速走 `nettop` 1 s 差分（仅非回环）
-- [x] **M11** 菜单栏图标主题：剪刀 → 可切换皮肤（DeepSeek 鲸鱼娘「吃白米饭的速度 = CPU 忙闲」）
-- [x] **M13** 菜单栏数字（可回收 GB / CPU / 网速）的可见性与口径修复
-- [x] **M14** 网络 tab：系统口径下载 / 上传速率 + 5 min 走势 + 网卡分布 + 按应用 Top 8 + 今日 / 近 7 天流量（`net_daily` 表，60 s 增量落库、90 天保留）
-- [x] **M15** 灵动岛：NSPanel 覆盖全屏 + 刘海几何（本机实测 185×33 pt）+ CPU 暴走判定（达标率 + 滞回 + 频控）+ 内存异常（MemMonitor 三通道：压力 Critical 立即 / Warning 与 swap 持续）+ 悬停展开 + 折叠态三段式（图标 + 标签 + 读数）+ 阈值可配置（`island.*` 7 个键）
-- [x] **M16** 面板统计化 + 双端网速：菜单栏面板改为**单页统计**（无 tab 切换，五行 48 px，与主窗口同一读数层 `lib/statsReadout.ts`），主窗口统计页第 3 行新增横跨两列的网络卡；统计页只 `init` 不提速，网速采样节拍仍只由网络 tab 决定
-- [x] **M17** 网络诊断（双平台）：DNS / 网关 / 出口三层探测 + 分层主因结论（阈值透明：50/100/30/300 ms）+ captive portal 检测 + Markdown 报告复制；macOS 另有系统测速 + RPM（bufferbloat 官方口径），Windows 无等价物 → 测速卡隐藏（capability 门控）
-- [x] **M19** 端口冲突保镖：灵动岛第三类事件——关注端口空闲→被占（30 s 内提报「谁占了 3000 · 属于哪个项目」）、同端口多持有者冲突提报；基线不补报 + 每端口 10 min 冷却 + 独立频控三道闸；端口 tab 活跃时复用快照不双扫（[方案](./docs/f4-port-guard-plan.md)）
-- [x] **M20** 机器宠物状态机：小猫皮四态表情——悠闲 / 狂奔（CPU ≥85% 连续扑跳）/ 喘气（swap ≥80% 或内核压力紧张，趴下呼吸）/ 炸毛（磁盘剩余 <10%，弓背竖尾）；全通道双滞回防抖，tooltip 显示心情词；状态机在 prune-core 纯逻辑可单测（[方案](./docs/f1-pet-mood-plan.md)）
-- [x] **M21** 剪除成绩单（Wrapped 式年度浪费报告 MVP）：每次清理成功后按分组落库 `cut_log`（append-only，本地 SQLite，留存两年）；总览页成绩单卡——累计剪掉 X GB · N 次清理 · 相当于 M 部高清电影 · 受害者 Top 3；失败项不计入（以废纸篓为准）；分享卡片图后置（[方案](./docs/f2-annual-report-plan.md)）
-- [x] **M22** 泄漏侦探档案（悬案卷宗）：泄漏嫌疑从警告条重塑为有状态的案件簿——立案（CASE-MMDD-NN）→ 侦查（嫌疑人档案照 + 证物生长曲线 + 证据数字）→ 结案（嫌疑人离场后未复现自动归档；同应用另立新案判「疑似复发」）；措辞红线不变（只说嫌疑不说结论）；案件簿在 prune-core 纯逻辑可单测（[方案](./docs/f3-detective-file-plan.md)）
-- [x] **M23** 局域网新面孔提醒：灵动岛第四类事件——邻居表出现从未见过的在线设备（60 s 一拍，**零主动探测、零 lsof**，只是 arp/GetIpNetTable2 观察者）→「新面孔 · 192.168.0.77 加入了局域网」，点击直达 ports tab 局域网设备区；终身制已知集（同 IP 只报一次）+ 网段变化重建基线（换 Wi-Fi 不刷屏）+ 单轮 3 条上限余量合并 + 独立 4/h 频控（[方案](./docs/f5-lan-watch-plan.md)）
-- [x] **M24** 项目健康卡（项目体检）：把「N 个 node_modules 共 X GB」拆成按项目的依赖账本——依赖体积 / 依赖上次安装（node_modules mtime）/ 项目最后活动（package.json · 锁文件 · .git/index）/ 多锁文件并存；结论只陈述事实（僵尸依赖 = 依赖与项目双双 ≥60 天没动 · 偏胖 ≥1.5 GB · 久未重装），不代删；**零新增扫描**（复用 node_modules 聚合表，每项目仅 6 次 stat：4 个锁文件 + package.json + .git/index）（[方案](./docs/f9-project-health-plan.md)）
-- [x] **M25** 应用历史 30 天：`app_hourly` 保留期 8 天 → 30 天（对标 Vitals 同深度）+ 天粒度聚合下推 SQLite（`app_daily_get`，720 小时桶 → 30 行）+ 应用详情历史走势 24 h / 7 天 / 30 天三档区间；RSS 口径与「缺失画灰不补 0」纪律不变（[方案](./docs/f10-app-history-30d-plan.md)）
-- [x] **L1–L3** 局域网三件套：设备页卡片化（L1，0.6.0）→ 设备时间线 + 稳定 MAC 身份（L2，0.8.0）→ 拓扑视图（L3，0.8.1/0.8.2，含极端密度不裁切修正）
-- [x] **M26** 修复与诚信：clippy 33 处告警清零并纳入 CI（`-D warnings`）+ 发版脚本三处加固（提交失败不再吞、tag 不再 `-f` 覆盖、令牌移出 URL）+ README / CHANGELOG 事实校准
-- [x] **M27** AI 应用缓存白名单：一期 Cursor 6 / Claude 3 / Ollama 2 + Xcode 补扫（0.8.3）→ 二期 OpenAI 家族（ChatGPT / Codex）+ Codex CLI + HuggingFace / LM Studio 权重（🟡 逐项确认）+ Windows 侧 AI 条目（0.8.5）；用户状态红线（state.vscdb / sessions / browser-data）测试固化，**Atlas 整目录因登录态混放永不登记**（[方案](./docs/f11-ai-cache-2-plan.md)）
-- [x] **M28** Xcode 深扫专项：一期 DerivedData / DeviceSupport / Archives / 模拟器 runtime + `CoreSimulator/Devices` 整目录（🟡 重置语义，0.8.3 及更早）→ 残余 DerivedData 显式 L2 + XCTest 设备克隆 / 设备磁盘映像 / Simulator Temp / 组件下载缓存（0.8.5）；CoreSimulator 文件与单设备 UUID、`UserData` 根红线测试固化（[方案](./docs/f12-xcode-deep-plan.md)）
-- [x] **M29** MCP 只读深化：`disk_scan`（白名单逐条细分）+ `net_diag`（暴露面诊断结论）+ 只读底线代码化（执行类请求分发层显式拒绝、词根测试固化）；README「AI Agent 友好」信任叙事（[方案](./docs/f13-m29-mcp-trust-plan.md)）
-- [x] **M30** 项目休眠归档（Pro 首个交付，0.9.0）：僵尸/偏胖项目的 `node_modules` 打包进受管归档区（tar.gz + 账本）——**打包 → 校验条目数与字节数 → 通过才删原件（走废纸篓）**；恢复先做冲突检测，解压后再校验；用户代码永不进归档（[方案](./docs/f14-m30-archive-plan.md)）。**0.9.1 修复归档卡死**：命令异步化（不再占主线程）+ 进度事件 + 可取消 + `.part` 原子发布（[诊断](./docs/diag-m30-archive-freeze.md)）
+## Status and roadmap
 
-> 编号说明：`docs/m18–m20-*.md` 是局域网线（L1–L3）的方案文件，其文件名里的 M18–M20 与 f 系列里程碑（f4 端口保镖 = M19、f1 宠物 = M20）曾经重号；README 起将局域网线记为 L1–L3，避免读路线图时误认。0.5.0 的两处托盘动画条目原标 M21/M22（与后来的成绩单/侦探档案撞号），已在 CHANGELOG 改标 M11-b/M11-c。
+Source version: **v0.10.0** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
 
-## 相关文档
+| Area | State |
+| --- | --- |
+| Disk waste detection + tiered cleanup | Shipped (A1 cross-platform binaries, duplicate stores, 68 whitelist entries, project health, archive) |
+| Memory truth, swap, leak case files | Shipped (footprint basis, victim ranking, case files) |
+| App / network / port / LAN tabs | Shipped (per-app 30-day history, network diagnosis, LAN timeline + topology) |
+| Event stream (Dynamic Island) | Shipped (4 event types, configurable thresholds) |
+| CLI + read-only MCP server | Shipped (8 tools, execution requests refused by name) |
+| Activation loop | Shipped in 0.10.0 (first scan → one click → receipt; local-only counters) |
+| Windows | **Beta**: installers ship every release, core features work; the missing pieces are listed under [Platform support](#platform-support); no further port schedule committed |
+| Auto-cleanup, telemetry, cloud accounts | Not planned |
 
-- [产品功能方案 v2](./docs/prune-feature-spec-v2.md) —— 定位、模块、安全分级
-- [Tauri 技术方案](./docs/prune-tauri-technical-plan.md) —— 架构、依赖、里程碑
-- [网络 tab 方案（M14）](./docs/net-speed-tab-plan.md) —— 口径、数据结构、A0–A4 拆解
-- [网络诊断方案](./docs/net-diag-plan.md) —— 分层探测、判定规则、双平台适配（D0–D3 拆解）
-- [面板统计化 + 双端网速（M16）](./docs/m16-stats-unify-plan.md) —— 共享读数层、48 px 行结构、空间算式
-- [调研档案](./docs/research/) —— Portlivo 拆解 / 竞品实测 / 可回收空间扫描报告 / 内存剖析 / Footprint PRD（决策档案）
-- [产品 Roadmap 2026-11](./docs/prune-roadmap-2026-11.md) —— 竞品动态、M26–M31 路线与决策点
+The full milestone history lives in [CHANGELOG.md](./CHANGELOG.md); the forward plan (M1–M8, gates, death lines, explicit non-goals) is in [docs/prune-roadmap-2027h1.md](./docs/prune-roadmap-2027h1.md).
+
+## Docs
+
+- [Product spec v2](./docs/prune-feature-spec-v2.md) — positioning, modules, safety levels
+- [Tauri technical plan](./docs/prune-tauri-technical-plan.md) — architecture, dependencies, milestones
+- [Roadmap 2027 H1](./docs/prune-roadmap-2027h1.md) — milestones, metric gates, what is explicitly not being built
+- [Network diagnosis plan](./docs/net-diag-plan.md) — layered probes, verdict rules, dual-platform adaptation
+- [Research archive](./docs/research/) — competitor teardowns, measured scans, memory profiling, decisions
+- [CHANGELOG](./CHANGELOG.md) — every shipped milestone, including the ones that were bugs
+
+## Keywords
+
+`macOS disk space analyzer` · `developer cache cleaner` · `node_modules size` · `yarn cache` · `pnpm store` · `npm cache` · `Xcode DerivedData` · `iOS simulator cleanup` · `AI CLI cache` (Cursor / Claude / Codex / Ollama / HuggingFace / LM Studio) · `swap usage monitor` · `phys_footprint` · `memory leak detection` · `who is using port 3000` · `LAN device discovery` · `MCP server` · `Tauri` · `Rust` · `Apple Silicon` · `Windows` · `cross-platform` · `zero telemetry` · `open source system utility`
 
 ## License
 
-[MIT](./LICENSE)
+[MIT](./LICENSE). The whitelist is a data file on purpose: cache locations change faster than release cycles, and a wrong path is a data-loss incident, so every entry ships with an assertion test.
