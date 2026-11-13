@@ -2671,7 +2671,7 @@ dependencies = [
 
 [[package]]
 name = "prune-app"
-version = "0.8.5"
+version = "0.9.0"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "prune-cli"
-version = "0.8.5"
+version = "0.9.0"
 dependencies = [
  "libc",
  "prune-core",
@@ -2699,14 +2699,16 @@ dependencies = [
 
 [[package]]
 name = "prune-core"
-version = "0.8.5"
+version = "0.9.0"
 dependencies = [
+ "flate2",
  "libc",
  "mdns-sd",
  "rusqlite",
  "serde",
  "serde_json",
  "sysinfo",
+ "tar",
  "trash",
  "windows-sys 0.61.2",
 ]
