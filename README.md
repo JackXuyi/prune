@@ -157,6 +157,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M25** 应用历史 30 天：`app_hourly` 保留期 8 天 → 30 天（对标 Vitals 同深度）+ 天粒度聚合下推 SQLite（`app_daily_get`，720 小时桶 → 30 行）+ 应用详情历史走势 24 h / 7 天 / 30 天三档区间；RSS 口径与「缺失画灰不补 0」纪律不变（[方案](./docs/f10-app-history-30d-plan.md)）
 - [x] **L1–L3** 局域网三件套：设备页卡片化（L1，0.6.0）→ 设备时间线 + 稳定 MAC 身份（L2，0.8.0）→ 拓扑视图（L3，0.8.1/0.8.2，含极端密度不裁切修正）
 - [x] **M26** 修复与诚信：clippy 33 处告警清零并纳入 CI（`-D warnings`）+ 发版脚本三处加固（提交失败不再吞、tag 不再 `-f` 覆盖、令牌移出 URL）+ README / CHANGELOG 事实校准
+- [x] **M27** AI 应用缓存白名单：一期 Cursor 6 / Claude 3 / Ollama 2 + Xcode 补扫（0.8.3）→ 二期 OpenAI 家族（ChatGPT / Codex）+ Codex CLI + HuggingFace / LM Studio 权重（🟡 逐项确认）+ Windows 侧 AI 条目（0.8.5）；用户状态红线（state.vscdb / sessions / browser-data）测试固化，**Atlas 整目录因登录态混放永不登记**（[方案](./docs/f11-ai-cache-2-plan.md)）
 
 > 编号说明：`docs/m18–m20-*.md` 是局域网线（L1–L3）的方案文件，其文件名里的 M18–M20 与 f 系列里程碑（f4 端口保镖 = M19、f1 宠物 = M20）曾经重号；README 起将局域网线记为 L1–L3，避免读路线图时误认。0.5.0 的两处托盘动画条目原标 M21/M22（与后来的成绩单/侦探档案撞号），已在 CHANGELOG 改标 M11-b/M11-c。
 

@@ -2671,7 +2671,7 @@ dependencies = [
 
 [[package]]
 name = "prune-app"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -2690,7 +2690,7 @@ dependencies = [
 
 [[package]]
 name = "prune-cli"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "libc",
  "prune-core",
@@ -2699,7 +2699,7 @@ dependencies = [
 
 [[package]]
 name = "prune-core"
-version = "0.8.4"
+version = "0.8.5"
 dependencies = [
  "libc",
  "mdns-sd",

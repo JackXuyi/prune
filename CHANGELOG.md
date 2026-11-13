@@ -4,6 +4,20 @@
 
 > 编号说明：0.5.0 的托盘动画两条曾标 M21/M22，与后来的 M21 成绩单 / M22 侦探档案撞号，现改标 M11-b / M11-c（M11 托盘主题的子项）。局域网线（docs/m18–m20-*.md）在 README 记为 L1–L3，理由见 README 路线图脚注。
 
+## 0.8.5
+
+### M27 二期：AI 缓存白名单补 OpenAI 家族 / HuggingFace / Windows 侧（F11）
+
+- 一期（Cursor 6 / Claude 3 / Ollama 2 + Xcode 补扫 2）已于 0.8.3 发布；本期按 DevCleaner 1.16 覆盖面补齐残余，**14 条全部本机实测后登记**（方案与实测数据见 [f11](./docs/f11-ai-cache-2-plan.md)）：
+  - **OpenAI 家族 4 条 🟢**：ChatGPT 桌面 WebKit 缓存（128 MB）/ Codex 桌面 Sparkle+HTTP 缓存 / Codex 旧 bundle 缓存 / `Application Support/Codex/Cache`（23 MB，只登记 Cache 子目录——本体含 Cookies / Local Storage，红线）
+  - **Codex CLI 🟢**：`~/.codex/cache`（应用目录 / 工具目录 / 插件目录缓存，两端通用）；`sessions` / `history.jsonl` / `config.toml` / `auth.json` 永不登记
+  - **权重类 🟡 L3**：HuggingFace hub（176 MB 实测）+ LM Studio（官方默认目录，未装时自动跳过）——可重下但代价高，逐项确认，与 Ollama 模型同口径
+  - **Cursor CLI 编译缓存 🟢**（`Library/Caches/cursor-compile-cache`，24 MB 实测）
+  - **Windows AI 6 条 🟢**：Cursor（Cache / CachedData / GPUCache / logs）+ Claude（Cache / GPUCache），按 Electron 布局落 `%APPDATA%`，真机待验（路径偏差只会扫不出，无误删风险）
+- **Atlas（ChatGPT 浏览器）整目录永不登记**：459 MB 里 458 MB 是 `browser-data/`（Chromium profile，含 login-staging 站点登录态），与 HTTP 缓存混放——目录粒度做不到「只删缓存不登出网站」，宁可错过；红线测试固化（`com.openai.atlas` / `AS/Codex` 根 / `.codex` 非 cache 子路径三者断言禁止）
+- 红线单测扩展：AI 系条目 rel 禁含 `sessions` / `history` / `auth` / `Cookies` / `browser-data` / `conversations` / `ai-tracking` / `Local Storage` 等 13 个用户状态标记
+- 中英 catalog 同步 14 个 `disk.cache.<key>`（check-i18n 门禁覆盖）；零代码改动扩散，登记即自动进入扫描 / 报告 / dry-run / 废纸篓 / MCP 全链路
+
 ## 0.8.4
 
 ### M26 修复与诚信（工程门禁 + 发版安全 + 文档校准）
