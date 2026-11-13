@@ -237,7 +237,10 @@ mod tests {
     #[test]
     fn key_mac_stable() {
         // 非 随机化 MAC → mac key，不带 cidr（跨网段仍可认）
-        assert_eq!(device_key(&device("192.168.0.44", Some(STABLE), false), Some(CIDR)), "mac:BC:24:11:4C:D8:39");
+        assert_eq!(
+            device_key(&device("192.168.0.44", Some(STABLE), false), Some(CIDR)),
+            "mac:BC:24:11:4C:D8:39"
+        );
         // 随机化 MAC → ip key，绑定网段
         assert_eq!(
             device_key(&device("192.168.0.44", Some(RANDOM), true), Some(CIDR)),
@@ -252,7 +255,11 @@ mod tests {
 
     #[test]
     fn first_scan_baseline() {
-        let mut snap = snapshot(1_000, CIDR, vec![device("192.168.0.44", Some(STABLE), false)]);
+        let mut snap = snapshot(
+            1_000,
+            CIDR,
+            vec![device("192.168.0.44", Some(STABLE), false)],
+        );
         let mut history = LanHistory::default();
         let baseline = apply_history(&mut snap, &mut history);
         assert!(!baseline, "空 history = 首扫基线");
@@ -265,12 +272,15 @@ mod tests {
 
     #[test]
     fn hit_preserves_first_seen() {
-        let mut snap = snapshot(2_000, CIDR, vec![device("192.168.0.44", Some(STABLE), false)]);
-        let mut history = LanHistory::default();
-        history.devices.insert(
-            format!("mac:{STABLE}"),
-            entry(1_000, 1_000, "192.168.0.44"),
+        let mut snap = snapshot(
+            2_000,
+            CIDR,
+            vec![device("192.168.0.44", Some(STABLE), false)],
         );
+        let mut history = LanHistory::default();
+        history
+            .devices
+            .insert(format!("mac:{STABLE}"), entry(1_000, 1_000, "192.168.0.44"));
         let baseline = apply_history(&mut snap, &mut history);
         assert!(baseline);
         let d = &snap.devices[0];
@@ -282,24 +292,30 @@ mod tests {
     #[test]
     fn new_within_window() {
         // 上一轮 5 分钟前建立基线，本轮命中 → 仍是「新」
-        let mut snap = snapshot(1_300, CIDR, vec![device("192.168.0.44", Some(STABLE), false)]);
-        let mut history = LanHistory::default();
-        history.devices.insert(
-            format!("mac:{STABLE}"),
-            entry(1_000, 1_000, "192.168.0.44"),
+        let mut snap = snapshot(
+            1_300,
+            CIDR,
+            vec![device("192.168.0.44", Some(STABLE), false)],
         );
+        let mut history = LanHistory::default();
+        history
+            .devices
+            .insert(format!("mac:{STABLE}"), entry(1_000, 1_000, "192.168.0.44"));
         apply_history(&mut snap, &mut history);
         assert!(snap.devices[0].is_new);
     }
 
     #[test]
     fn not_new_beyond_window() {
-        let mut snap = snapshot(1_601, CIDR, vec![device("192.168.0.44", Some(STABLE), false)]);
-        let mut history = LanHistory::default();
-        history.devices.insert(
-            format!("mac:{STABLE}"),
-            entry(1_000, 1_000, "192.168.0.44"),
+        let mut snap = snapshot(
+            1_601,
+            CIDR,
+            vec![device("192.168.0.44", Some(STABLE), false)],
         );
+        let mut history = LanHistory::default();
+        history
+            .devices
+            .insert(format!("mac:{STABLE}"), entry(1_000, 1_000, "192.168.0.44"));
         apply_history(&mut snap, &mut history);
         assert!(!snap.devices[0].is_new);
     }
@@ -307,12 +323,15 @@ mod tests {
     #[test]
     fn mac_key_survives_ip_change() {
         // 同 MAC 换 IP（DHCP 续租）：仍命中同一 entry，ip 更新
-        let mut snap = snapshot(2_000, CIDR, vec![device("192.168.0.99", Some(STABLE), false)]);
-        let mut history = LanHistory::default();
-        history.devices.insert(
-            format!("mac:{STABLE}"),
-            entry(1_000, 1_000, "192.168.0.44"),
+        let mut snap = snapshot(
+            2_000,
+            CIDR,
+            vec![device("192.168.0.99", Some(STABLE), false)],
         );
+        let mut history = LanHistory::default();
+        history
+            .devices
+            .insert(format!("mac:{STABLE}"), entry(1_000, 1_000, "192.168.0.44"));
         apply_history(&mut snap, &mut history);
         assert_eq!(snap.devices[0].first_seen, 1_000, "换 IP 不算新设备");
         assert_eq!(
@@ -324,7 +343,11 @@ mod tests {
     #[test]
     fn ip_key_binds_cidr() {
         // 同 IP 换网段：不命中，视为新锚（baseline 对整个 history 而言仍存在）
-        let mut snap = snapshot(2_000, "10.0.0.0/24", vec![device("192.168.0.44", None, false)]);
+        let mut snap = snapshot(
+            2_000,
+            "10.0.0.0/24",
+            vec![device("192.168.0.44", None, false)],
+        );
         let mut history = LanHistory::default();
         history.devices.insert(
             "ip:192.168.0.44@192.168.0.0/24".into(),
@@ -336,7 +359,9 @@ mod tests {
         assert_eq!(snap.devices[0].first_seen, 2_000);
         assert!(snap.devices[0].is_new);
         // 旧网段的 entry 不被污染，新锚独立成条
-        assert!(history.devices.contains_key("ip:192.168.0.44@192.168.0.0/24"));
+        assert!(history
+            .devices
+            .contains_key("ip:192.168.0.44@192.168.0.0/24"));
         assert!(history.devices.contains_key("ip:192.168.0.44@10.0.0.0/24"));
     }
 
@@ -347,9 +372,10 @@ mod tests {
         history
             .devices
             .insert("a".into(), entry(now - 100, now - 100, "1.1.1.1"));
-        history
-            .devices
-            .insert("b".into(), entry(now - 31 * 86_400, now - 31 * 86_400, "1.1.1.2"));
+        history.devices.insert(
+            "b".into(),
+            entry(now - 31 * 86_400, now - 31 * 86_400, "1.1.1.2"),
+        );
         gc_history(&mut history, now);
         assert!(history.devices.contains_key("a"));
         assert!(!history.devices.contains_key("b"), "30 天没见过 → 剔除");
@@ -370,7 +396,9 @@ mod tests {
         for i in 0..10i64 {
             assert!(!history.devices.contains_key(&format!("k{i}")));
         }
-        assert!(history.devices.contains_key(&format!("k{}", HISTORY_CAP as i64 + 9)));
+        assert!(history
+            .devices
+            .contains_key(&format!("k{}", HISTORY_CAP as i64 + 9)));
     }
 
     #[test]

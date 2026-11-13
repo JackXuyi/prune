@@ -91,7 +91,11 @@ pub fn lan_cache_path() -> Option<PathBuf> {
 /// M19 设备历史层（docs/m19-lan-device-times-spec.md §3.2）：跨轮次设备身份 +
 /// first_seen / last_seen。与快照缓存同目录同「写临时文件再改名」的原子写套路。
 pub fn lan_history_path() -> Option<PathBuf> {
-    Some(config_dir()?.join("com.xuyi.prune").join("lan-history.json"))
+    Some(
+        config_dir()?
+            .join("com.xuyi.prune")
+            .join("lan-history.json"),
+    )
 }
 
 /// 系统配置目录（不随用户变化），用于「系统路径不出现在用户数据里」这类判断。
