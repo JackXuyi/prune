@@ -141,6 +141,12 @@ jobs:
           fi
           echo "OK: TAURI_SIGNING_PRIVATE_KEY 已配置（password ${UPDATER_KEY_PASSWORD:+已设置}${UPDATER_KEY_PASSWORD:-为空，对应无密码密钥}）"
 
+      # 文档诚信门禁（M1）：MCP 工具三处对账（run_tool ↔ tool_defs ↔ README）
+      # + 排他表述 sweep（README/CHANGELOG/spec，DP-4 裁 A）。纯静态解析零构建。
+      # 不只挂在 pnpm build 链里，还独立成步——CI 日志里一眼可见门禁结果。
+      - name: Docs honesty (MCP reconciliation + exclusivity sweep)
+        run: node scripts/check-docs-honesty.mjs
+
       - name: Typecheck & build frontend
         run: pnpm build
 
@@ -325,3 +331,69 @@ jobs:
           # 各自的平台条目合并进 Release 上已存在的 latest.json
           includeUpdaterJson: true
           args: ${{ matrix.args }}
+
+  # ---------------------------------------------------------------------------
+  # 双源发布归真（M1/R15）：GitHub 与 Gitee 的 Release 正文讲同一个故事。
+  # tauri-action 的 releaseBody 是静态模板，拿不到每版的变更内容；此 job 在
+  # 三个 bundle 全部完成后跑一次（矩阵三腿并发 PATCH 会互相覆盖，所以收敛为
+  # 单点），把 CHANGELOG 本版段拼进「下载表」之后。Gitee 侧由 release.mjs 的
+  # releaseBody() 同步生成同一结构——两边一致，不再各说各话。
+  # ---------------------------------------------------------------------------
+  release-notes:
+    name: Sync release notes with CHANGELOG
+    needs: bundle
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Patch release body (download table + CHANGELOG section)
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          export RELEASE_TAG="v$(node -p "require('./package.json').version")"
+          node <<'NODE_SCRIPT'
+          const fs = require('fs');
+          const token = process.env.GITHUB_TOKEN;
+          const repo = process.env.GH_REPO;
+          const tag = process.env.RELEASE_TAG;
+          const headers = { Authorization: `Bearer ${token}`, Accept: 'application/vnd.github+json' };
+          (async () => {
+            // CHANGELOG 本版段：到下一个二级标题为止，不拦腰截断；缺段只告警不阻塞
+            const t = fs.readFileSync('CHANGELOG.md', 'utf8');
+            const i = t.indexOf('## ' + tag.slice(1));
+            let section = '';
+            if (i >= 0) {
+              const rest = t.slice(i);
+              const n = rest.indexOf('\n## ', 1);
+              section = (n === -1 ? rest : rest.slice(0, n)).trim();
+            } else {
+              console.log(`::warning::CHANGELOG 里没有 ${tag} 段，Release 正文只保留下载表`);
+            }
+            const table = [
+              '下载对应平台安装包：',
+              '',
+              '| 平台 | 文件 |',
+              '|---|---|',
+              '| macOS Apple Silicon | `Prune_*_aarch64.dmg` |',
+              '| macOS Intel | `Prune_*_x64.dmg` |',
+              '| Windows x64 | `Prune_*_x64-setup.exe`（推荐） / `Prune_*_x64_en-US.msi` |',
+              '',
+              '已装旧版本可通过托盘菜单「检查更新」或应用内自动升级直接更新到本版本。',
+              '',
+              'macOS 首次打开若提示未验证开发者：右键 → 打开，或 `xattr -cr /Applications/Prune.app`。',
+            ].join('\n');
+            const body = section ? `${table}\n\n${section}` : table;
+            const rel = await fetch(`https://api.github.com/repos/${repo}/releases/tags/${tag}`, { headers });
+            if (!rel.ok) throw new Error(`GET release failed: ${rel.status} ${await rel.text()}`);
+            const meta = await rel.json();
+            const patch = await fetch(`https://api.github.com/repos/${repo}/releases/${meta.id}`, {
+              method: 'PATCH',
+              headers: { ...headers, 'Content-Type': 'application/json' },
+              body: JSON.stringify({ body }),
+            });
+            if (!patch.ok) throw new Error(`PATCH release failed: ${patch.status} ${await patch.text()}`);
+            console.log(`✓ GitHub Release #${meta.id} 正文已同步：下载表 + CHANGELOG${section ? ` ${tag} 段` : '（无本版段）'}`);
+          })().catch((e) => { console.error(e); process.exit(1); });
+          NODE_SCRIPT

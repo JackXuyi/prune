@@ -1,16 +1,17 @@
 {
   "name": "prune",
   "private": true,
-  "version": "0.9.3",
+  "version": "0.9.4",
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && node scripts/check-i18n.mjs && vite build",
+    "build": "tsc && node scripts/check-i18n.mjs && node scripts/check-docs-honesty.mjs && vite build",
     "preview": "vite preview",
     "bump": "node scripts/bump-version.mjs",
     "release": "node scripts/release.mjs",
     "tauri": "tauri",
-    "check:i18n": "node scripts/check-i18n.mjs"
+    "check:i18n": "node scripts/check-i18n.mjs",
+    "check:docs": "node scripts/check-docs-honesty.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

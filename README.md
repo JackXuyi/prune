@@ -10,7 +10,7 @@
 
 ![隐私](https://img.shields.io/badge/零埋点-零遥测-green)
 
-![状态](https://img.shields.io/badge/status-v0.8.4-blue)
+![状态](https://img.shields.io/badge/status-v0.9.4-blue)
 
 ---
 
@@ -127,7 +127,7 @@ MCP 工具（8 个，全部只读）：`mem_snapshot`（一次性读数）/ `mem
 
 ### AI Agent 友好（信任叙事，代码层而非文档层）
 
-Prune 是唯一把「**AI 只读、人执行**」写进代码层的系统工具：
+「**AI 只读、人执行**」在 Prune 里不是宣传语，是四条可验证的代码层约束：
 
 1. **Agent 能看**：MCP 的 8 个工具全部是查询——内存、端口、磁盘、局域网，一扇执行的门都没有
 2. **人才能删**：清理只能发生在 GUI——白名单路径 + 废纸篓 + 20 GB 熔断三层护栏，Agent 连提交删除请求的通道都不存在
@@ -136,6 +136,26 @@ Prune 是唯一把「**AI 只读、人执行**」写进代码层的系统工具�
 
 对比同类：把「AI 建议清理」做成「AI 自己执行」的工具，权限面永远比「AI 只读 + 人执行」大一圈。Prune 选择后者。
 
+## 安装（普通用户看这里）
+
+从 [Releases](https://github.com/JackXuyi/prune/releases/latest) 下载对应平台的最新安装包：
+
+| 平台 | 下载哪个文件 |
+|---|---|
+| macOS（Apple Silicon，M1 及之后） | `Prune_*_aarch64.dmg` |
+| macOS（Intel） | `Prune_*_x64.dmg` |
+| Windows 10+ x64 | `Prune_*_x64-setup.exe`（推荐）或 `Prune_*_x64_en-US.msi` |
+
+**macOS 安装三步**：
+
+1. 双击 dmg，把 **Prune 拖进 Applications**
+2. 首次打开：在启动台/Launchpad 点击 Prune，若弹出「无法打开，因为无法验证开发者」——到 **系统设置 → 隐私与安全性**，滚到底部点 **「仍要打开」**（只需一次，之后正常双击打开）
+3. 若没有「仍要打开」按钮（部分 macOS 版本行为不同），在终端执行一次：
+   `xattr -dr com.apple.quarantine /Applications/Prune.app`
+
+**Windows 安装**：双击 `Prune_*_x64-setup.exe`；若 SmartScreen 弹「Windows 已保护你的电脑」，点 **更多信息 → 仍要运行**。
+
+**为什么会有这一步**：Prune 目前采用 ad-hoc 签名（未购买 Apple 开发者账号公证），Gatekeeper 不认识它——这是拦截弹窗的全部原因。安装包本身完整可校验；自动更新不走这条链路（updater 有独立验签），装好后通过托盘菜单「检查更新」升级不会再遇到弹窗。这一段不是免责声明，是把事实摆在你面前，判断留给你。
 
 ## 开发
 

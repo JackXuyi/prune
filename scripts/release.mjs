@@ -208,13 +208,18 @@ if (!SKIP_BUILD && !DRY) {
   } else {
     execSync(`git push ${giteeRemote.name} HEAD --tags`, { cwd: root, stdio: 'inherit' })
     ok(`已推送到 Gitee（${giteeRemote.name}）`)
-    // 顺手推 GitHub：tag 一落地，GitHub Actions 就会自动构建 macOS + Windows 安装包
+    // 顺手推 GitHub：tag 一落地，GitHub Actions 就会自动构建 macOS + Windows 安装包。
+    // 双源发布归真：GitHub 推送失败不是「跳过」小事——Gitee 有了 Release 而
+    // GitHub 没有产物，两个源从此版本错位，必须把补救命令打在脸上。
     if (githubRemote && !flags.has('--no-github')) {
       try {
         execSync(`git push ${githubRemote.name} HEAD --tags`, { cwd: root, stdio: 'inherit' })
         ok(`已推送到 GitHub（${githubRemote.name}），Actions 将自动构建双平台安装包`)
-      } catch {
-        warn('GitHub 推送失败，跳过（不影响 Gitee 发版）')
+      } catch (e) {
+        console.error('⚠️  GitHub 推送失败——双源已错位，Gitee Release 已建但 GitHub 无产物。')
+        console.error('   修复后务必补推，否则 GitHub 用户收不到本版本：')
+        console.error(`     git push ${githubRemote.name} HEAD:master --tags`)
+        console.error(`   （原始错误：${String(e).split('\n')[0]}）`)
       }
     }
   }
@@ -288,7 +293,7 @@ if (found.ok && found.data?.id) {
       access_token: token,
       tag_name: tag,
       name: `Prune ${tag}`,
-      body,
+      body: releaseBody(to),
       target_commitish: git('rev-parse --abbrev-ref HEAD'),
       prerelease: false,
     }),
@@ -307,10 +312,35 @@ function readChangelog(ver) {
   if (existsSync(p)) {
     const txt = readFileSync(p, 'utf8')
     const idx = txt.indexOf(`## ${ver}`)
-    if (idx >= 0) return txt.slice(idx, idx + 2000)
+    if (idx >= 0) {
+      // 取到下一个二级标题为止——原先固定截 2000 字符会把长版本段拦腰截断，
+      // 用户看到半句话还以为是全文（诚信问题：截断必须可见或干脆不截）
+      const rest = txt.slice(idx)
+      const next = rest.indexOf('\n## ', 1)
+      const section = next === -1 ? rest : rest.slice(0, next)
+      return section.trim()
+    }
   }
   return `Prune ${tag}\n\n- 构建平台：${process.platform} / ${process.arch}`
 }
+
+// 双源发布归真（M1/R15）：Gitee 与 GitHub 的 Release 正文必须讲同一个故事。
+// GitHub 侧由 tauri-action 用 releaseBody 模板建 Release；Gitee 侧此前只有
+// CHANGELOG 截断——现在统一为「CHANGELOG 本版段 + 下载表」，与 GitHub 同构。
+function releaseBody(ver) {
+  return `${readChangelog(ver)}\n\n${DOWNLOAD_TABLE}`
+}
+
+const DOWNLOAD_TABLE = `下载对应平台安装包：
+
+| 平台 | 文件 |
+|---|---|
+| macOS Apple Silicon | \`Prune_*_aarch64.dmg\` |
+| macOS Intel | \`Prune_*_x64.dmg\` |
+| Windows x64 | \`Prune_*_x64-setup.exe\`（推荐） / \`Prune_*_x64_en-US.msi\` |
+
+已装旧版本可通过托盘菜单「检查更新」或应用内自动升级直接更新到本版本。
+首次安装提示：macOS 产物为 ad-hoc 签名，首次打开需在「系统设置 → 隐私与安全性」点「仍要打开」一次（详见仓库 README 安装章节）。`
 
 step('上传产物到 Release')
 if (DRY) {

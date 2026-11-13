@@ -2,6 +2,16 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.9.4
+
+### M1 诚信归真（2027 H1 Roadmap §4；发布门禁项，纯门禁修复、无新功能）
+
+- **排他表述清理（DP-4 裁 A：全删，改可核验事实陈述）**：README「AI Agent 友好」段的排他句式（原文宣称该机制为本产品独有）删掉，改为四条代码层可验证约束的直陈——phys_footprint 口径已被 RAMWatcher 复制的教训：排他句式不可自证；`prune-feature-spec-v2.md` 的「该位置无人占用」判断改为带时点与出处的表述（2026-10 竞品扫描口径，随竞品动态失效）
+- **新增文档诚信门禁 `scripts/check-docs-honesty.mjs`**（`pnpm check:docs`，已挂进 `pnpm build` 链与 CI verify）：三处对账——`run_tool` 分发臂 ↔ `tool_defs()` 声明 ↔ README「MCP 工具（N 个」清单，任一漂移即红；排他表述 sweep 四份公开文档（README / CHANGELOG / 两份 spec）；**M29 只读底线断言**——执行类动词的显式拒绝臂必须存在且必须 `Err(`，改成可执行通道即红（负向实测：拒绝臂改 `Ok(Value::Null)` 后两处报红，恢复后转绿）
+- **双源发布归真（R15）**：Gitee Release 正文此前是 CHANGELOG 固定截 2000 字符（长版本段会拦腰截断）——改为取到下一个二级标题为止 + 拼接与 GitHub 同构的下载表（含 ad-hoc 首开提示）；新增 CI `release-notes` job，在三个 bundle 全部完成后单点 PATCH GitHub Release 正文（下载表 + CHANGELOG 本版段），消除矩阵三腿并发覆盖；GitHub 推送失败从一句「跳过」改为打印双源错位警示与补推命令
+- **可重复发布验收记录**：v0.9.3 tag 已由 CI 一次产出三端全量产物（dmg×2 / exe / msi / app.tar.gz×2 + latest.json，见 Release 资产）；「连续 2 次干净环境一键出三端产物」以 v0.9.4 tag 起第二次发布后达成并回填本条
+- README 状态徽章 `v0.8.4` → `v0.9.4`（M26 后又漂移了一个 Q，本次起由 bump 脚本口径覆盖，漂移检测见 check-docs-honesty 后续扩展位）
+
 ## 0.9.3
 
 > v0.9.1 / v0.9.2 的 tag 均因 CI 门禁红灯、未产出任何安装包，内容合并到 0.9.3 一并发布（版本号不复用 tag）。两轮红灯全是同一类盲区：**本地 macOS 编译不到的 Linux 分支**。
