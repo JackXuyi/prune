@@ -218,7 +218,7 @@ export function ReclaimBoard() {
       const rep = await diskReport().catch(() => null);
       if (rep) useDiskStore.setState({ report: rep });
     } catch (e) {
-      toast(String(e), "err");
+      toast(String(e), "error");
     } finally {
       setGreenBusy(false);
     }
@@ -292,6 +292,46 @@ export function ReclaimBoard() {
             {scanning ? t("common.progress.scanning") : t("common.action.rescan")}
           </Btn>
         </div>
+
+        {/* M2 引导卡（DP-3 裁 B）：首扫完成页的「惊讶时刻」顺势承接——
+            只报零后悔（L1）体量，一键🟢 只碰 L1，绝不替用户做 L2+ 的主 */}
+        {showGuide ? (
+          <div className="mt-2.5 rounded-card border border-accent/30 bg-accent/[0.06] px-3.5 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-[12.5px] font-medium text-ink">{t("disk.guide.title")}</p>
+                <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">
+                  {t("disk.guide.body", { size: formatBytes(l1Bytes), n: l1Groups.length })}
+                </p>
+              </div>
+              <div className="flex shrink-0 flex-col items-end gap-1">
+                <Btn onClick={() => void oneClickGreen()} disabled={greenBusy || busy}>
+                  {greenBusy ? t("common.progress.scanning") : t("disk.guide.cta")}
+                </Btn>
+                <button
+                  type="button"
+                  onClick={dismissGuide}
+                  className="text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
+                >
+                  {t("disk.guide.dismiss")}
+                </button>
+              </div>
+            </div>
+            {/* 征募点（RK-5 红线内：首扫结果页 + 只许「复制 6 个数字」+ 零遥测） */}
+            <div className="mt-2 flex items-center justify-between gap-2 border-t border-hairline-soft pt-2">
+              <p className="min-w-0 text-[10px] leading-relaxed text-ink-faint">
+                {t("disk.guide.recruit")}
+              </p>
+              <button
+                type="button"
+                onClick={() => void copySixNumbers()}
+                className="shrink-0 text-[10px] text-accent transition-colors hover:underline"
+              >
+                {copied ? t("disk.guide.copied") : t("disk.guide.recruitBtn")}
+              </button>
+            </div>
+          </div>
+        ) : null}
 
         {/* 清理完成条：「已移入废纸篓 N 项」+ 从右上浮起的 +N GB */}
         {lastReclaimed ? (
@@ -482,6 +522,48 @@ export function ReclaimBoard() {
           void execute(confirmed, items).then(() => setPicked(new Set()));
         }}
       />
+
+      {/* M2 成绩单弹窗（R07 即时呈现）：一键🟢 成功后弹出；累计数字来自本地
+          activation_report（零遥测），与本页 toast 互不替代 */}
+      {scorecard ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
+          <div
+            className="prune-fade-in absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+            onClick={() => setScorecard(null)}
+          />
+          <div
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("disk.scorecard.title")}
+            className="relative w-full max-w-xs rounded-xl border border-hairline bg-surface-overlay p-4 shadow-2xl"
+          >
+            <p className="text-[13px] font-medium text-ink">✂️ {t("disk.scorecard.title")}</p>
+            <p className="mt-1.5 text-[11px] leading-relaxed text-ink-dim">
+              {t("disk.scorecard.run", { size: formatBytes(scorecard.bytes), n: scorecard.moved })}
+            </p>
+            <dl className="mt-3 space-y-1.5 text-[11px]">
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-ink-faint">{t("disk.scorecard.total")}</dt>
+                <dd className="font-mono tabular-nums text-ink">
+                  {formatBytes(activation?.cutTotalBytes ?? scorecard.bytes)}
+                </dd>
+              </div>
+              <div className="flex items-baseline justify-between gap-3">
+                <dt className="text-ink-faint">{t("disk.scorecard.sessions")}</dt>
+                <dd className="font-mono tabular-nums text-ink">
+                  {activation?.cutSessions ?? 1}
+                </dd>
+              </div>
+            </dl>
+            <p className="mt-2.5 text-[9.5px] leading-relaxed text-ink-faint">
+              {t("disk.scorecard.note")}
+            </p>
+            <div className="mt-3 flex justify-end">
+              <Btn onClick={() => setScorecard(null)}>{t("disk.scorecard.done")}</Btn>
+            </div>
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

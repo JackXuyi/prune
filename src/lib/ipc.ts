@@ -143,6 +143,22 @@ export function cutReport(): Promise<CutReport> {
   return invoke<CutReport>("cut_report");
 }
 
+/** 激活读数（M2）：首启→首清 24h 率的原料包。零遥测——只随「复制 6 个数字」出设备；
+ *  时间戳 null = 事件还没发生（不是 0）。分母禁用下载数（roadmap 2027h1 §5.2）。 */
+export interface ActivationSummary {
+  firstBootTs: number | null;
+  firstScanTs: number | null;
+  scanCount: number;
+  firstCutTs: number | null;
+  cutSessions: number;
+  cutTotalBytes: number;
+  cutRows: number;
+}
+
+export function activationReport(): Promise<ActivationSummary> {
+  return invoke<ActivationSummary>("activation_report");
+}
+
 // ---------------------------------------------------------------- 端口（M7）
 
 /** 最新一轮端口快照；null = 还没扫过（**不是「没有端口」**） */
