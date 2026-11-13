@@ -337,8 +337,12 @@ export function archivePlan(projectRoot: string): Promise<ArchivePlan> {
 }
 
 /** 执行归档（必须 confirmed）：校验通过后才删原件 */
-export function archiveCreate(projectRoot: string, confirmed: boolean): Promise<ArchiveEntry> {
-  return invoke<ArchiveEntry>("archive_create", { projectRoot, confirmed });
+export function archiveCreate(
+  projectRoot: string,
+  confirmed: boolean,
+  breakerConfirmed: boolean,
+): Promise<ArchiveEntry> {
+  return invoke<ArchiveEntry>("archive_create", { projectRoot, confirmed, breakerConfirmed });
 }
 
 /** dry-run：恢复目标 / 体积 / 冲突标记 */

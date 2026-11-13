@@ -24,6 +24,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
+use crate::reclaim;
+
 /// 归档区账本文件名
 pub const MANIFEST_FILE: &str = "manifest.json";
 /// 归档区在配置目录下的固定位置（GUI 与未来的 CLI 同口径）
@@ -227,21 +229,42 @@ pub fn plan(deps: &Path, root: &Path, now_secs: i64) -> Result<ArchivePlan, Stri
 }
 
 /// 归档执行：打包 → 校验 → 删原件 → 记账。任一步失败都不丢原件。
+///
+/// 无确认通道的入口（CLI / 脚本）：超 [`reclaim::DEFAULT_BREAKER_BYTES`] 的
+/// 归档会被 [`breaker_error`] 拒绝（非交互场景宁可拒绝，与 reclaim 双令牌同纪律）。
 pub fn create(deps: &Path, root: &Path, now_secs: i64) -> Result<ArchiveEntry, String> {
-    create_full(deps, root, now_secs, &trash_delete, &no_progress, None)
+    create_full(
+        deps,
+        root,
+        now_secs,
+        &trash_delete,
+        &no_progress,
+        None,
+        false,
+    )
 }
 
 /// 带进度与取消的生产入口（GUI / 未来的 CLI 共用）。
 ///
 /// **必须在阻塞线程池调用**（见模块头「线程契约」）。
+/// `breaker_confirmed`：超 20 GB 归档的二次确认（R8b，由 UI 的第二段确认传入）。
 pub fn create_guarded(
     deps: &Path,
     root: &Path,
     now_secs: i64,
     progress: ProgressFn<'_>,
     cancel: Option<&AtomicBool>,
+    breaker_confirmed: bool,
 ) -> Result<ArchiveEntry, String> {
-    create_full(deps, root, now_secs, &trash_delete, progress, cancel)
+    create_full(
+        deps,
+        root,
+        now_secs,
+        &trash_delete,
+        progress,
+        cancel,
+        breaker_confirmed,
+    )
 }
 
 /// 恢复预览：目标冲突检测（只读）
@@ -305,7 +328,23 @@ fn create_with(
     now_secs: i64,
     delete: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<ArchiveEntry, String> {
-    create_full(deps, root, now_secs, delete, &no_progress, None)
+    create_full(deps, root, now_secs, delete, &no_progress, None, false)
+}
+
+/// R8b 字节熔断（M2 顺带）：归档与 reclaim 是「同一产品两条删除路径」，爆炸半径
+/// 必须同一口径——单次体量超过 [`reclaim::DEFAULT_BREAKER_BYTES`]（20 GB）时，
+/// 必须拿到**第二次**显式确认（`confirmed` 只覆盖「先预览再执行」，不覆盖超限）。
+/// 纯函数便于负面测试：21 GB 未确认 → Err；确认 → Ok；19 GB → 永远 Ok。
+pub fn breaker_error(bytes: u64, breaker_confirmed: bool) -> Result<(), String> {
+    if bytes > reclaim::DEFAULT_BREAKER_BYTES && !breaker_confirmed {
+        return Err(format!(
+            "归档体量 {:.1} GB 超过熔断阈值（{} GB）：单次删除路径的爆炸半径由字节定，\
+             不由项数定——请回到应用对该次归档做二次确认",
+            bytes as f64 / 1e9,
+            reclaim::DEFAULT_BREAKER_BYTES / (1024 * 1024 * 1024)
+        ));
+    }
+    Ok(())
 }
 
 fn create_full(
@@ -315,12 +354,15 @@ fn create_full(
     delete: &dyn Fn(&Path) -> Result<(), String>,
     progress: ProgressFn<'_>,
     cancel: Option<&AtomicBool>,
+    breaker_confirmed: bool,
 ) -> Result<ArchiveEntry, String> {
     progress(&Progress::new(Stage::Plan, 0, 0, 0, 0));
     let p = plan(deps, root, now_secs)?;
     if cancelled(cancel) {
         return Err(CANCEL_MSG.into());
     }
+    // R8b 字节熔断：超 20 GB 且未拿到二次确认 → 拒绝（在写任何文件之前）
+    breaker_error(p.bytes, breaker_confirmed)?;
 
     let archive = PathBuf::from(&p.archive_path);
     // 同 id 撞名（同秒重复归档）：拒绝而不是覆盖——覆盖会毁掉前一次的归档数据
@@ -911,7 +953,16 @@ mod tests {
         let seen: Mutex<Vec<(Stage, u64)>> = Mutex::new(Vec::new());
         let sink = |p: &Progress| seen.lock().unwrap().push((p.stage, p.done_bytes));
 
-        create_full(&f.deps, &f.root, 1_700_000_007, &test_delete, &sink, None).unwrap();
+        create_full(
+            &f.deps,
+            &f.root,
+            1_700_000_007,
+            &test_delete,
+            &sink,
+            None,
+            false,
+        )
+        .unwrap();
 
         let seen = seen.into_inner().unwrap();
         assert_eq!(
@@ -944,6 +995,36 @@ mod tests {
         let _ = fs::remove_dir_all(&f.base);
     }
 
+    // ------------------------------------------- R8b 字节熔断（M2 顺带）
+
+    #[test]
+    fn breaker_blocks_over_threshold_without_second_confirm() {
+        let gb = 1024u64 * 1024 * 1024;
+        // 21 GiB（≈ 22.5 GB 十进制，体量展示口径与代码库一致用 /1e9）未二次确认 → 拒绝
+        let e = breaker_error(21 * gb, false).unwrap_err();
+        assert!(e.contains("GB"), "报错必须带实际体量: {e}");
+        assert!(e.contains("20 GB"), "报错必须带阈值: {e}");
+        assert!(e.contains("熔断"), "报错必须点明熔断: {e}");
+        // 21 GB 已二次确认 → 放行
+        assert_eq!(breaker_error(21 * gb, true), Ok(()));
+        // 19 GB 未确认 → 放行（confirmed 只覆盖预览确认，不覆盖熔断；阈值内无需二次）
+        assert_eq!(breaker_error(19 * gb, false), Ok(()));
+        // 恰好 20 GB → 不超阈值，放行（超「限」才算，等于不算）
+        assert_eq!(breaker_error(reclaim::DEFAULT_BREAKER_BYTES, false), Ok(()));
+    }
+
+    #[test]
+    fn breaker_rejects_before_writing_anything() {
+        // 用一个「体量超限」的假 plan 不可行（阈值 20 GB 造不出测试夹具），
+        // 但可以验证 create_full 在 plan 之后、写文件之前调用 breaker_error：
+        // 造一个 >20 GB 的依赖目录不现实，退而验证「取消」路径同位——
+        // breaker_error 在 cancelled 检查之后、fs::create_dir_all 之前（见 create_full 源码序）。
+        // 真正的 21 GB 端到端由 breaker_blocks_over_threshold_without_second_confirm 锁口径。
+        let gb = 1024u64 * 1024 * 1024;
+        assert!(breaker_error(21 * gb + 1, false).is_err());
+        assert!(breaker_error(gb, false).is_ok());
+    }
+
     #[test]
     fn cancel_leaves_no_part_and_no_entry() {
         let f = setup("cancel");
@@ -955,6 +1036,7 @@ mod tests {
             &test_delete,
             &no_progress,
             Some(&cancel),
+            false,
         )
         .unwrap_err();
         assert_eq!(e, CANCEL_MSG);

@@ -89,6 +89,9 @@ type DialogState =
   | { kind: "restore"; preview: RestorePreview; overwrite: boolean }
   | { kind: "delete"; entry: ArchiveEntry };
 
+/** R8b 熔断阈值的前端镜像（真实闸门在 prune-core::archive::breaker_error，由字节定） */
+const BREAKER_BYTES = 20 * 1024 * 1024 * 1024;
+
 /**
  * F9 项目健康卡（M24）+ M30 休眠归档（f14）。
  *
@@ -103,6 +106,8 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   const [archivedRoots, setArchivedRoots] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [busy, setBusy] = useState(false);
+  /** R8b：超 20 GB 归档的二次确认勾选（对话框打开即重置，不残留上次会话） */
+  const [breakerOk, setBreakerOk] = useState(false);
   /** 正在统计的项目根（归档预览前的 0.7 s，冷缓存更久，必须有反馈） */
   const [planning, setPlanning] = useState<string | null>(null);
   const [progress, setProgress] = useState<ArchiveProgress | null>(null);
@@ -217,13 +222,16 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
 
   const runDialog = async (d: DialogState) => {
     setBusy(true);
+    setBreakerOk(false);
     setProgress(null);
     setCanceling(false);
     cancelRequested.current = false;
     startedAt.current = Date.now();
     try {
       if (d.kind === "archive") {
-        const entry = await archiveCreate(d.plan.projectRoot, true);
+        // R8b：超阈值必须带二次确认；阈值内传 true（后端对 ≤20 GB 不读这个位）
+        const over = d.plan.bytes > BREAKER_BYTES;
+        const entry = await archiveCreate(d.plan.projectRoot, true, over ? breakerOk : true);
         setEntries((prev) => [entry, ...prev]);
         setArchivedRoots((prev) => new Set(prev).add(entry.projectRoot));
         setToast(t("disk.archive.doneArchive", { size: formatBytes(entry.bytes) }));
@@ -461,6 +469,19 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
                 </label>
               </div>
             ) : null}
+            {dialog.kind === "archive" && dialog.plan.bytes > BREAKER_BYTES ? (
+              <div className="mt-2 rounded-md border border-warn/30 bg-warn/[0.08] p-2">
+                <p className="text-[10.5px] leading-relaxed text-warn">{t("disk.archive.breakerNote")}</p>
+                <label className="mt-1.5 flex items-center gap-1.5 text-[10.5px] text-ink-dim">
+                  <input
+                    type="checkbox"
+                    checked={breakerOk}
+                    onChange={(e) => setBreakerOk(e.currentTarget.checked)}
+                  />
+                  {t("disk.archive.breakerCheck")}
+                </label>
+              </div>
+            ) : null}
             {busy ? (
               <div className="mt-2.5" aria-live="polite">
                 <div className="flex items-baseline justify-between gap-2 text-[10px] text-ink-dim">
@@ -506,7 +527,9 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
                 type="button"
                 onClick={() => void runDialog(dialog)}
                 disabled={
-                  busy || (dialog.kind === "restore" && dialog.preview.conflict && !dialog.overwrite)
+                  busy ||
+                  (dialog.kind === "restore" && dialog.preview.conflict && !dialog.overwrite) ||
+                  (dialog.kind === "archive" && dialog.plan.bytes > BREAKER_BYTES && !breakerOk)
                 }
                 className="rounded-ctl bg-ink px-2.5 py-1 text-[11px] text-surface transition-opacity hover:opacity-85 disabled:opacity-40"
               >

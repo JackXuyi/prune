@@ -773,7 +773,9 @@ pub async fn archive_plan(
     .map_err(|e| format!("归档线程异常：{e}"))?
 }
 
-/// 执行归档：必须 `confirmed`（先预览再执行）。校验通过后才删原件。
+/// 执行归档：必须 `confirmed`（先预览再执行）；体量超过熔断阈值（20 GB，R8b）
+/// 还必须 `breaker_confirmed`（**第二次**显式确认——爆炸半径由字节定不由项数定）。
+/// 校验通过后才删原件。
 ///
 /// 全程在阻塞线程池里跑，进度以 `archive://progress` 事件推出，可被
 /// `archive_cancel` 取消（取消后原件不动、不留 `.part`、不记账）。
@@ -782,6 +784,7 @@ pub async fn archive_create(
     app: AppHandle,
     project_root: String,
     confirmed: bool,
+    breaker_confirmed: bool,
 ) -> Result<prune_core::archive::ArchiveEntry, String> {
     if !confirmed {
         return Err("归档需要确认：请先预览再执行".into());
@@ -797,6 +800,7 @@ pub async fn archive_create(
             now_secs(),
             &sink,
             Some(cancel),
+            breaker_confirmed,
         )
     })
     .await
