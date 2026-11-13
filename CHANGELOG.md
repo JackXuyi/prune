@@ -1,6 +1,18 @@
 # Changelog
 
-所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 三处一致）。
+所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
+
+> 编号说明：0.5.0 的托盘动画两条曾标 M21/M22，与后来的 M21 成绩单 / M22 侦探档案撞号，现改标 M11-b / M11-c（M11 托盘主题的子项）。局域网线（docs/m18–m20-*.md）在 README 记为 L1–L3，理由见 README 路线图脚注。
+
+## 0.8.4
+
+### M26 修复与诚信（工程门禁 + 发版安全 + 文档校准）
+
+- **clippy 33 处告警清零**（21 类）：自动修复 22 处（`is_multiple_of`、`div_ceil`、冗余闭包、自动解引用、可折叠 if/match 等），手工处理 11 处——`format!` 套 `format!`、两处 doc 列表缩进、`sort_by` → `sort_by_key(Reverse)`、`get(&2).is_none()` → `!contains_key`、两处 `type_complexity` 抽类型别名（`BuiltMenu` / `AnchorMetrics`）、测试构造器显式 `allow(too_many_arguments)`；顺带把 `island_geo` 两条恒真断言改成 inline const 块（编译期校验，而不是运行时假断言）
+- **CI 门禁补齐 clippy**：verify job 在 fmt / 单测之外新增 `cargo clippy -p prune-core -p prune-cli --all-targets -- -D warnings`（Linux 可编译范围；src-tauri 需 macOS 依赖，由本地同命令覆盖）
+- **发版脚本三处加固**（`scripts/release.mjs`）：① `git commit` 不再挂 `|| true`——hook 拒绝或冲突时立即中止，避免 tag 打在不含版本变更的 commit 上；② tag 已存在直接报错退出，不再 `git tag -f` 覆盖（覆盖会让 updater 收到「同版本号、不同产物」）；③ 令牌移出 query string，改走 `Authorization: Bearer`，仅在请求头被拒时降级并明确告警
+- **文档归真**：README 徽章 `v0.5.0` → `v0.8.4`、平台标注改为 `macOS 13+ · Windows 10+ beta`（W0–W3 代码层完成、真机走查待做）；路线图补 L1–L3 局域网线与 M26，并加编号重号说明；CHANGELOG 0.5.0 两处托盘条目改标 M11-b/M11-c
+- 门禁实测：`cargo test --workspace` 426 passed / 0 failed / 2 ignored（49 + 18 + 359），`cargo clippy --workspace --all-targets -- -D warnings` 零告警，`cargo fmt --all -- --check` 通过
 
 ## 0.8.3
 
@@ -26,7 +38,7 @@
 
 ## 0.8.1
 
-### 局域网拓扑视图（M20）
+### 局域网拓扑视图（L3）
 
 - **「卡片 / 拓扑」二态切换**：局域网分段筛选条右侧新增视图切换，拓扑视图把扫描到的设备画成网关居中的星形拓扑图（新增 `LanTopology` 组件，零依赖自绘——SVG 边层 + HTML 节点层，复用现有 design tokens 与设备图标）
 - **确定性星形布局**：网关居中、本机内圈（网关正下方 84px）、其余设备单环分布并按 IP 哈希抖动 ±10°——跨渲染不跳位；环半径随画布自适应
@@ -38,7 +50,7 @@
 
 ## 0.8.0
 
-### 局域网设备时间线（M19：加入时间 / 最后活跃 / 新设备标识）
+### 局域网设备时间线（L2：加入时间 / 最后活跃 / 新设备标识）
 
 - **跨轮次设备记忆**：新增 `lan-history.json` 持久层（身份 + 时间 + 定位，隐私最小面不出本机）。每轮扫描后回填 `firstSeen` / `lastSeen` / `isNew` 三字段——Rust 侧算好，前端零推导；`#[serde(default)]` 兜旧版缓存，升级不丢快照
 - **设备卡**：标题行追加「新」badge（accent 域色，与「自己 / 上联」同 token）；新增时间行只显示「活跃 x 前」——加入时间信息密度低且不变，只进详情弹窗（已确认决策，不做设置项）
@@ -142,7 +154,7 @@
 
 ## 0.6.0
 
-### 局域网设备页卡片化重设计（M18 UI）
+### 局域网设备页卡片化重设计（L1 UI）
 
 - **表格 → 卡片网格**：设备行改为自适应卡片（`minmax(330px, 1fr)`），三层分组——本机与网关置顶固定、在线设备网格、离线设备默认折叠（展开置灰展示，不占首屏）
 - **设备类型 SVG 图标**：11 类设备（路由器/电脑/手机/平板/电视/音箱/打印机/NAS/摄像头/IoT/未知）线性图标 + 低饱和域色 tile（路由器系 accent / 电脑手机系 info / NAS cyan / IoT 紫），替换原单字符 `kindGlyph`
@@ -169,7 +181,7 @@
 - **整卡进详情**：应用资源卡片去掉展开态，整卡可点，28px 图标 + 右侧 `›`；详情页含图标/路径/端口徽标/Finder/结束进程、CPU·内存·网络·磁盘四联卡、24h/7d 历史走势、进程表、端口 chips、工作区占用与泄漏证据
 - **复制诊断摘要**：一键复制 Markdown 摘要（机器/时间/四域读数/历史覆盖度/Top3 进程），读不到的字段写「不可读（原因）」而非 0；剪贴板走 pbcopy / Set-Clipboard，IPC 失败时退回浏览器剪贴板
 
-### 托盘鲸鱼皮 → 跳跃小猫皮（M22）
+### 托盘鲸鱼皮 → 跳跃小猫皮（M11-c）
 
 - 新增「小猫」托盘主题（取代鲸鱼）：**12 帧完整前跃弹道**——站立 → 蓄力下蹲 → 蹬地 → 上升 → 腾空顶点 → 下落 → **前爪触地（后爪悬空）** → 重心前移 → **后爪落地** → 起身回位，竖直方向按抛物线分布（顶点慢、两端快），CPU 压力 = 前跃频率（闲 5.8s 一跃 / 满载 0.52s 一跃，约 11 倍动态范围，满载约 23 fps）
 - 造型参考用户指定的黑猫剪影：敦实身形、背部微拱、短粗腿、尾巴上扬卷成开口朝内的圆钩；整体圆润无尖角（圆尖耳、椭圆吻部、颈部椭圆消凹口），爪为「腿杆 + 圆脚掌」两段式，18pt 下有爪的重量感
@@ -178,7 +190,7 @@
 - 兼容：旧持久化 id `whale` 自动映射到小猫，已选鲸鱼的用户升级后不会被重置成剪刀
 - 新脚本 `scripts/gen-tray-cat.mjs`（确定性渲染），鲸鱼资产与脚本移除（git 历史可找回）
 
-### 托盘鲸鱼「游速看 CPU」体感重标定（M21）
+### 托盘鲸鱼「游速看 CPU」体感重标定（M11-b）
 
 - 游速动态范围 8 倍 → **约 15 倍**（闲 6.0 s/轮 → 满载 0.39 s/轮），相邻档位 ≈1.5 倍递减，每个 CPU 档肉眼可辨；测试门槛同步从 5 倍收紧到 10 倍
 - 动画改读**新鲜 CPU**：新增 1 Hz 轻量 watcher（独立 sysinfo 实例，仅刷 CPU）+ EMA 平滑，负载变化约 1 s 跟手，不再等 10 s 快照；tooltip 仍显示与面板同源的 10 s 均值，两通道各司其职

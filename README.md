@@ -4,13 +4,13 @@
 
 > 🔍 macOS 开发机资源守门员 —— 不是内存监控，不是系统清理，是「浪费探测器」。
 
-![平台](https://img.shields.io/badge/platform-macOS%2013+-black)
+![平台](https://img.shields.io/badge/platform-macOS%2013+%20·%20Windows%2010+%20beta-black)
 
 ![技术栈](https://img.shields.io/badge/Tauri%202%20·%20Rust%20·%20React%2019-blue)
 
 ![隐私](https://img.shields.io/badge/零埋点-零遥测-green)
 
-![状态](https://img.shields.io/badge/status-v0.5.0-blue)
+![状态](https://img.shields.io/badge/status-v0.8.4-blue)
 
 ---
 
@@ -101,7 +101,7 @@ macOS 另有系统级测速 + RPM（bufferbloat 官方口径）；Windows 无系
 
 - **Tauri 2 + React 19 + TypeScript + TailwindCSS 4 + Zustand**
 - **Rust 核心（`prune-core` crate）**：GUI 与 CLI 共享
-- 内存数据源：系统自带 `/usr/bin/footprint -p <pid> -j`（非特权、JSON、含 swapped 明细）—— **不碰 Mach API、不要任何权限**
+- 内存数据源：系统自带 `/usr/bin/footprint -p <pid> -j`（非特权、JSON、含 swapped 明细）—— **不碰 Mach API、不要任何权限**；Windows 走 `GetProcessMemoryInfo` 的 Private Bytes（W2），读不到的字段直接不渲染
 - 磁盘扫描：自建线程池 + `std::thread::scope` 并行（6336 个 node_modules，shell 要 4 分钟，Rust < 15 s；不用 ignore/rayon——定点目录不需要 gitignore 语义）
 - 删除：`trash` crate 走废纸篓
 - 采样：10 s 廉价 RSS 全量 + 5 min 对 Top N 深探 footprint（并发 8 路 ≈ 0.6 s）
@@ -155,6 +155,10 @@ pnpm tauri build    # 打包 .app / .dmg
 - [x] **M23** 局域网新面孔提醒：灵动岛第四类事件——邻居表出现从未见过的在线设备（60 s 一拍，**零主动探测、零 lsof**，只是 arp/GetIpNetTable2 观察者）→「新面孔 · 192.168.0.77 加入了局域网」，点击直达 ports tab 局域网设备区；终身制已知集（同 IP 只报一次）+ 网段变化重建基线（换 Wi-Fi 不刷屏）+ 单轮 3 条上限余量合并 + 独立 4/h 频控（[方案](./docs/f5-lan-watch-plan.md)）
 - [x] **M24** 项目健康卡（项目体检）：把「N 个 node_modules 共 X GB」拆成按项目的依赖账本——依赖体积 / 依赖上次安装（node_modules mtime）/ 项目最后活动（package.json · 锁文件 · .git/index）/ 多锁文件并存；结论只陈述事实（僵尸依赖 = 依赖与项目双双 ≥60 天没动 · 偏胖 ≥1.5 GB · 久未重装），不代删；**零新增扫描**（复用 node_modules 聚合表，每项目仅 6 次 stat：4 个锁文件 + package.json + .git/index）（[方案](./docs/f9-project-health-plan.md)）
 - [x] **M25** 应用历史 30 天：`app_hourly` 保留期 8 天 → 30 天（对标 Vitals 同深度）+ 天粒度聚合下推 SQLite（`app_daily_get`，720 小时桶 → 30 行）+ 应用详情历史走势 24 h / 7 天 / 30 天三档区间；RSS 口径与「缺失画灰不补 0」纪律不变（[方案](./docs/f10-app-history-30d-plan.md)）
+- [x] **L1–L3** 局域网三件套：设备页卡片化（L1，0.6.0）→ 设备时间线 + 稳定 MAC 身份（L2，0.8.0）→ 拓扑视图（L3，0.8.1/0.8.2，含极端密度不裁切修正）
+- [x] **M26** 修复与诚信：clippy 33 处告警清零并纳入 CI（`-D warnings`）+ 发版脚本三处加固（提交失败不再吞、tag 不再 `-f` 覆盖、令牌移出 URL）+ README / CHANGELOG 事实校准
+
+> 编号说明：`docs/m18–m20-*.md` 是局域网线（L1–L3）的方案文件，其文件名里的 M18–M20 与 f 系列里程碑（f4 端口保镖 = M19、f1 宠物 = M20）曾经重号；README 起将局域网线记为 L1–L3，避免读路线图时误认。0.5.0 的两处托盘动画条目原标 M21/M22（与后来的成绩单/侦探档案撞号），已在 CHANGELOG 改标 M11-b/M11-c。
 
 ## 相关文档
 
@@ -164,6 +168,7 @@ pnpm tauri build    # 打包 .app / .dmg
 - [网络诊断方案](./docs/net-diag-plan.md) —— 分层探测、判定规则、双平台适配（D0–D3 拆解）
 - [面板统计化 + 双端网速（M16）](./docs/m16-stats-unify-plan.md) —— 共享读数层、48 px 行结构、空间算式
 - [调研档案](./docs/research/) —— Portlivo 拆解 / 竞品实测 / 可回收空间扫描报告 / 内存剖析 / Footprint PRD（决策档案）
+- [产品 Roadmap 2026-11](./docs/prune-roadmap-2026-11.md) —— 竞品动态、M26–M31 路线与决策点
 
 ## License
 
