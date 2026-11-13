@@ -150,10 +150,14 @@ jobs:
       # 上可独立编译（纯逻辑 crate，零 Tauri 依赖，rusqlite bundled 免系统库）。
       # src-tauri 的 macOS 专属测试不在此跑：Linux 起 webkit2gtk 不划算，
       # 其编译正确性由 bundle job 三平台覆盖。
-      # fmt 门禁已启用（2026-11 一次性 cargo fmt --all 统一，rustfmt.toml 固定
-      # edition）；clippy 仍有 35 条 warning，清理后同样在此加 -D warnings。
+      # fmt / clippy 门禁（2026-11 一次性 cargo fmt --all 统一 + 35 条 clippy warning
+      # 清零后启用，-D warnings 即「有告警就红」）。clippy 只跑 Linux 可编译的
+      # prune-core / prune-cli；src-tauri 同样零告警，但需 macOS 依赖，由本地
+      # `cargo clippy --workspace --all-targets -- -D warnings` 覆盖。
       # ---------------------------------------------------------------------------
       - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
 
       - name: Rust fmt check
         run: cargo fmt --all -- --check
@@ -163,6 +167,9 @@ jobs:
           workspaces: |
             . -> target
           shared-key: verify-linux-tests
+
+      - name: Rust clippy (-D warnings)
+        run: cargo clippy -p prune-core -p prune-cli --all-targets -- -D warnings
 
       - name: Rust unit tests (prune-core + prune-cli)
         run: cargo test -p prune-core -p prune-cli
