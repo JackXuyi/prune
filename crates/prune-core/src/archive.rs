@@ -9,12 +9,18 @@
 //!   删除失败回滚 manifest 与归档文件，不产生孤儿归档；
 //! - 恢复：归档存在 + 目标冲突检测 → 解压（tar 默认拒绝绝对路径与 `..` 逃逸）→ 校验；
 //!
+//! 线程契约（docs/diag-m30-archive-freeze.md）：**本模块全是阻塞 IO / CPU**，
+//! 压缩 900 MB 的 `node_modules` 是分钟级操作。调用方必须在阻塞线程池里跑
+//! （Tauri 层用 `spawn_blocking`），绝不能直接在主线程调用——0.9.0 就是这么
+//! 卡死的。进度通过 [`ProgressFn`] 回调交出去，本模块不认识事件系统。
+//!
 //! 本模块不存在对用户路径的 `remove_dir_all`（沿用 reclaim 的 invariant）：
 //! 用户路径只走废纸篓，只有「自己刚写的归档半成品」允许直接删文件。
 
 use std::fs::{self, File};
 use std::io::BufReader;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +28,10 @@ use serde::{Deserialize, Serialize};
 pub const MANIFEST_FILE: &str = "manifest.json";
 /// 归档区在配置目录下的固定位置（GUI 与未来的 CLI 同口径）
 pub const ARCHIVE_SUBDIR: &str = "com.xuyi.prune/archive";
+/// 打包中的临时后缀：写完并校验通过后 rename 成正式归档（原子发布）
+pub const PART_SUFFIX: &str = "part";
+/// 取消 / 中断的用户可读文案（原件一律未动）
+pub const CANCEL_MSG: &str = "已取消：原件未动，归档半成品已清除";
 
 /// 一条归档账本记录
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -79,6 +89,74 @@ pub struct RestoreReport {
     pub bytes_restored: u64,
 }
 
+/// 归档进度阶段（前端据此选文案；`as_str` 与 serde 输出一致）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+#[repr(u8)]
+pub enum Stage {
+    /// 统计依赖目录（walk_counts）
+    Plan = 0,
+    /// 打包 tar.gz
+    Pack = 1,
+    /// 重读校验 / 解压校验
+    Verify = 2,
+    /// 移入废纸篓（删原件 / 覆盖旧目录）
+    Trash = 3,
+}
+
+impl Stage {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Stage::Plan => "plan",
+            Stage::Pack => "pack",
+            Stage::Verify => "verify",
+            Stage::Trash => "trash",
+        }
+    }
+}
+
+/// 一条进度快照（`archive://progress` 事件的 payload）
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Progress {
+    pub stage: Stage,
+    /// 已完成（非压缩字节）：Pack 用源文件大小累计，Verify 用归档内 header.size 累计
+    pub done_bytes: u64,
+    /// 阶段总量；Plan 阶段为 0（前端显示不确定态）
+    pub total_bytes: u64,
+    pub done_files: u64,
+    pub total_files: u64,
+}
+
+impl Progress {
+    pub fn new(
+        stage: Stage,
+        done_bytes: u64,
+        total_bytes: u64,
+        done_files: u64,
+        total_files: u64,
+    ) -> Self {
+        Self {
+            stage,
+            done_bytes,
+            total_bytes,
+            done_files,
+            total_files,
+        }
+    }
+}
+
+/// 进度回调：核心层只把快照交出去，节流与发事件是调用方的事
+pub type ProgressFn<'a> = &'a dyn Fn(&Progress);
+
+/// 空回调（不需要进度的调用点，如 CLI / 测试）
+fn no_progress(_: &Progress) {}
+
+/// 取消令牌是否已置位。`None` = 不可取消（测试与旧调用点）
+fn cancelled(cancel: Option<&AtomicBool>) -> bool {
+    cancel.map(|c| c.load(Ordering::Relaxed)).unwrap_or(false)
+}
+
 /// 归档区根。带 `config_dir` 参数而不是直接读系统环境：测试可替换。
 pub fn archive_root(config_dir: &Path) -> PathBuf {
     config_dir.join(ARCHIVE_SUBDIR)
@@ -99,6 +177,34 @@ pub fn list(root: &Path) -> Vec<ArchiveEntry> {
 
 pub fn find(root: &Path, id: &str) -> Option<ArchiveEntry> {
     read_manifest(root).into_iter().find(|e| e.id == id)
+}
+
+/// 清理异常中断留下的 `.part`（强杀 / 断电 / 崩溃）。
+///
+/// 只动归档区里、且 mtime 超过 `older_than_secs` 的半成品——**进行中的打包
+/// mtime 是新鲜的**，不会被误删；正式归档（`.tar.gz`）一律不碰。
+pub fn cleanup_stale_parts(root: &Path, older_than_secs: u64) -> usize {
+    let Ok(rd) = fs::read_dir(root) else {
+        return 0;
+    };
+    let now = std::time::SystemTime::now();
+    let mut removed = 0;
+    for ent in rd.flatten() {
+        let path = ent.path();
+        if path.extension().and_then(|e| e.to_str()) != Some(PART_SUFFIX) {
+            continue;
+        }
+        let stale = fs::metadata(&path)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| now.duration_since(t).ok())
+            .map(|d| d.as_secs() >= older_than_secs)
+            .unwrap_or(false);
+        if stale && fs::remove_file(&path).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 /// 归档预览：校验依赖目录 + 统计体积，不写任何文件
@@ -122,7 +228,20 @@ pub fn plan(deps: &Path, root: &Path, now_secs: i64) -> Result<ArchivePlan, Stri
 
 /// 归档执行：打包 → 校验 → 删原件 → 记账。任一步失败都不丢原件。
 pub fn create(deps: &Path, root: &Path, now_secs: i64) -> Result<ArchiveEntry, String> {
-    create_with(deps, root, now_secs, &trash_delete)
+    create_full(deps, root, now_secs, &trash_delete, &no_progress, None)
+}
+
+/// 带进度与取消的生产入口（GUI / 未来的 CLI 共用）。
+///
+/// **必须在阻塞线程池调用**（见模块头「线程契约」）。
+pub fn create_guarded(
+    deps: &Path,
+    root: &Path,
+    now_secs: i64,
+    progress: ProgressFn<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<ArchiveEntry, String> {
+    create_full(deps, root, now_secs, &trash_delete, progress, cancel)
 }
 
 /// 恢复预览：目标冲突检测（只读）
@@ -138,7 +257,17 @@ pub fn restore_preview(entry: &ArchiveEntry) -> RestorePreview {
 
 /// 恢复执行：冲突检测 → 解压 → 校验。校验失败把解压产物移入废纸篓。
 pub fn restore(entry: &ArchiveEntry, force: bool) -> Result<RestoreReport, String> {
-    restore_with(entry, force, &trash_delete)
+    restore_full(entry, force, &trash_delete, &no_progress, None)
+}
+
+/// 带进度与取消的恢复入口（生产用）
+pub fn restore_guarded(
+    entry: &ArchiveEntry,
+    force: bool,
+    progress: ProgressFn<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<RestoreReport, String> {
+    restore_full(entry, force, &trash_delete, progress, cancel)
 }
 
 /// 删除归档：归档文件走废纸篓 + 移除账本条目（归档区不是只进不出）
@@ -168,13 +297,31 @@ fn delete_with(
     write_manifest(root, &entries)
 }
 
+/// 测试专用：注入删除器的归档入口（生产走 [`create`] / [`create_guarded`]）
+#[cfg(test)]
 fn create_with(
     deps: &Path,
     root: &Path,
     now_secs: i64,
     delete: &dyn Fn(&Path) -> Result<(), String>,
 ) -> Result<ArchiveEntry, String> {
+    create_full(deps, root, now_secs, delete, &no_progress, None)
+}
+
+fn create_full(
+    deps: &Path,
+    root: &Path,
+    now_secs: i64,
+    delete: &dyn Fn(&Path) -> Result<(), String>,
+    progress: ProgressFn<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<ArchiveEntry, String> {
+    progress(&Progress::new(Stage::Plan, 0, 0, 0, 0));
     let p = plan(deps, root, now_secs)?;
+    if cancelled(cancel) {
+        return Err(CANCEL_MSG.into());
+    }
+
     let archive = PathBuf::from(&p.archive_path);
     // 同 id 撞名（同秒重复归档）：拒绝而不是覆盖——覆盖会毁掉前一次的归档数据
     if archive.exists() {
@@ -185,23 +332,35 @@ fn create_with(
     }
     fs::create_dir_all(root).map_err(|e| format!("创建归档区失败：{e}"))?;
 
-    write_archive(deps, &archive)?;
+    // 先写 `.part`，校验通过后再 rename 成正式归档：中断最多留半成品，
+    // 不会出现「账本里有、文件是半截」或「文件在、账本没有」的孤儿
+    let part = part_path(&archive);
+    if part.exists() {
+        let _ = fs::remove_file(&part); // 同一 id 的半成品只可能是上一轮崩溃残留
+    }
+    if let Err(e) = write_archive(deps, &part, p.bytes, p.files, progress, cancel) {
+        let _ = fs::remove_file(&part);
+        return Err(e);
+    }
 
     // 校验：重读归档，条目数与非压缩字节数必须与扫描一致
-    let verified = match verify_archive(&archive) {
+    let verified = match verify_archive(&part, p.files, progress, cancel) {
         Ok(v) => v,
         Err(e) => {
-            let _ = fs::remove_file(&archive); // 自己写的半成品，允许直删
+            let _ = fs::remove_file(&part); // 自己写的半成品，允许直删
             return Err(e);
         }
     };
     if verified != (p.files, p.bytes) {
-        let _ = fs::remove_file(&archive);
+        let _ = fs::remove_file(&part);
         return Err(format!(
             "归档校验失败：预期 {} 项 / {} B，实际 {} 项 / {} B。原件未动。",
             p.files, p.bytes, verified.0, verified.1
         ));
     }
+
+    // 原子发布：rename 同卷是原子操作，不存在「半个正式归档」
+    fs::rename(&part, &archive).map_err(|e| format!("归档发布失败：{e}"))?;
 
     let entry = ArchiveEntry {
         id: p.id,
@@ -219,6 +378,13 @@ fn create_with(
     entries.push(entry.clone());
     write_manifest(root, &entries)?;
 
+    progress(&Progress::new(
+        Stage::Trash,
+        p.bytes,
+        p.bytes,
+        p.files,
+        p.files,
+    ));
     if let Err(e) = delete(deps) {
         entries.retain(|x| x.id != entry.id);
         let _ = write_manifest(root, &entries);
@@ -229,10 +395,22 @@ fn create_with(
     Ok(entry)
 }
 
+/// 测试专用：注入删除器的恢复入口（生产走 [`restore`] / [`restore_guarded`]）
+#[cfg(test)]
 fn restore_with(
     entry: &ArchiveEntry,
     force: bool,
     delete: &dyn Fn(&Path) -> Result<(), String>,
+) -> Result<RestoreReport, String> {
+    restore_full(entry, force, delete, &no_progress, None)
+}
+
+fn restore_full(
+    entry: &ArchiveEntry,
+    force: bool,
+    delete: &dyn Fn(&Path) -> Result<(), String>,
+    progress: ProgressFn<'_>,
+    cancel: Option<&AtomicBool>,
 ) -> Result<RestoreReport, String> {
     let target = PathBuf::from(&entry.deps_path);
     let archive = PathBuf::from(&entry.archive_path);
@@ -258,15 +436,51 @@ fn restore_with(
                 target.display()
             ));
         }
+        progress(&Progress::new(Stage::Trash, 0, entry.bytes, 0, entry.files));
         delete(&target)?;
     }
 
-    // tar crate 默认拒绝绝对路径与 `..` 逃逸条目，无需自己再拦
+    // tar crate 逐条目解压：`unpack_in` 会拒绝绝对路径与 `..` 逃逸条目
+    // （返回 false）；我们自己产的归档里出现这种条目只可能是被篡改，直接中止
     let file = File::open(&archive).map_err(|e| format!("打开归档失败：{e}"))?;
     let dec = flate2::read::GzDecoder::new(BufReader::new(file));
     let mut ar = tar::Archive::new(dec);
-    ar.unpack(parent)
-        .map_err(|e| format!("解压失败（已中止，目标可能部分写入）：{e}"))?;
+    let entries = ar.entries().map_err(|e| format!("读取归档失败：{e}"))?;
+    let mut done_bytes = 0u64;
+    let mut done_files = 0u64;
+    for ent in entries {
+        if cancelled(cancel) {
+            let _ = delete(&target); // 解压产物是我们自己刚写的，移走比留着安全
+            return Err(CANCEL_MSG.into());
+        }
+        let mut ent = ent.map_err(|e| format!("读取归档失败：{e}"))?;
+        let size = ent.header().size().unwrap_or(0);
+        let is_file = ent.header().entry_type().is_file();
+        let leak = ent
+            .path()
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
+        let unpacked = ent
+            .unpack_in(parent)
+            .map_err(|e| format!("解压失败（已中止，目标可能部分写入）：{e}"))?;
+        if !unpacked {
+            let _ = delete(&target);
+            return Err(format!(
+                "归档条目路径越界（{leak}），已中止；解压产物已移入废纸篓。"
+            ));
+        }
+        if is_file {
+            done_bytes = done_bytes.saturating_add(size);
+        }
+        done_files += 1;
+        progress(&Progress::new(
+            Stage::Verify,
+            done_bytes.min(entry.bytes),
+            entry.bytes,
+            done_files.min(entry.files),
+            entry.files,
+        ));
+    }
 
     let (files, bytes) = walk_counts(&target)?;
     if files != entry.files || bytes != entry.bytes {
@@ -329,24 +543,107 @@ fn walk_counts(root: &Path) -> Result<(u64, u64), String> {
     Ok((files, bytes))
 }
 
-/// 流式写 tar.gz：以 `node_modules/` 为根前缀，恢复时解压到项目目录即可
-fn write_archive(deps: &Path, target: &Path) -> Result<(), String> {
+/// 流式写 tar.gz：以 `node_modules/` 为根前缀，恢复时解压到项目目录即可。
+///
+/// 自己遍历而不是 `append_dir_all`：只有逐条目写才能报进度、才能在条目间
+/// 检查取消。符号链接按链接存（与 `follow_symlinks(false)` 同口径），pnpm 的
+/// `../../.pnpm/...` 因此能原样还原。
+fn write_archive(
+    deps: &Path,
+    target: &Path,
+    total_bytes: u64,
+    total_files: u64,
+    progress: ProgressFn<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(), String> {
     let file = File::create(target).map_err(|e| format!("创建归档文件失败：{e}"))?;
-    let enc = flate2::write::GzEncoder::new(file, flate2::Compression::default());
+    // level 1（fast）：实测 922 MB 依赖 46.3 s → 22.2 s，归档大 18%——
+    // 归档的价值是「可还原」不是「最小体积」，这个交换划算
+    let enc = flate2::write::GzEncoder::new(file, flate2::Compression::fast());
     let mut builder = tar::Builder::new(enc);
     builder.follow_symlinks(false);
+
     builder
-        .append_dir_all("node_modules", deps)
+        .append_dir("node_modules", deps)
         .map_err(|e| format!("打包失败：{e}"))?;
+
+    let mut done_bytes = 0u64;
+    let mut done_files = 0u64;
+    let mut stack = vec![deps.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        if cancelled(cancel) {
+            drop(builder); // 先放掉文件句柄，调用方才能删掉半成品
+            return Err(CANCEL_MSG.into());
+        }
+        let rd = fs::read_dir(&dir).map_err(|e| format!("读取 {} 失败：{e}", dir.display()))?;
+        for ent in rd {
+            let ent = ent.map_err(|e| format!("读取 {} 失败：{e}", dir.display()))?;
+            let path = ent.path();
+            let md = fs::symlink_metadata(&path)
+                .map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
+            let rel = path
+                .strip_prefix(deps)
+                .map_err(|_| format!("路径异常：{}", path.display()))?;
+            let arc_path = Path::new("node_modules").join(rel);
+            if md.file_type().is_symlink() {
+                let link = fs::read_link(&path)
+                    .map_err(|e| format!("读取符号链接 {} 失败：{e}", path.display()))?;
+                let mut header = tar::Header::new_gnu();
+                // tar 0.4.46 的 append_link 只写路径与 linkname，**不会**替你
+                // 设 entry_type——不显式标 Symlink 就会落成 size=0 的普通文件
+                header.set_entry_type(tar::EntryType::Symlink);
+                header.set_mode(0o777);
+                header.set_size(0);
+                header.set_mtime(mtime_secs(&md));
+                builder
+                    .append_link(&mut header, &arc_path, &link)
+                    .map_err(|e| format!("打包失败（{}）：{e}", path.display()))?;
+                done_files += 1;
+            } else if md.is_dir() {
+                builder
+                    .append_dir(&arc_path, &path)
+                    .map_err(|e| format!("打包失败（{}）：{e}", path.display()))?;
+                stack.push(path);
+            } else {
+                let mut f =
+                    File::open(&path).map_err(|e| format!("读取 {} 失败：{e}", path.display()))?;
+                builder
+                    .append_file(&arc_path, &mut f)
+                    .map_err(|e| format!("打包失败（{}）：{e}", path.display()))?;
+                done_files += 1;
+                done_bytes = done_bytes.saturating_add(md.len());
+            }
+            progress(&Progress::new(
+                Stage::Pack,
+                done_bytes,
+                total_bytes,
+                done_files,
+                total_files,
+            ));
+        }
+    }
+
     let enc = builder
         .into_inner()
         .map_err(|e| format!("打包收尾失败：{e}"))?;
     enc.finish().map_err(|e| format!("写入归档失败：{e}"))?;
+    progress(&Progress::new(
+        Stage::Pack,
+        total_bytes,
+        total_bytes,
+        total_files,
+        total_files,
+    ));
     Ok(())
 }
 
 /// 重读归档统计（条目数 / 非压缩字节数）——与 [`walk_counts`] 同口径
-fn verify_archive(target: &Path) -> Result<(u64, u64), String> {
+fn verify_archive(
+    target: &Path,
+    total_files: u64,
+    progress: ProgressFn<'_>,
+    cancel: Option<&AtomicBool>,
+) -> Result<(u64, u64), String> {
     let file = File::open(target).map_err(|e| format!("打开归档失败：{e}"))?;
     let dec = flate2::read::GzDecoder::new(BufReader::new(file));
     let mut ar = tar::Archive::new(dec);
@@ -354,6 +651,9 @@ fn verify_archive(target: &Path) -> Result<(u64, u64), String> {
     let mut bytes = 0u64;
     let entries = ar.entries().map_err(|e| format!("读取归档失败：{e}"))?;
     for ent in entries {
+        if cancelled(cancel) {
+            return Err(CANCEL_MSG.into());
+        }
         let ent = ent.map_err(|e| format!("读取归档失败：{e}"))?;
         let header = ent.header();
         if header.entry_type().is_dir() {
@@ -363,8 +663,31 @@ fn verify_archive(target: &Path) -> Result<(u64, u64), String> {
         if header.entry_type().is_file() {
             bytes = bytes.saturating_add(header.size().unwrap_or(0));
         }
+        progress(&Progress::new(
+            Stage::Verify,
+            bytes,
+            bytes.max(1),
+            files.min(total_files),
+            total_files,
+        ));
     }
     Ok((files, bytes))
+}
+
+/// `<archive>.tar.gz` → `<archive>.tar.gz.part`
+fn part_path(archive: &Path) -> PathBuf {
+    let mut s = archive.as_os_str().to_os_string();
+    s.push(".");
+    s.push(PART_SUFFIX);
+    PathBuf::from(s)
+}
+
+fn mtime_secs(md: &fs::Metadata) -> u64 {
+    md.modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
 }
 
 fn project_name(deps: &Path) -> String {
@@ -413,6 +736,7 @@ fn write_manifest(root: &Path, entries: &[ArchiveEntry]) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     /// 测试专用删除器：直接清掉临时目录（生产路径永远走废纸篓）
     fn test_delete(path: &Path) -> Result<(), String> {
@@ -475,6 +799,10 @@ mod tests {
         assert!(!f.deps.exists(), "原件应已删除");
         assert!(f.project.join("package.json").exists(), "用户代码不许动");
         assert!(Path::new(&entry.archive_path).is_file());
+        assert!(
+            !part_path(Path::new(&entry.archive_path)).exists(),
+            "发布后不许留 .part"
+        );
         assert_eq!(list(&f.root).len(), 1);
 
         let prev = restore_preview(&entry);
@@ -573,5 +901,184 @@ mod tests {
         assert!(list(&f.root).is_empty());
         assert!(find(&f.root, "x").is_none());
         let _ = fs::remove_dir_all(&f.base);
+    }
+
+    // ------------------------------------------- 异步化 / 进度 / 取消 / 原子发布（0.9.1）
+
+    #[test]
+    fn progress_covers_plan_pack_verify_trash_in_order() {
+        let f = setup("progress");
+        let seen: Mutex<Vec<(Stage, u64)>> = Mutex::new(Vec::new());
+        let sink = |p: &Progress| seen.lock().unwrap().push((p.stage, p.done_bytes));
+
+        create_full(&f.deps, &f.root, 1_700_000_007, &test_delete, &sink, None).unwrap();
+
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(
+            seen.first().map(|s| s.0),
+            Some(Stage::Plan),
+            "首个快照是统计"
+        );
+        assert_eq!(
+            seen.last().map(|s| s.0),
+            Some(Stage::Trash),
+            "末个快照是删原件"
+        );
+        let stages: Vec<Stage> = seen.iter().map(|s| s.0).collect();
+        let pos = |t: Stage| {
+            stages
+                .iter()
+                .position(|s| *s == t)
+                .unwrap_or_else(|| panic!("{t:?} 阶段必须出现"))
+        };
+        assert!(pos(Stage::Plan) < pos(Stage::Pack));
+        assert!(pos(Stage::Pack) < pos(Stage::Verify));
+        assert!(pos(Stage::Verify) < pos(Stage::Trash));
+        // 打包阶段的最后一条必须报满：前端进度条靠它收尾
+        let pack_done: Vec<u64> = seen
+            .iter()
+            .filter(|s| s.0 == Stage::Pack)
+            .map(|s| s.1)
+            .collect();
+        assert_eq!(pack_done.last().copied(), Some(16), "打包收尾必须报满字节");
+        let _ = fs::remove_dir_all(&f.base);
+    }
+
+    #[test]
+    fn cancel_leaves_no_part_and_no_entry() {
+        let f = setup("cancel");
+        let cancel = AtomicBool::new(true); // 一开始就取消
+        let e = create_full(
+            &f.deps,
+            &f.root,
+            1_700_000_008,
+            &test_delete,
+            &no_progress,
+            Some(&cancel),
+        )
+        .unwrap_err();
+        assert_eq!(e, CANCEL_MSG);
+        assert!(f.deps.exists(), "取消后原件必须还在");
+        assert!(list(&f.root).is_empty(), "取消不许记账");
+        let parts: Vec<_> = fs::read_dir(&f.root)
+            .map(|rd| {
+                rd.flatten()
+                    .filter(|e| e.file_name().to_string_lossy().ends_with(".part"))
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert!(parts.is_empty(), "取消后不许留 .part：{parts:?}");
+        let _ = fs::remove_dir_all(&f.base);
+    }
+
+    #[test]
+    fn stale_part_is_cleaned_but_fresh_and_archive_are_kept() {
+        let f = setup("partclean");
+        let entry = create_with(&f.deps, &f.root, 1_700_000_009, &test_delete).unwrap();
+        let stale = f.root.join("1700000000-gone-deadbeef.tar.gz.part");
+        fs::write(&stale, b"half").unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(1100));
+        // 新鲜 .part：模拟正在进行的打包，绝不能删（必须在 sleep 之后建）
+        let fresh = f.root.join("1700000001-live-cafebabe.tar.gz.part");
+        fs::write(&fresh, b"running").unwrap();
+
+        let removed = cleanup_stale_parts(&f.root, 1);
+        assert_eq!(removed, 1, "只清过期的那一个");
+        assert!(!stale.exists());
+        assert!(fresh.exists(), "新鲜 .part 属于进行中的任务，不能碰");
+        assert!(
+            Path::new(&entry.archive_path).exists(),
+            "正式归档永不在清理范围"
+        );
+        let _ = fs::remove_dir_all(&f.base);
+    }
+
+    #[test]
+    fn pnpm_style_symlink_roundtrips() {
+        // pnpm 的 node_modules 是符号链接森林：顶层链接 + `.pnpm` 内的相对链接
+        // （目标含 `..`）。归档按链接存，恢复必须原样还原，否则 pnpm 用户的
+        // 依赖恢复出来是坏的。
+        let f = setup("pnpm");
+        let real = f.deps.join(".pnpm/foo@1.0.0/node_modules/foo");
+        fs::create_dir_all(&real).unwrap();
+        fs::write(real.join("index.js"), b"module.exports=1").unwrap();
+        // 嵌套依赖：`.pnpm/foo@1.0.0/node_modules/bar` → ../../../bar@2.0.0/node_modules/bar
+        let bar = f.deps.join(".pnpm/bar@2.0.0/node_modules/bar");
+        fs::create_dir_all(&bar).unwrap();
+        fs::write(bar.join("index.js"), b"module.exports=2").unwrap();
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(".pnpm/foo@1.0.0/node_modules/foo", f.deps.join("foo"))
+                .unwrap();
+            std::os::unix::fs::symlink(
+                "../../bar@2.0.0/node_modules/bar",
+                f.deps.join(".pnpm/foo@1.0.0/node_modules/bar"),
+            )
+            .unwrap();
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = fs::remove_dir_all(&f.base);
+            return;
+        }
+
+        let entry = create_with(&f.deps, &f.root, 1_700_000_010, &test_delete).unwrap();
+        restore_with(&entry, false, &test_delete).unwrap();
+
+        let top = fs::symlink_metadata(f.deps.join("foo")).unwrap();
+        assert!(top.file_type().is_symlink(), "顶层链接必须还原成链接");
+        assert_eq!(
+            fs::read_link(f.deps.join("foo")).unwrap(),
+            PathBuf::from(".pnpm/foo@1.0.0/node_modules/foo"),
+            "链接目标逐字一致"
+        );
+        let nested = fs::symlink_metadata(f.deps.join(".pnpm/foo@1.0.0/node_modules/bar")).unwrap();
+        assert!(nested.file_type().is_symlink(), "含 .. 的嵌套链接也要保留");
+        assert_eq!(
+            fs::read_link(f.deps.join(".pnpm/foo@1.0.0/node_modules/bar")).unwrap(),
+            PathBuf::from("../../bar@2.0.0/node_modules/bar"),
+            "`..` 目标不许被规范化改写"
+        );
+        assert_eq!(
+            fs::read(f.deps.join("foo/index.js")).unwrap(),
+            b"module.exports=1",
+            "经链接读到的内容正确（pnpm 语义）"
+        );
+        assert_eq!(
+            fs::read(f.deps.join(".pnpm/foo@1.0.0/node_modules/bar/index.js")).unwrap(),
+            b"module.exports=2",
+            "嵌套链接穿透后可读到真实内容"
+        );
+        let _ = fs::remove_dir_all(&f.base);
+    }
+
+    #[test]
+    fn restore_cancel_removes_partial_target() {
+        let f = setup("restorecancel");
+        let entry = create_with(&f.deps, &f.root, 1_700_000_011, &test_delete).unwrap();
+        let cancel = AtomicBool::new(true);
+        let e = restore_full(&entry, false, &test_delete, &no_progress, Some(&cancel)).unwrap_err();
+        assert_eq!(e, CANCEL_MSG);
+        assert!(!f.deps.exists(), "取消后不许留半截 node_modules");
+        let _ = fs::remove_dir_all(&f.base);
+    }
+
+    /// 契约测试：事件 payload 的字段名与 src/types/disk.ts 的 ArchiveProgress 对齐
+    #[test]
+    fn progress_payload_matches_frontend_contract() {
+        let v = serde_json::to_value(Progress::new(Stage::Pack, 10, 100, 2, 9)).unwrap();
+        assert_eq!(v["stage"], "pack", "阶段值是前端 ArchiveStage 的取值域");
+        assert_eq!(v["doneBytes"], 10);
+        assert_eq!(v["totalBytes"], 100);
+        assert_eq!(v["doneFiles"], 2);
+        assert_eq!(v["totalFiles"], 9);
+        for st in [Stage::Plan, Stage::Pack, Stage::Verify, Stage::Trash] {
+            let j = serde_json::to_value(st).unwrap();
+            assert_eq!(
+                j.as_str().unwrap(),
+                st.as_str(),
+                "serde 与 as_str 必须同口径"
+            );
+        }
     }
 }
