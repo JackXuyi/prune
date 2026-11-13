@@ -10,7 +10,7 @@
 
 ![隐私](https://img.shields.io/badge/零埋点-零遥测-green)
 
-![状态](https://img.shields.io/badge/status-v0.9.4-blue)
+![状态](https://img.shields.io/badge/status-v0.10.0-blue)
 
 ---
 

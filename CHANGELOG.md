@@ -2,6 +2,21 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.10.0
+
+### M2 激活闭环（2027 H1 Roadmap §4；北极星分子「首启→首清 24h 率」的基础设施）
+
+- **`scan_log(ts, level)` 落库**：每轮扫描完成落一行（full/incr，append-only，不过期清理——`MIN(ts)` 就是「首扫时刻」，清了旧行分母就没了）；`meta.first_boot` 建库即写、只写一次（激活率分母候选①，不用文件 btime——WAL/备份都可能动文件，自己的 meta 表才是自己的口径）
+- **`activation_report` 命令**：首启 / 首扫 / 首清时间戳 + 清理次数（`COUNT(DISTINCT ts)`，同一次清理各分组共享同一 ts）+ 累计字节。**零遥测**：数字只随「复制 6 个数字」出设备；「率」在设备外由时间戳算出，分母禁用下载数（roadmap §5.2 口径纪律）
+- **激活链路（DP-3 裁 B，拒绝强制线性 onboarding）**：首扫完成页引导卡（只报 L1 零后悔体量）→ 一键🟢（走既有 dry-run → 白名单 → 废纸篓链路，只碰 L1）→ 成绩单弹窗即时呈现（本次 N 项 + 累计）；卡片在首次清理落定或用户关闭后退场，不在「惊讶」前设卡
+- **征募点（RK-5 红线内）**：只在首扫结果页出现，只提供「复制 6 个数字」（磁盘用量比 / 可回收 / 累计清理 / 清理次数 / 首扫距今天数 / 24h 内首清 0|1），供 M-B 留存访谈（v0.10.0 发布后第 2–4 周）使用
+- **D2 口径标注**：`run_startup_check` 文档注释标注为 D2 口径文件——调用时机即指标定义，任何改动必须同步 roadmap §5.1 并重设基线，不接受静默变更（RK-8）
+- **R8b 归档字节熔断（顺带）**：归档与 reclaim 是同一产品两条删除路径，爆炸半径必须同一口径——单次体量超 20 GB 需**第二次**显式确认；`breaker_error` 纯函数 + 写文件前检查 + 无确认通道的 `create()` 超限一律拒绝；UI 超阈值弹警示框 + 勾选二次确认（负面测试：21 GiB 未确认拒 / 确认放行 / 19 GB 直通 / 恰 20 GB 不算超）
+
+### 同批搭载
+
+- **端口服务类型识别（前后端）**：`ServiceKind` 分类 + L0 静态推断（端口表 / 进程名 / argv，零网络副作用）+ L1 主动探针（Web HEAD / MCP initialize / DB·SSH banner，`(pid,port,start_time)` 缓存防重探）；端口页 Badge「推断 / 确认」双强度与 exposure 并列
+
 ## 0.9.4
 
 ### M1 诚信归真（2027 H1 Roadmap §4；发布门禁项，纯门禁修复、无新功能）
