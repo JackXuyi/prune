@@ -182,7 +182,7 @@ fn cat_frames() -> &'static [Image<'static>] {
         ];
         bytes
             .iter()
-            .map(|b| Image::from_bytes(*b).expect("内置托盘动画帧损坏"))
+            .map(|b| Image::from_bytes(b).expect("内置托盘动画帧损坏"))
             .collect()
     })
 }
@@ -235,7 +235,7 @@ fn pant_frames() -> &'static [Image<'static>] {
         ];
         bytes
             .iter()
-            .map(|b| Image::from_bytes(*b).expect("内置喘气帧损坏"))
+            .map(|b| Image::from_bytes(b).expect("内置喘气帧损坏"))
             .collect()
     })
 }
@@ -259,7 +259,7 @@ fn arch_frames() -> &'static [Image<'static>] {
         ];
         bytes
             .iter()
-            .map(|b| Image::from_bytes(*b).expect("内置炸毛帧损坏"))
+            .map(|b| Image::from_bytes(b).expect("内置炸毛帧损坏"))
             .collect()
     })
 }

@@ -65,7 +65,7 @@ fn main() {
     let _ = npm_touch;
 
     let t = Instant::now();
-    let (r3, snap) = disk::scan_with(
+    let (r3, _snap) = disk::scan_with(
         &home,
         Some(&snap),
         Some(&|p: ScanProgress| progress("增量", &p)),
@@ -100,7 +100,7 @@ fn main() {
     let _ = std::fs::remove_dir_all(&probe);
     if let Some(first) = std::fs::read_dir(home.join(".npm/_cacache"))
         .ok()
-        .and_then(|mut rd| rd.flatten().next())
+        .and_then(|rd| rd.flatten().next())
     {
         let _ = std::fs::remove_file(first.path().join("_prune_probe_marker"));
     }

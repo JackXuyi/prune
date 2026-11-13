@@ -166,16 +166,16 @@ pub fn tray_text(l: Locale) -> &'static TrayText {
     }
 }
 
+/// `build_menu` 的返回：菜单本体 + 主题勾选项（create 与 rebuild 共用同一张菜单）。
+type BuiltMenu = (
+    Menu<tauri::Wry>,
+    Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>,
+);
+
 /// 组装菜单（create 与 rebuild 共用，保证菜单项 id 逐字一致）。
 ///
 /// **必须在主线程调用**：macOS 的 NSMenu 只在主线程安全。
-fn build_menu(
-    app: &AppHandle,
-    locale: Locale,
-) -> tauri::Result<(
-    Menu<tauri::Wry>,
-    Vec<(IconTheme, CheckMenuItem<tauri::Wry>)>,
-)> {
+fn build_menu(app: &AppHandle, locale: Locale) -> tauri::Result<BuiltMenu> {
     let text = tray_text(locale);
     // 勾选态从当前原子量读，不从 settings 重读 —— 本次会话可能改过但还没落盘
     let anim_on = CPU_ANIM_ENABLED.load(Ordering::Relaxed);
@@ -492,7 +492,7 @@ pub async fn run_cpu_watch() {
 
         // ── 宠物状态观察（M20）──
         tick += 1;
-        if tick % 2 == 0 {
+        if tick.is_multiple_of(2) {
             // swap：sysctl 子进程，2 s 一次（与灵动岛 MemMonitor 同频率）
             if let Some((total, used, _)) = prune_core::swap::read_swapusage() {
                 last_swap_ratio = (total > 0)
@@ -503,7 +503,7 @@ pub async fn run_cpu_watch() {
                 last_pressure = Some(p.level);
             }
         }
-        if tick % 10 == 0 {
+        if tick.is_multiple_of(10) {
             // 磁盘：statvfs µs 级，10 s 一次足够（慢性信号）
             if let Some(v) = prune_core::disk::volume_info(&prune_core::paths::home_dir_or_root()) {
                 if v.total_bytes > 0 {

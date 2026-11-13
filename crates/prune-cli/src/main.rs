@@ -60,7 +60,7 @@ pub enum Command {
 
 pub fn parse_args(args: &[String]) -> Result<Command, String> {
     let mut it = args.iter();
-    let sub = it.next().map(|s| s.as_str()).ok_or_else(|| usage())?;
+    let sub = it.next().map(|s| s.as_str()).ok_or_else(usage)?;
 
     match sub {
         "-V" | "--version" | "version" => Ok(Command::Version),
@@ -301,7 +301,7 @@ fn cmd_scan(json: bool) -> i32 {
         println!("（另有 L4 Docker {}，不自动处理，见文末命令）", hb(t.l4));
     }
     println!();
-    println!("{:<34}{:>12}  {:>8}  {}", "分组", "体积", "条目", "说明");
+    println!("{:<34}{:>12}  {:>8}  说明", "分组", "体积", "条目");
     for g in &report.groups {
         println!(
             "{:<34}{:>12}  {:>8}  {}",
@@ -979,15 +979,17 @@ fn cmd_app(query: &str, json: bool) -> i32 {
             println!(
                 "CPU   {}",
                 r.cpu
-                    .map(|c| format!(
-                        "{}{}",
-                        format!("{c:.1}%"),
-                        if r.cpu_covered < r.process_count {
+                    .map(|c| {
+                        // 先拼百分比再补后缀：直接嵌套 format! 会让 clippy 报
+                        // `format!` in `format!` args，也确实白套一层
+                        let pct = format!("{c:.1}%");
+                        let suffix = if r.cpu_covered < r.process_count {
                             "（下界）"
                         } else {
                             ""
-                        }
-                    ))
+                        };
+                        format!("{pct}{suffix}")
+                    })
                     .unwrap_or_else(|| "—".into())
             );
             if r.ports.is_empty() {

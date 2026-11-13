@@ -3,7 +3,7 @@
 //! 三个只读工具，面向 AI Agent 查询：
 //! - `mem_snapshot`  一次性内存读数（家族聚合 + swap + 压力，Top 20 深探）
 //! - `mem_leaks`     B5 泄漏嫌疑判定（读 GUI 已采集的序列库，不自己采——
-//!                   判定需要 30 min 序列，Agent 的即时查询等不了）
+//!   判定需要 30 min 序列，Agent 的即时查询等不了）
 //! - `disk_report`   全盘扫描（~15s，description 已注明成本，防高频轮询）
 //!
 //! 工具结果统一 `{ content: [{ type: "text", text: <JSON 字符串> }] }`：
@@ -49,10 +49,7 @@ pub fn handle_message(
 
     // 通知没有 id，不回响应（JSON-RPC 2.0 §4.1）
     let id = msg.get("id").cloned();
-    let id = match id {
-        Some(id) => id,
-        None => return None,
-    };
+    let id = id?;
 
     let method = msg.get("method").and_then(|m| m.as_str()).unwrap_or("");
     let result = match method {

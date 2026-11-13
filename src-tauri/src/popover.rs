@@ -273,8 +273,14 @@ fn tray_rect_raw(app: &AppHandle) -> Option<RawRect> {
     Some((x, y, w, h, pos_logical || size_logical))
 }
 
+/// `(anchor_frame, scale, primary_height_pts)` 的返回类型别名。
+///
+/// 四元组是 x / y / w / h，单独看签名分不出哪四个数——别名把语义钉在这里，
+/// 也避免 clippy type_complexity。
+type AnchorMetrics = ((f64, f64, f64, f64), f64, f64);
+
 /// (anchor_frame, scale, primary_height_pts)
-fn anchor_metrics(app: &AppHandle) -> Option<((f64, f64, f64, f64), f64, f64)> {
+fn anchor_metrics(app: &AppHandle) -> Option<AnchorMetrics> {
     let (mut rx, mut ry, mut rw, mut rh, is_logical) = tray_rect_raw(app)?;
     // tray 图标所在屏幕决定 scale（多屏缩放不同），主屏决定高度换算
     let monitors = app.available_monitors().unwrap_or_default();

@@ -964,7 +964,7 @@ mod tests {
 
         assert_eq!(table.len(), 1);
         assert_eq!(table.get(&1).unwrap().start_time, 111);
-        assert!(table.get(&2).is_none(), "已退出进程不能留下残影");
+        assert!(!table.contains_key(&2), "已退出进程不能留下残影");
     }
 
     #[test]

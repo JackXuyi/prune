@@ -439,7 +439,7 @@ impl Store {
             let mut stmt =
                 tx.prepare("INSERT INTO cut_log (ts, label, bytes) VALUES (?1, ?2, ?3)")?;
             for (label, bytes) in items {
-                stmt.execute(params![now, *label, sat(*bytes) as i64])?;
+                stmt.execute(params![now, *label, { sat(*bytes) }])?;
             }
         }
         tx.commit()?;
@@ -766,6 +766,8 @@ mod tests {
 
     // ---------------------------------------------------------- 应用小时历史
 
+    // 测试构造器：8 个字段与 HourlyDelta 一一对应，拆结构体反而看不出映射关系
+    #[allow(clippy::too_many_arguments)]
     fn hourly(
         family: &str,
         bucket: &str,

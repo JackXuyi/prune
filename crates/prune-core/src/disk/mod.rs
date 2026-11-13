@@ -893,7 +893,7 @@ mod tests {
         write(&root.join("p1/node_modules/x/1.js"), 10);
         write(&root.join("p1/node_modules/y/node_modules/z/2.js"), 20); // 命中后不再下钻
         write(&root.join(".cache/node_modules/hidden/3.js"), 30); // 隐藏目录跳过
-        let got = find_dirs_named(&[root.clone()], "node_modules", 6);
+        let got = find_dirs_named(std::slice::from_ref(&root), "node_modules", 6);
         assert_eq!(got.len(), 1, "只算最外层命中，且不进隐藏目录");
         let _ = std::fs::remove_dir_all(&root);
     }

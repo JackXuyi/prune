@@ -111,7 +111,7 @@ pub async fn run_background(app: AppHandle) {
     loop {
         ticker.tick().await;
         ticks += 1;
-        let full = ticks % FULL_EVERY_TICKS == 0;
+        let full = ticks.is_multiple_of(FULL_EVERY_TICKS);
         if let Err(e) = scan_now(&app, full).await {
             eprintln!("[m1-disk] 周期扫描失败: {e}");
         }

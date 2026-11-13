@@ -285,10 +285,8 @@ pub fn parse_ipconfig_ssid(output: &str) -> Option<String> {
                     return Some(value.to_string());
                 }
             }
-            "SSID" => {
-                if !value.is_empty() && raw.is_none() {
-                    raw = Some(value.to_string());
-                }
+            "SSID" if !value.is_empty() && raw.is_none() => {
+                raw = Some(value.to_string());
             }
             _ => {}
         }

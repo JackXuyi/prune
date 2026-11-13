@@ -56,8 +56,8 @@ fn main() {
     );
 
     println!(
-        "\n{:<28} {:>10} {:>8} {:>6}  {}",
-        "组", "体积", "条目", "级别", "Deadweight"
+        "\n{:<28} {:>10} {:>8} {:>6}  Deadweight",
+        "组", "体积", "条目", "级别"
     );
     for g in &report.groups {
         let dw = g
@@ -221,7 +221,7 @@ fn main() {
     // 只生成清单，不动任何文件。验收 T-309 的「预览可读、L4 拒执行」两项。
     println!("\n== dry-run 预览（不删任何文件）==");
     for key in ["yarn", "npm", "node-modules", "docker-vm"] {
-        let p = reclaim::preview(&[key.to_string()], &report);
+        let p = reclaim::preview(&[key.to_string()], report);
         let first = p
             .items
             .first()
@@ -236,7 +236,7 @@ fn main() {
             first
         );
         for n in &p.notes {
-            println!("      ↳ {}", n.text_zh(&report));
+            println!("      ↳ {}", n.text_zh(report));
         }
     }
 

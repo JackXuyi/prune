@@ -190,7 +190,7 @@ fn walk(root: &Path, deadline: Option<Instant>) -> (u64, bool) {
     while let Some(path) = stack.pop() {
         seen += 1;
         // 每 256 个条目查一次表，比每个都查 Instant::now() 便宜得多
-        if seen % 256 == 0 {
+        if seen.is_multiple_of(256) {
             if let Some(d) = deadline {
                 if Instant::now() > d {
                     return (total, true);

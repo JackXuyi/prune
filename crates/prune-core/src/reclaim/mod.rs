@@ -265,14 +265,11 @@ pub fn preview(keys: &[String], report: &DiskReport) -> ReclaimPreview {
             continue;
         };
 
-        match group.level {
-            Level::L4 => {
-                notes.push(ReclaimNote::HighRisk {
-                    key: group.key.clone(),
-                });
-                continue;
-            }
-            _ => {}
+        if group.level == Level::L4 {
+            notes.push(ReclaimNote::HighRisk {
+                key: group.key.clone(),
+            });
+            continue;
         }
 
         // A4/A5 明细通道：node_modules（cleanable=false）与模拟器/浏览器二进制逐项确认。

@@ -273,10 +273,8 @@ pub fn analyze(series: &ProcSeries, procs: &[ProcMem], now: i64) -> Outcome {
     let window_start = now - window;
 
     // 条件 1：真实存在时长。start_time 未知时退回序列跨度。
-    if series.start_time > 0 {
-        if now - (series.start_time as i64) < window {
-            return Outcome::Insufficient;
-        }
+    if series.start_time > 0 && now - (series.start_time as i64) < window {
+        return Outcome::Insufficient;
     }
 
     // 条件 2/3：窗口内覆盖与连续性
@@ -377,7 +375,9 @@ pub fn detect(series: &[ProcSeries], procs: &[ProcMem], now: i64) -> LeakReport 
         }
     }
 
-    report.items.sort_by(|a, b| b.growth.cmp(&a.growth));
+    report
+        .items
+        .sort_by_key(|item| std::cmp::Reverse(item.growth));
     report
 }
 

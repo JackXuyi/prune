@@ -110,23 +110,24 @@ impl CaseBook {
                     case.growth_latest = item.growth;
                     case.growth_peak = case.growth_peak.max(item.growth);
                 }
-                None if case.status == CaseStatus::Open => {
-                    if closing_allowed && !alive.contains(&key) {
-                        // 嫌疑人离场。复发判定：本轮有同 family 的新命中（既不是本人在办时
-                        // 就并发的那件，也不是本人——是新立的案）
-                        let relapsed = items.iter().any(|i| {
-                            i.family == case.family
-                                && (i.pid, i.start_time) != key
-                                && !open_before.contains(&(i.pid, i.start_time))
-                        });
-                        case.status = if relapsed {
-                            CaseStatus::Relapsed { closed_at: now }
-                        } else {
-                            CaseStatus::Cleared { closed_at: now }
-                        };
-                    }
-                    // 命中消失但进程还活着：增长退回门槛之下——侦查未完，保持 Open
+                None if case.status == CaseStatus::Open
+                    && closing_allowed
+                    && !alive.contains(&key) =>
+                {
+                    // 嫌疑人离场。复发判定：本轮有同 family 的新命中（既不是本人在办时
+                    // 就并发的那件，也不是本人——是新立的案）
+                    let relapsed = items.iter().any(|i| {
+                        i.family == case.family
+                            && (i.pid, i.start_time) != key
+                            && !open_before.contains(&(i.pid, i.start_time))
+                    });
+                    case.status = if relapsed {
+                        CaseStatus::Relapsed { closed_at: now }
+                    } else {
+                        CaseStatus::Cleared { closed_at: now }
+                    };
                 }
+                // 命中消失但进程还活着：增长退回门槛之下——侦查未完，保持 Open
                 None => {}
             }
         }

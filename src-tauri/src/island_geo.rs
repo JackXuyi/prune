@@ -192,8 +192,12 @@ mod tests {
 
     #[test]
     fn window_taller_than_expanded_shape() {
-        // 窗口高度必须留出余量，否则 Spring 过冲会被裁掉
-        assert!(WINDOW_H > EXPANDED_H);
-        assert!(WINDOW_W >= EXPANDED_W);
+        // 窗口高度必须留出余量，否则 Spring 过冲会被裁掉。
+        // 被比较的两边都是编译期常量，写成运行时断言等于恒真（clippy
+        // assertions_on_constants），改用 inline const 块让它在编译期就失败。
+        const {
+            assert!(WINDOW_H > EXPANDED_H);
+            assert!(WINDOW_W >= EXPANDED_W);
+        }
     }
 }
