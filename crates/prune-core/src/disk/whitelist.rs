@@ -250,10 +250,28 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         a1_scope: false,
         os: Os::MacOnly,
     },
+    // DerivedData 只有构建产物 / 索引 / 日志，重新编译全部可再生（f12 实测：
+    // 对标 DevCleaner/CacheCleaner 均为 Safe 类），L2 一键清理。
+    WhitelistEntry {
+        key: "xcode-deriveddata",
+        label: "Xcode DerivedData（构建产物）",
+        rel: "Library/Developer/Xcode/DerivedData",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
     WhitelistEntry {
         key: "simulator-caches",
         label: "Simulator 运行时缓存",
         rel: "Library/Developer/CoreSimulator/Caches",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "simulator-temp",
+        label: "Simulator 临时文件",
+        rel: "Library/Developer/CoreSimulator/Temp",
         level: Level::L2,
         a1_scope: false,
         os: Os::MacOnly,
@@ -475,6 +493,31 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         label: "Simulator 旧平台运行时（可重下）",
         rel: "Library/Developer/CoreSimulator/Profiles/Runtimes",
         level: Level::L3,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // ---------- Xcode 深扫（2026-11 f12：DerivedData 与周边小项；级别判定见 docs/f12-xcode-deep-plan.md） ----------
+    WhitelistEntry {
+        key: "xcode-devicediskimages",
+        label: "设备磁盘映像（连真机时下载）",
+        rel: "Library/Developer/DeveloperDiskImages",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "xcode-test-devices",
+        label: "XCTest 测试设备克隆",
+        rel: "Library/Developer/XCTestDevices",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "xcode-dvt-downloads",
+        label: "Xcode 组件下载缓存",
+        rel: "Library/Developer/DVTDownloads",
+        level: Level::L2,
         a1_scope: false,
         os: Os::MacOnly,
     },
@@ -949,5 +992,55 @@ mod tests {
         assert_eq!(rt.level, Level::L3, "运行时可重下但代价高，必须逐项确认");
         assert_eq!(ib.os, Os::MacOnly);
         assert_eq!(rt.os, Os::MacOnly);
+    }
+
+    #[test]
+    fn xcode_deep_scan_entries_registered() {
+        // f12（M28）：DerivedData 与周边小项，全部可再生无状态 → L2
+        for key in [
+            "xcode-deriveddata",
+            "simulator-temp",
+            "xcode-devicediskimages",
+            "xcode-test-devices",
+            "xcode-dvt-downloads",
+        ] {
+            let e = ENTRIES
+                .iter()
+                .find(|e| e.key == key)
+                .unwrap_or_else(|| panic!("{key} 应登记"));
+            assert_eq!(e.level, Level::L2, "{key} 必须是 L2：内容全部可再生");
+            assert_eq!(
+                e.os,
+                Os::MacOnly,
+                "{key} 是 Xcode/CoreSimulator 专属，必须 MacOnly"
+            );
+        }
+    }
+
+    #[test]
+    fn xcode_red_lines() {
+        // 红线 1：CoreSimulator 下禁止登记文件路径与单设备 UUID 目录
+        // （RuntimeMap.plist / device.plist 是文件，机制不收；设备粒度交给
+        // 既有 simulator L3 整目录 + 用户确认，机制不猜 UUID）
+        assert!(
+            !ENTRIES
+                .iter()
+                .any(|e| e.rel.ends_with(".plist") || e.rel.contains("Devices/")),
+            "CoreSimulator 禁止登记文件或单设备目录"
+        );
+        // 红线 2：Xcode 的 UserData 根禁止登记（KeyBindings / xcuserstate
+        // 是用户个性化状态）；已有的 previews / IB Support 是其子目录，不受影响
+        assert!(
+            !ENTRIES
+                .iter()
+                .any(|e| e.rel == "Library/Developer/Xcode/UserData"),
+            "Xcode UserData 根不得登记"
+        );
+        // 红线 3：simulator（Devices 整目录）保持 L3 重置语义，不许降级
+        let sim = ENTRIES
+            .iter()
+            .find(|e| e.key == "simulator")
+            .expect("simulator Devices 应登记");
+        assert_eq!(sim.level, Level::L3, "Devices 是重置语义，必须逐项确认");
     }
 }
