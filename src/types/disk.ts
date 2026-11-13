@@ -153,6 +153,20 @@ export interface RestoreReport {
   bytesRestored: number;
 }
 
+/** 归档阶段（prune-core/archive.rs Stage 一一对应） */
+export type ArchiveStage = "plan" | "pack" | "verify" | "trash";
+
+/** 进度快照（事件 `archive://progress` 的 payload） */
+export interface ArchiveProgress {
+  stage: ArchiveStage;
+  /** 已完成字节；plan 阶段恒为 0 */
+  doneBytes: number;
+  /** 阶段总量；plan 阶段为 0（进度条走不确定态） */
+  totalBytes: number;
+  doneFiles: number;
+  totalFiles: number;
+}
+
 export interface DiskReport {
   scannedAt: number;
   scanElapsedMs: number;

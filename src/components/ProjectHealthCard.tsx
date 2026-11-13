@@ -1,10 +1,13 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import { listen } from "@tauri-apps/api/event";
 
 import { useI18n } from "../i18n/store";
 import type { I18n } from "../i18n";
 import type { NoParamKey } from "../i18n/types";
 import { formatBytes, formatDayClock } from "../lib/format";
 import {
+  archiveCancel,
   archiveCreate,
   archiveDelete,
   archiveList,
@@ -18,6 +21,8 @@ import { useDialogA11y } from "../lib/dialogA11y";
 import type {
   ArchiveEntry,
   ArchivePlan,
+  ArchiveProgress,
+  ArchiveStage,
   ProjectHealth,
   ProjectVerdict,
   RestorePreview,
@@ -51,6 +56,14 @@ const VERDICT_META: Record<
     labelKey: "disk.project.verdict.healthy",
     tipKey: "disk.project.verdict.healthyTip",
   },
+};
+
+/** 进度阶段 → 文案 key（plan 阶段没有总量，走不确定态） */
+const STAGE_KEY: Record<ArchiveStage, NoParamKey> = {
+  plan: "disk.archive.stagePlan",
+  pack: "disk.archive.stagePack",
+  verify: "disk.archive.stageVerify",
+  trash: "disk.archive.stageTrash",
 };
 
 function installLabel(days: number, t: I18n["t"]): string {
@@ -90,6 +103,14 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   const [archivedRoots, setArchivedRoots] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
   const [busy, setBusy] = useState(false);
+  /** 正在统计的项目根（归档预览前的 0.7 s，冷缓存更久，必须有反馈） */
+  const [planning, setPlanning] = useState<string | null>(null);
+  const [progress, setProgress] = useState<ArchiveProgress | null>(null);
+  const [canceling, setCanceling] = useState(false);
+  /** 进度起点：算 ETA 用，不参与渲染决策 */
+  const startedAt = useRef<number | null>(null);
+  /** 本次任务是否由用户点了取消：决定失败时给「已取消」还是原始错误 */
+  const cancelRequested = useRef(false);
   const { t, locale } = useI18n();
   const dialogRef = useDialogA11y<HTMLDivElement>(dialog != null);
 
@@ -111,6 +132,15 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
       .catch(() => setEntries([]));
   }, []);
 
+  // 归档进度：后端按 200 ms 节流推事件（十几万条目逐条发会把渲染线程打满）
+  useEffect(() => {
+    if (!isTauri()) return;
+    const un = listen<ArchiveProgress>("archive://progress", (e) => setProgress(e.payload));
+    return () => {
+      void un.then((fn) => fn());
+    };
+  }, []);
+
   useEffect(() => {
     if (!dialog) return;
     const onKey = (e: KeyboardEvent) => {
@@ -128,6 +158,21 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   const multi = projects.filter((p) => p.multiManager);
   const shown = projects.slice(0, 6);
   const archiveBytes = entries.reduce((acc, e) => acc + e.bytes, 0);
+
+  // 进度条：plan 阶段没有总量（不确定态）；ETA 用「已处理字节 / 已用时间」估
+  const pct =
+    progress && progress.totalBytes > 0
+      ? Math.min(100, Math.round((progress.doneBytes / progress.totalBytes) * 100))
+      : 0;
+  const eta = (() => {
+    if (!progress || !startedAt.current || progress.totalBytes <= 0) return null;
+    if (progress.doneBytes <= 0) return null;
+    const elapsed = (Date.now() - startedAt.current) / 1000;
+    if (elapsed < 1.5) return null; // 刚开始的速率噪声太大，不显示
+    const speed = progress.doneBytes / elapsed;
+    const remain = (progress.totalBytes - progress.doneBytes) / speed;
+    return remain >= 1 ? Math.round(remain) : null;
+  })();
 
   const open = async (p: ProjectHealth) => {
     if (!isTauri()) {
@@ -147,10 +192,14 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
       setToast(t("disk.err.needsDesktop"));
       return;
     }
+    if (planning || busy) return; // 防连点：统计要遍历整棵依赖树
+    setPlanning(p.root);
     try {
       setDialog({ kind: "archive", plan: await archivePlan(p.root) });
     } catch (e) {
       setToast(String(e));
+    } finally {
+      setPlanning(null);
     }
   };
 
@@ -168,6 +217,10 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
 
   const runDialog = async (d: DialogState) => {
     setBusy(true);
+    setProgress(null);
+    setCanceling(false);
+    cancelRequested.current = false;
+    startedAt.current = Date.now();
     try {
       if (d.kind === "archive") {
         const entry = await archiveCreate(d.plan.projectRoot, true);
@@ -192,9 +245,26 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
       }
       setDialog(null);
     } catch (e) {
-      setToast(String(e));
+      setToast(cancelRequested.current ? t("disk.archive.cancelled") : String(e));
     } finally {
       setBusy(false);
+      setProgress(null);
+      setCanceling(false);
+      cancelRequested.current = false;
+      startedAt.current = null;
+    }
+  };
+
+  /** 归档/恢复跑到一半的取消：不允许「关掉对话框假装取消」 */
+  const requestCancel = async () => {
+    if (canceling) return;
+    cancelRequested.current = true;
+    setCanceling(true);
+    try {
+      await archiveCancel();
+    } catch (e) {
+      setToast(String(e));
+      setCanceling(false);
     }
   };
 
@@ -294,10 +364,11 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
                 <button
                   type="button"
                   onClick={() => void beginArchive(p)}
+                  disabled={planning != null || busy}
                   title={t("disk.archive.entryTip")}
-                  className="shrink-0 rounded-ctl border border-hairline-soft bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
+                  className="shrink-0 rounded-ctl border border-hairline-soft bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-40 disabled:hover:bg-chip"
                 >
-                  {t("disk.archive.entry")}
+                  {planning === p.root ? t("disk.archive.measuring") : t("disk.archive.entry")}
                 </button>
               ) : null}
             </li>
@@ -390,14 +461,46 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
                 </label>
               </div>
             ) : null}
+            {busy ? (
+              <div className="mt-2.5" aria-live="polite">
+                <div className="flex items-baseline justify-between gap-2 text-[10px] text-ink-dim">
+                  <span>{t(progress ? STAGE_KEY[progress.stage] : "disk.archive.stagePlan")}</span>
+                  <span className="font-mono tabular-nums text-ink-faint">
+                    {progress && progress.totalBytes > 0
+                      ? `${pct}% · ${t("disk.archive.progressLine", {
+                          done: formatBytes(progress.doneBytes),
+                          total: formatBytes(progress.totalBytes),
+                        })}`
+                      : t("disk.archive.measuring")}
+                  </span>
+                </div>
+                <div className="mt-1 h-1 overflow-hidden rounded-full bg-ink/10">
+                  <div
+                    className={`h-full rounded-full bg-ink transition-[width] duration-200 ${
+                      progress && progress.totalBytes > 0 ? "" : "animate-pulse opacity-40"
+                    }`}
+                    style={{ width: `${pct}%` }}
+                  />
+                </div>
+                {eta != null ? (
+                  <p className="mt-1 font-mono text-[9.5px] tabular-nums text-ink-faint">
+                    {t("disk.archive.eta", { sec: eta })}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="mt-3 flex justify-end gap-2">
               <button
                 type="button"
-                onClick={() => setDialog(null)}
-                disabled={busy}
+                onClick={() => (busy ? void requestCancel() : setDialog(null))}
+                disabled={canceling}
                 className="rounded-ctl border border-hairline-soft px-2.5 py-1 text-[11px] text-ink-dim transition-colors hover:bg-chip disabled:opacity-40"
               >
-                {t("disk.archive.cancel")}
+                {busy
+                  ? canceling
+                    ? t("disk.archive.canceling")
+                    : t("disk.archive.cancelTask")
+                  : t("disk.archive.cancel")}
               </button>
               <button
                 type="button"

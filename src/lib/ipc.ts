@@ -338,6 +338,11 @@ export function archiveRestore(id: string, confirmed: boolean, overwrite: boolea
   return invoke<RestoreReport>("archive_restore", { id, confirmed, overwrite });
 }
 
+/** 取消当前归档/恢复：返回「是否真的有一个任务在跑」 */
+export function archiveCancel(): Promise<boolean> {
+  return invoke<boolean>("archive_cancel");
+}
+
 /** 删除归档（必须 confirmed）：归档文件走废纸篓 + 移除账本条目 */
 export function archiveDelete(id: string, confirmed: boolean): Promise<void> {
   return invoke<void>("archive_delete", { id, confirmed });
