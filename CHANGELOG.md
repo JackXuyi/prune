@@ -18,6 +18,16 @@
 - 红线单测扩展：AI 系条目 rel 禁含 `sessions` / `history` / `auth` / `Cookies` / `browser-data` / `conversations` / `ai-tracking` / `Local Storage` 等 13 个用户状态标记
 - 中英 catalog 同步 14 个 `disk.cache.<key>`（check-i18n 门禁覆盖）；零代码改动扩散，登记即自动进入扫描 / 报告 / dry-run / 废纸篓 / MCP 全链路
 
+### M28：Xcode 深扫专项残余（F12，与 M27 同版本并行）
+
+- 开工核验：四组里 DeviceSupport / Archives / 模拟器旧运行时（含 `CoreSimulator/Devices` 整目录，key `simulator` L3）均已落地，**本机 3.5 GB 最大头已有覆盖**；本期补真正的残余 5 条（方案与实测见 [f12](./docs/f12-xcode-deep-plan.md)）：
+  - **DerivedData 🟢**（本机 68 MB）：构建产物 + 索引，重新编译全部可再生，对标 DevCleaner Safe 类，L2 一键清理
+  - **XCTest 测试设备克隆 🟢**（`Library/Developer/XCTestDevices`）：跑 UI 测试后可达数 GB 的知名膨胀项
+  - **设备磁盘映像 🟢**（`DeveloperDiskImages`，17 MB）：连真机时下载，按 iOS 版本可重下
+  - **Simulator 临时文件 🟢** + **Xcode 组件下载缓存 🟢**：即时 0 B 但随使用增长
+- 红线测试：CoreSimulator 禁止登记文件路径（`RuntimeMap.plist` 等）与单设备 UUID 目录；Xcode `UserData` 根禁止登记（KeyBindings / xcuserstate 用户状态）；`simulator` 保持 L3 重置语义不许降级；新条目全部 `Os::MacOnly`
+- 明确不做：`Devices/<UUID>` 单设备粒度（需 simctl 状态采集，超出纯路径机制）、`/Library/Developer/CoreSimulator/Volumes`（系统级 cryptex，非用户域）
+
 ## 0.8.4
 
 ### M26 修复与诚信（工程门禁 + 发版安全 + 文档校准）

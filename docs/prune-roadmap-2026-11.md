@@ -101,7 +101,7 @@
 |---|---|---|---|
 | 立即 | **M26 修复与诚信** | 工程欠账清零 + 文档归真 | 发布与商业化的前提（✅ 0.8.4） |
 | 近期 | **M27 AI 缓存白名单** | 补最大功能差距（P0） | DevCleaner/CacheCleaner/Mole 全支持（✅ 一期 0.8.3 / 二期 0.8.5） |
-| 近期 | **M28 Xcode 深扫专项** | 白名单低成本高收益（P0） | 同上（✅ 随一期 0.8.3 落地） |
+| 近期 | **M28 Xcode 深扫专项** | 白名单低成本高收益（P0） | 一期 0.8.3（含 Devices 整目录）+ 残余 5 条 0.8.5（f12：DerivedData / XCTestDevices / DeveloperDiskImages / Temp / DVTDownloads） |
 | 中期 | **M29 MCP 深化 + AI 信任叙事** | 只读 MCP 扩面 + 「AI 只读、人执行」差异化 | Vitals 1.4/1.7 agent 方向 |
 | 中期 | **M30 项目休眠归档（Pro 候选）** | 商业化锚点功能 | DevCleaner Pro 独家 |
 | 版本 | **v1.0 商业化卡位** | 定价/渠道/官网 | 抢在 Vitals storage map 落地前 |
@@ -137,11 +137,12 @@
 - CLI `prune scan --json` 与 MCP `disk_report` 同步透出新分组
 - 对齐产品主张：让首屏「可回收 GB」反映 2026 年真实浪费结构
 
-### M28 Xcode 深扫专项（P0，与 M27 同版本可并行）
+### M28 Xcode 深扫专项（P0，与 M27 同版本可并行）✅ 已落地
 
 - DerivedData / DeviceSupport / 模拟器 runtime / archives 四组，各自独立 🟢🟡 判定
 - 模拟器旧 runtime 按可重下判定（对标 simctl 语义）
 - 白名单登记 + 负面测试（继承护栏测试组模式）
+- **落地记录**：一期（含 `CoreSimulator/Devices` 整目录 L3）随 0.8.3 及更早发布；残余 5 条（DerivedData 显式 L2 / XCTestDevices / DeveloperDiskImages / Simulator Temp / DVTDownloads）随 0.8.5，方案见 f12
 
 ### M29 MCP 深化 + AI 信任叙事（差异化主线，不追 Vitals 广度）
 
