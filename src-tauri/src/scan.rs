@@ -166,6 +166,16 @@ pub async fn scan_now(app: &AppHandle, full: bool) -> Result<(), String> {
         *state.last_full_at.lock().unwrap_or_else(|e| e.into_inner()) = now_secs();
     }
 
+    // M2 激活读数：每轮扫描完成落一行（`scan_log(ts, level)`，append-only）。
+    // `MIN(ts)` 就是「首扫时刻」——首启→首清 24h 率的分母候选之一。
+    // 口径见 roadmap 2027h1 §5.2；这里只记录完成，失败不落（没扫完就没有「首扫」）。
+    if let Some(store) = app.state::<Option<Arc<prune_core::db::Store>>>().inner() {
+        let level = if is_full { "full" } else { "incr" };
+        if let Err(e) = store.scan_log_add(now_secs(), level) {
+            eprintln!("[m2-scan] scan_log 落库失败（不影响扫描结果）: {e}");
+        }
+    }
+
     eprintln!(
         "[m1-disk] {}完成 {} ms · 主数字 {:.2} GB · 死重 {:.2} GB",
         if is_full {

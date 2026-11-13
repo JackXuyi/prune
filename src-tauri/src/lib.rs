@@ -74,6 +74,7 @@ pub fn run() {
             commands::port_snapshot,
             commands::port_refresh,
             commands::port_set_active,
+            commands::port_probe,
             commands::app_disk,
             commands::app_bundles,
             commands::app_icons,

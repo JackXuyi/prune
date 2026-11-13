@@ -105,6 +105,15 @@ pub async fn check_and_notify(app: &AppHandle, manual: bool) -> Result<serde_jso
 }
 
 /// 启动静默检查：延迟 5 s（避开启动期采样高峰），失败不打扰用户。
+///
+/// ┌─ ⚠️ D2 口径文件（roadmap 2027h1 §5.1，勿动）────────────────────────┐
+/// │ 本函数的**调用时机**就是 D2（启动事件数）的指标定义本身：每次 GUI      │
+/// │ 启动请求一次 `latest.json`，其下载计数 = D2 = 零遥测下唯一干净的装机   │
+/// │ 代理（已穿过 Gatekeeper；CLI/MCP 用户不产生 D2）。                     │
+/// │ 任何改动（时机、开关、节流、跳过）都等于**修改指标定义**：必须同步更新  │
+/// │ roadmap §5.1 并重设 D2 基线，不接受静默变更。否则看板会表现为「启动数  │
+/// │ 下滑」并被误读为流失，误触发门禁 B 证伪分支（RK-8）。                  │
+/// └──────────────────────────────────────────────────────────────────┘
 pub async fn run_startup_check(app: AppHandle) {
     tokio::time::sleep(std::time::Duration::from_secs(5)).await;
     if let Err(e) = check_and_notify(&app, false).await {

@@ -25,6 +25,7 @@ import type {
   NetTotalPoint,
   NetTotalSample,
   PortSnapshot,
+  ProbeOutcome,
   SpeedResult,
 } from "../types/net";
 
@@ -157,6 +158,18 @@ export function portRefresh(): Promise<void> {
 /** 可见性门控：false 时定时器完全不采样，常驻开销 0 */
 export function portSetActive(active: boolean): Promise<void> {
   return invoke<void>("port_set_active", { active });
+}
+
+/**
+ * L1 服务探针：与端口做一次协议握手（Web HEAD / MCP initialize / banner）。
+ * 用户显式触发——它发包；Rust 侧按 `(port, pid, startTime)` 缓存，重复点击零开销。
+ */
+export function portProbe(
+  port: number,
+  pid: number | null,
+  startTime: number,
+): Promise<ProbeOutcome> {
+  return invoke<ProbeOutcome>("port_probe", { port, pid, startTime });
 }
 
 // ---------------------------------------------------------------- 应用磁盘（M8）

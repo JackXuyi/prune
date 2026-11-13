@@ -105,6 +105,15 @@ CREATE TABLE IF NOT EXISTS cut_log (
     bytes INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_cut_log_ts ON cut_log (ts);
+CREATE TABLE IF NOT EXISTS scan_log (
+    ts    INTEGER NOT NULL,              -- 秒级本地时间（M2：每轮扫描完成落一行）
+    level TEXT    NOT NULL               -- 'full' | 'incr'（口径见 roadmap §5.2）
+);
+CREATE INDEX IF NOT EXISTS idx_scan_log_ts ON scan_log (ts);
+CREATE TABLE IF NOT EXISTS meta (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 ";
 
 impl Store {
@@ -124,6 +133,13 @@ impl Store {
 
     fn from_conn(conn: Connection) -> rusqlite::Result<Self> {
         conn.execute_batch(SCHEMA)?;
+        // M2 激活读数分母：建库即记「首次启动」，只写一次（INSERT OR IGNORE）。
+        // 为什么不用文件 btime：WAL/备份/迁移都可能动文件，meta 表才是自己的口径。
+        // 注意：这是本地读数，零遥测——它只随「复制 6 个数字」出设备。
+        conn.execute(
+            "INSERT OR IGNORE INTO meta (key, value) VALUES ('first_boot', ?1)",
+            params![now_secs()],
+        )?;
         Ok(Self {
             conn: Mutex::new(conn),
         })
@@ -485,6 +501,57 @@ impl Store {
         let conn = self.lock();
         conn.execute("DELETE FROM cut_log WHERE ts < ?1", params![cutoff])
     }
+
+    // ------------------------------------------------------------- M2 激活读数
+
+    /// 每轮扫描完成落一行（append-only）。**不做过期清理**：行数 ≈ 每小时 1 行 +
+    /// 手动触发，年量级 < 1 万行，而 `MIN(ts)` 就是「首扫时刻」——清了旧行分母就没了。
+    pub fn scan_log_add(&self, ts: i64, level: &str) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute(
+            "INSERT INTO scan_log (ts, level) VALUES (?1, ?2)",
+            params![ts, level],
+        )
+    }
+
+    /// 激活读数（M2，roadmap §5.2）：首启→首清 24h 率的分子分母原料。
+    /// 零遥测下的本地读数；「率」本身在设备外由导出的时间戳算出。
+    pub fn activation_summary(&self) -> rusqlite::Result<ActivationSummary> {
+        let conn = self.lock();
+        let first_boot: Option<i64> = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'first_boot'",
+                [],
+                |r| r.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|v| v.parse().ok());
+        let (first_scan, scan_count): (Option<i64>, i64) = conn.query_row(
+            "SELECT MIN(ts), COUNT(*) FROM scan_log",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        let (first_cut, cut_bytes, cut_rows): (Option<i64>, i64, i64) = conn.query_row(
+            "SELECT MIN(ts), COALESCE(SUM(bytes), 0), COUNT(*) FROM cut_log",
+            [],
+            |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
+        )?;
+        // 清理「次数」= 一次清理的各分组共享同一 ts（见 cut_log 表注释）→ COUNT(DISTINCT ts)
+        let cut_sessions: i64 = conn.query_row(
+            "SELECT COUNT(DISTINCT ts) FROM cut_log",
+            [],
+            |r| r.get(0),
+        )?;
+        Ok(ActivationSummary {
+            first_boot_ts: first_boot,
+            first_scan_ts: first_scan,
+            scan_count: scan_count.max(0) as u64,
+            first_cut_ts: first_cut,
+            cut_sessions: cut_sessions.max(0) as u64,
+            cut_total_bytes: cut_bytes.max(0) as u64,
+            cut_rows: cut_rows.max(0) as u64,
+        })
+    }
 }
 
 /// 读回的一行**天粒度**聚合（M25：per-app 历史深度 8 天 → 30 天）。
@@ -524,9 +591,38 @@ pub struct CutTop {
     pub count: u64,
 }
 
+/// 激活读数（M2）：「首启→首清 24h 率」的原料包，随「复制 6 个数字」出设备。
+/// 各时间戳都是 `None` = 事件还没发生（不是 0——沿用 M9「读不到不是 0」纪律）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActivationSummary {
+    /// 建库时刻（meta.first_boot）：分母候选①，先于一切扫描
+    pub first_boot_ts: Option<i64>,
+    /// 首轮扫描完成时刻（scan_log.MIN(ts)）：分母候选②
+    pub first_scan_ts: Option<i64>,
+    /// 扫描总轮数（含增量）
+    pub scan_count: u64,
+    /// 首次清理时刻（cut_log.MIN(ts)）：分子
+    pub first_cut_ts: Option<i64>,
+    /// 清理次数 = COUNT(DISTINCT ts)（同一次清理各分组共享同一 ts）
+    pub cut_sessions: u64,
+    /// 累计剪除字节
+    pub cut_total_bytes: u64,
+    /// cut_log 总行数（对账用：行数 ≥ 次数，差值 = 多分组清理）
+    pub cut_rows: u64,
+}
+
 /// u64 → i64 的饱和转换：日流量不可能到 9.2 EB，但脏数据不能翻转成负数
 fn sat(v: u64) -> i64 {
     v.min(i64::MAX as u64) as i64
+}
+
+/// 秒级 UTC 时间戳（meta.first_boot 用；失败归 0 与上游 scan/commands 同纪律）
+fn now_secs() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
 }
 
 fn row_to_day(row: &rusqlite::Row<'_>) -> rusqlite::Result<DayTraffic> {
@@ -1018,6 +1114,57 @@ mod tests {
             let s = store.cut_summary().unwrap();
             assert_eq!(s.total_bytes, 700);
             assert_eq!(s.first_ts, Some(42));
+        }
+        let _ = std::fs::remove_file(&path);
+        let _ = std::fs::remove_file(path.with_extension("db-wal"));
+        let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    // ------------------------------------------------- M2 激活读数（scan_log/meta）
+
+    #[test]
+    fn scan_log_and_activation_summary() {
+        let store = Store::open_in_memory().unwrap();
+
+        // 建库即有 first_boot（分母不依赖任何扫描/清理动作）
+        let a0 = store.activation_summary().unwrap();
+        let boot = a0.first_boot_ts.expect("first_boot 应在建库时写入");
+        assert_eq!(a0.first_scan_ts, None);
+        assert_eq!(a0.first_cut_ts, None);
+        assert_eq!(a0.cut_sessions, 0);
+
+        store.scan_log_add(100, "full").unwrap();
+        store.scan_log_add(200, "incr").unwrap();
+        // 同一次清理三个分组共享同一 ts：次数 = 1，不是 3
+        store
+            .cut_add(&[("npm 缓存", 100), ("pip 缓存", 200), ("yarn 缓存", 300)], 300)
+            .unwrap();
+
+        let a = store.activation_summary().unwrap();
+        assert_eq!(a.first_scan_ts, Some(100));
+        assert_eq!(a.scan_count, 2);
+        assert_eq!(a.first_cut_ts, Some(300));
+        assert_eq!(a.cut_sessions, 1);
+        assert_eq!(a.cut_total_bytes, 600);
+        assert_eq!(a.cut_rows, 3);
+        // first_boot 与固定测试 ts 不可比（一个是真实时钟），只断言存在且稳定
+        assert_eq!(a.first_boot_ts, Some(boot));
+    }
+
+    #[test]
+    fn first_boot_written_once_across_reopen() {
+        let path = std::env::temp_dir().join(format!("prune-boot-test-{}.db", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let boot0;
+        {
+            let store = Store::open(&path).unwrap();
+            boot0 = store.activation_summary().unwrap().first_boot_ts.unwrap();
+        }
+        {
+            // 重开（时间已前进）：first_boot 不得被刷新
+            let store = Store::open(&path).unwrap();
+            let boot1 = store.activation_summary().unwrap().first_boot_ts.unwrap();
+            assert_eq!(boot0, boot1, "first_boot 只写一次，重开不刷新");
         }
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("db-wal"));

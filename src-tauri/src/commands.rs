@@ -193,6 +193,35 @@ pub fn port_set_active(state: State<'_, Arc<PortState>>, active: bool) {
     state.set_active(active);
 }
 
+/// L1 服务探针：对单个端口做一次协议握手（Web HEAD / MCP initialize / banner）。
+///
+/// **用户显式触发**（行内「探测」按钮）——它发包，绝不静默批量扫描（调研 §5）。
+/// 结果按 `(port, pid, start_time)` 缓存在 PortState：进程活着协议就不变，
+/// 重探只会堆积 MCP session。
+#[tauri::command]
+pub async fn port_probe(
+    app: AppHandle,
+    port: u16,
+    pid: Option<i32>,
+    start_time: Option<u64>,
+) -> Result<prune_core::net::probe::ProbeOutcome, String> {
+    use prune_core::net::probe;
+
+    let state = app.state::<Arc<PortState>>().inner().clone();
+    let key = (port, pid.unwrap_or(-1), start_time.unwrap_or(0));
+    if let Some(hit) = state.probe_get(&key) {
+        return Ok(hit);
+    }
+    tauri::async_runtime::spawn_blocking(move || {
+        let out = probe::probe(port)
+            .ok_or_else(|| "探测失败：端口无法建立连接（服务可能已退出）".to_string())?;
+        state.probe_put(key, out.clone());
+        Ok(out)
+    })
+    .await
+    .map_err(|e| format!("探测线程失败: {e}"))?
+}
+
 // ---------------------------------------------------------------- 应用磁盘（M8）
 
 /// 家族磁盘测量缓存。放在壳层而不是 core：它是有状态的（TTL），
