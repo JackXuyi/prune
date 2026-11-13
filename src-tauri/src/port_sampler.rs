@@ -33,6 +33,9 @@ pub struct PortState {
     snapshot: Mutex<Option<PortSnapshot>>,
     /// 跨轮的项目归属缓存（cwd 查询 20 ms/进程，dev server 的 cwd 不会变）
     cache: Mutex<net_host::ProjectCache>,
+    /// L1 探针结果缓存。键 `(port, pid, start_time)`——进程活着、端口没变
+    /// 则协议不变，重探只会堆积 MCP session。容量熔断见 [`Self::probe_put`]。
+    probe_cache: Mutex<HashMap<(u16, i32, u64), prune_core::net::probe::ProbeOutcome>>,
     /// 单飞闸门：定时器轮与手动刷新共用（绝不允许两轮 lsof 并行）
     in_flight: AtomicBool,
     /// 是否有可见消费者（主窗口停在端口 tab）。false 时定时器不跑
@@ -52,11 +55,34 @@ impl PortState {
         Self {
             snapshot: Mutex::new(None),
             cache: Mutex::new(net_host::ProjectCache::new()),
+            probe_cache: Mutex::new(HashMap::new()),
             in_flight: AtomicBool::new(false),
             active: AtomicBool::new(false),
             last_at: Mutex::new(None),
             last_ms: Mutex::new(0),
         }
+    }
+
+    /// 探针缓存读取。未命中 = None（不是「不是服务」）。
+    pub fn probe_get(
+        &self,
+        key: &(u16, i32, u64),
+    ) -> Option<prune_core::net::probe::ProbeOutcome> {
+        self.probe_cache
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .get(key)
+            .cloned()
+    }
+
+    /// 探针缓存写入。容量 256 熔断：探针由用户逐行触发，正常会话到不了这个量；
+    /// 真到了就整体清空重来（缓存丢失的代价只是一次重探）。
+    pub fn probe_put(&self, key: (u16, i32, u64), out: prune_core::net::probe::ProbeOutcome) {
+        let mut cache = self.probe_cache.lock().unwrap_or_else(|e| e.into_inner());
+        if cache.len() >= 256 && !cache.contains_key(&key) {
+            cache.clear();
+        }
+        cache.insert(key, out);
     }
 
     pub fn snapshot(&self) -> Option<PortSnapshot> {

@@ -20,6 +20,7 @@ import type {
   PortEntry,
   PortSnapshot,
   Proto,
+  ServiceKind,
   SpeedResult,
 } from "../types/net";
 import { dayString } from "./format";
@@ -531,7 +532,12 @@ export function devPortSnapshot(): PortSnapshot {
   const row = (
     port: number,
     listeners: PortBinding[],
-    extra: { conns?: number | null; note?: string | null; watched?: boolean } = {},
+    extra: {
+      conns?: number | null;
+      note?: string | null;
+      watched?: boolean;
+      service?: ServiceKind | null;
+    } = {},
   ): PortEntry => ({
     port,
     proto: listeners[0].proto,
@@ -544,6 +550,7 @@ export function devPortSnapshot(): PortSnapshot {
         : "loopback",
     watched: extra.watched ?? true,
     note: extra.note ?? null,
+    service: extra.service ?? null,
   });
 
   const GIT = "/Users/dev/Desktop/git";
@@ -558,13 +565,13 @@ export function devPortSnapshot(): PortSnapshot {
     }),
     row(1430, [bind(1430, "127.0.0.1", 3310, "cargo", { project: ["prune", `${GIT}/prune`] })], { conns: 1 }),
     row(3118, [bind(3118, "*", 4187, "node", { project: ["meetily/frontend", `${GIT}/meetily/frontend`] })], { conns: 3 }),
-    row(3000, [bind(3000, "*", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { conns: 6 }),
-    row(4173, [bind(4173, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })]),
-    row(5173, [bind(5173, "127.0.0.1", 6021, "node", { project: ["admin-web", `${GIT}/oa/admin-web`] })], { conns: 2 }),
-    row(5432, [bind(5432, "127.0.0.1", 812, "postgres"), bind(5432, "::1", 812, "postgres", { v6: true })], { conns: 4 }),
-    row(6379, [bind(6379, "127.0.0.1", 820, "redis-server")], { conns: 2 }),
-    row(27017, [bind(27017, "127.0.0.1", 840, "mongod")], { conns: 1 }),
-    row(9229, [bind(9229, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })]),
+    row(3000, [bind(3000, "*", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { conns: 6, service: "devserver" }),
+    row(4173, [bind(4173, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { service: "devserver" }),
+    row(5173, [bind(5173, "127.0.0.1", 6021, "node", { project: ["admin-web", `${GIT}/oa/admin-web`] })], { conns: 2, service: "devserver" }),
+    row(5432, [bind(5432, "127.0.0.1", 812, "postgres"), bind(5432, "::1", 812, "postgres", { v6: true })], { conns: 4, service: "database" }),
+    row(6379, [bind(6379, "127.0.0.1", 820, "redis-server")], { conns: 2, service: "database" }),
+    row(27017, [bind(27017, "127.0.0.1", 840, "mongod")], { conns: 1, service: "database" }),
+    row(9229, [bind(9229, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { service: "debug" }),
     row(22, [bind(22, "*", 1, "launchd")], { conns: 0 }),
     row(631, [bind(631, "127.0.0.1", 588, "cupsd")], { conns: 0 }),
     row(53, [bind(53, "*", 210, "mDNSResponder", { proto: "udp" })], { conns: null }),

@@ -68,6 +68,26 @@ const zh = {
   foldedNote: "· 应用内部 IPC / 系统服务，通常不是你的服务",
   footer: "{ports} 个端口 · 关注 {watched} · 扫描 {ms} ms · {clock}",
 
+  /** 服务类型：推断（L0）/ 探针确认（L1）两档，提示词必须分清不许混 */
+  service: {
+    web: "Web",
+    devserver: "Dev",
+    database: "数据库",
+    mcp: "MCP",
+    proxy: "代理",
+    debug: "调试",
+    other: "服务",
+    hintInferred: "由端口与进程名推断，仅供参考。点「探测」可与端口握手确认",
+    hintConfirmed: "与端口握手确认的服务类型",
+    hintStdio: "stdio 型 MCP 不监听端口，这里只能识别网络型 MCP",
+  },
+
+  probe: {
+    action: "探测",
+    running: "探测中…",
+    failed: "探测失败",
+  },
+
   subpage: {
     ports: "端口",
     lan: "局域网",
@@ -134,6 +154,27 @@ const en: MessageTree<typeof zh> = {
   folded: "{n} more ports",
   foldedNote: "· app-internal IPC / system services, usually not your own servers",
   footer: "{ports} ports · focus {watched} · scanned in {ms} ms · {clock}",
+
+  service: {
+    web: "Web",
+    devserver: "Dev",
+    database: "Database",
+    mcp: "MCP",
+    proxy: "Proxy",
+    debug: "Debugger",
+    other: "Service",
+    hintInferred:
+      "Guessed from the port and process name — hit “Probe” to confirm by handshake",
+    hintConfirmed: "Service type confirmed by protocol handshake",
+    hintStdio:
+      "stdio MCP servers don't listen on ports — only network MCP can be detected here",
+  },
+
+  probe: {
+    action: "Probe",
+    running: "Probing…",
+    failed: "Probe failed",
+  },
 
   subpage: {
     ports: "Ports",

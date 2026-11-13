@@ -4,8 +4,14 @@ import { create } from "zustand";
 import { tGlobal } from "../i18n/store";
 
 import { devPortSnapshot } from "../lib/devFixture";
-import { isTauri, portRefresh, portSetActive, portSnapshot } from "../lib/ipc";
-import type { PortSnapshot } from "../types/net";
+import { isTauri, portProbe, portRefresh, portSetActive, portSnapshot } from "../lib/ipc";
+import type { PortEntry, PortSnapshot, ProbeOutcome } from "../types/net";
+
+/** 探针结果的键：`(port, pid, start_time)` 与 Rust 缓存同源 */
+export function probeKey(entry: PortEntry): string {
+  const b = entry.listeners.find((x) => x.pid != null) ?? entry.listeners[0];
+  return `${entry.port}:${b?.pid ?? 0}:${b?.startTime ?? 0}`;
+}
 
 interface PortStore {
   /**
@@ -24,6 +30,12 @@ interface PortStore {
    * 只消费一次，PortBoard 读完就清空，否则用户手动改了搜索又会被拉回去。
    */
   focusQuery: string;
+  /** L1 探针结果（确认级）。与快照独立——快照刷新不清空，键稳定时结果仍有效 */
+  probeResults: Record<string, ProbeOutcome>;
+  /** 探测中的行（键同 probeResults） */
+  probing: Record<string, boolean>;
+  /** 探测失败的原因（连接失败 / 服务已退出） */
+  probeErrors: Record<string, string>;
   init: () => Promise<void>;
   refresh: () => Promise<void>;
   setActive: (active: boolean) => Promise<void>;
@@ -32,6 +44,8 @@ interface PortStore {
   clearFocus: () => void;
   /** 只读已有快照，不触发扫描：给「应用行端口徽标」用，避免为了一枚徽标在启动时跑 lsof */
   hydrate: () => Promise<void>;
+  /** L1 探测一行端口。用户显式触发；Rust 侧有缓存，重复点击零网络开销 */
+  probe: (entry: PortEntry) => Promise<void>;
 }
 
 /** StrictMode 下 effect 跑两次：初始化与订阅只做一次 */
@@ -45,6 +59,9 @@ export const usePortStore = create<PortStore>((set, get) => ({
   error: null,
   showFolded: false,
   focusQuery: "",
+  probeResults: {},
+  probing: {},
+  probeErrors: {},
 
   init: async () => {
     if (initStarted) return;
@@ -116,6 +133,24 @@ export const usePortStore = create<PortStore>((set, get) => ({
       if (snapshot) set({ snapshot, loading: false });
     } catch {
       // 只读探测失败就保持「还没扫」，不打扰用户
+    }
+  },
+
+  probe: async (entry) => {
+    const key = probeKey(entry);
+    if (get().probing[key] || get().probeResults[key]) return;
+    const b = entry.listeners.find((x) => x.pid != null) ?? entry.listeners[0];
+    set({
+      probing: { ...get().probing, [key]: true },
+      probeErrors: { ...get().probeErrors, [key]: "" },
+    });
+    try {
+      const out = await portProbe(entry.port, b?.pid ?? null, b?.startTime ?? 0);
+      set({ probeResults: { ...get().probeResults, [key]: out } });
+    } catch (e) {
+      set({ probeErrors: { ...get().probeErrors, [key]: String(e) } });
+    } finally {
+      set({ probing: { ...get().probing, [key]: false } });
     }
   },
 }));

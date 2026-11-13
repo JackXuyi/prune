@@ -8,7 +8,7 @@ import { EmptyState } from "./EmptyArt";
 import { LanBoard } from "./LanBoard";
 import { formatClock } from "../lib/format";
 import { useI18n } from "../i18n/store";
-import { usePortStore } from "../stores/portStore";
+import { probeKey, usePortStore } from "../stores/portStore";
 import {
   canKillOwner,
   dualStack,
@@ -18,6 +18,7 @@ import {
   localUrl,
   ownersOf,
   primaryOf,
+  serviceLabel,
   splitLayers,
   type PortBinding,
   type PortEntry,
@@ -353,6 +354,19 @@ function PortRow({
   const url = localUrl(entry.port);
   const dual = dualStack(entry);
 
+  // 服务类型：L1 探针结果（确认）优先于 L0 推断。键与 Rust 缓存同源。
+  const key = probeKey(entry);
+  const probeResult = usePortStore((s) => s.probeResults[key]);
+  const probing = usePortStore((s) => s.probing[key]) ?? false;
+  const probeError = usePortStore((s) => s.probeErrors[key]) ?? "";
+  const probe = usePortStore((s) => s.probe);
+  const serviceKind = probeResult?.kind ?? entry.service;
+
+  const probeTitle = probeResult
+    ? t("ports.service.hintConfirmed") +
+      (probeResult.detail ? ` · ${probeResult.detail}` : "")
+    : t("ports.service.hintInferred");
+
   return (
     <li>
       <div
@@ -374,10 +388,19 @@ function PortRow({
           <span className="text-[9px] uppercase text-ink-faint">{entry.proto}</span>
         </span>
 
-        <span>
+        <span className="flex flex-col items-start gap-1">
           <Badge tone={exposure.tone} title={exposure.hint}>
             {exposure.label}
           </Badge>
+          {serviceKind ? (
+            <Badge
+              tone={probeResult ? "accent" : "info"}
+              title={probeTitle + (serviceKind === "mcp" ? ` ${t("ports.service.hintStdio")}` : "")}
+            >
+              {serviceLabel(serviceKind, locale)}
+              {probeResult ? " ✓" : " ?"}
+            </Badge>
+          ) : null}
         </span>
 
         <span className="w-[216px] min-w-0">
@@ -391,6 +414,17 @@ function PortRow({
             {owners.length > 1 ? <span>{t("ports.row.owners", { n: owners.length })}</span> : null}
             {dual ? <span>IPv4+IPv6</span> : null}
             {system ? <span className="text-ink-faint">{t("ports.row.system")}</span> : null}
+            {primary?.pid != null && entry.proto === "tcp" && !probeResult ? (
+              <button
+                type="button"
+                disabled={probing}
+                onClick={() => void probe(entry)}
+                title={t("ports.service.hintInferred")}
+                className="shrink-0 text-accent opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-60"
+              >
+                {probing ? t("ports.probe.running") : t("ports.probe.action")}
+              </button>
+            ) : null}
           </span>
         </span>
 
@@ -431,6 +465,11 @@ function PortRow({
       {/* 内置解释（AirPlay 5000/7000）：命中才出现，不占位 */}
       {entry.note ? (
         <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-warn">{entry.note}</p>
+      ) : null}
+      {probeError ? (
+        <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-warn">
+          {t("ports.probe.failed")} · {probeError}
+        </p>
       ) : null}
       {/* 开发服务（有 cwd 归属）才给 loopback 地址：GUI 应用那行贴个 URL 只是噪音 */}
       {primary?.project && entry.proto === "tcp" ? (

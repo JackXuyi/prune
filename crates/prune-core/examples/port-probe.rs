@@ -48,13 +48,13 @@ fn main() {
     println!();
 
     println!(
-        "{:<6}{:<6}{:<10}{:<20}{:<30}{:<8}分层",
-        "端口", "协议", "暴露面", "进程", "项目", "连接"
+        "{:<6}{:<6}{:<10}{:<20}{:<30}{:<8}{:<10}分层",
+        "端口", "协议", "暴露面", "进程", "项目", "连接", "服务"
     );
     for e in &snap.entries {
         let b = e.primary();
         println!(
-            "{:<6}{:<6}{:<10}{:<20}{:<30}{:<8}{}",
+            "{:<6}{:<6}{:<10}{:<20}{:<30}{:<8}{:<10}{}",
             e.port,
             match e.proto {
                 prune_core::net::Proto::Tcp => "tcp",
@@ -64,6 +64,9 @@ fn main() {
             b.map(|x| x.comm.as_str()).unwrap_or("—"),
             b.and_then(|x| x.project_label.as_deref()).unwrap_or("—"),
             e.conns.map(|n| n.to_string()).unwrap_or_else(|| "—".into()),
+            e.service
+                .map(|k| format!("{:?}", k).to_lowercase())
+                .unwrap_or_else(|| "—".into()),
             if e.watched { "关注" } else { "折叠" },
         );
         if let Some(note) = &e.note {

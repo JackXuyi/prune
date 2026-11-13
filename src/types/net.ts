@@ -40,6 +40,42 @@ export interface PortEntry {
   watched: boolean;
   /** 内置解释（目前只有 AirPlay 5000/7000） */
   note: string | null;
+  /** 服务类型（L0 静态推断）；null = 推断不出，**不是「不是服务」** */
+  service: ServiceKind | null;
+}
+
+/** 端口提供的服务类型（与 Rust `ServiceKind` 同源，serde lowercase） */
+export type ServiceKind = "web" | "devserver" | "database" | "mcp" | "proxy" | "debug" | "other";
+
+/** L1 探针结果（Rust `probe::ProbeOutcome`）。「与端口握过手」的确认级结论 */
+export interface ProbeOutcome {
+  kind: ServiceKind;
+  /** HTTP Server 头 / MCP serverInfo.name / SSH 版本串；null = 协议无自述 */
+  detail: string | null;
+}
+
+/**
+ * 服务类型的展示文案。标签走静态 key（MessageKey 是严格类型，动态拼接过不了编译）；
+ * 提示词区分「推断」与「确认」两档——推断不准充「确认」就是撒谎。
+ */
+export function serviceLabel(kind: ServiceKind, locale: Locale = currentLocale()): string {
+  const { t } = i18nFor(locale);
+  switch (kind) {
+    case "web":
+      return t("ports.service.web");
+    case "devserver":
+      return t("ports.service.devserver");
+    case "database":
+      return t("ports.service.database");
+    case "mcp":
+      return t("ports.service.mcp");
+    case "proxy":
+      return t("ports.service.proxy");
+    case "debug":
+      return t("ports.service.debug");
+    default:
+      return t("ports.service.other");
+  }
 }
 
 /** 可见性说明：没有它就只能猜「端口是不是空闲」 */
