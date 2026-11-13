@@ -14,7 +14,14 @@
 //! **macOS 页面大小必须从 `vm_stat` 头部读取**——本机是 16384 B，
 //! 写死 4096 会让所有换算差 4 倍（docs/m2-memory-plan.md §2）。
 
-use super::{Pressure, PressureLevel, PressureMetric};
+use super::{Pressure, PressureLevel};
+
+// [`PressureMetric`] 只在 macOS（内核等级）与 Windows（占用率分档）两个分支里构造；
+// Linux 的 `read_pressure()` 直接返回 `None`，连类型名都不出现。不 gate 就是 Linux
+// 上的 unused import —— CI 的 `clippy -- -D warnings` 会把它当错误（v0.9.1 首次 CI
+// 红灯的成因）。
+#[cfg(any(target_os = "macos", windows))]
+use super::PressureMetric;
 
 #[cfg(target_os = "macos")]
 use std::process::Command;

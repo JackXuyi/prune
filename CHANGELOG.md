@@ -2,7 +2,13 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
-## 0.9.1
+## 0.9.2
+
+> v0.9.1 的 tag 因 CI 门禁红灯未产出安装包，内容合并到 0.9.2 一并发布（版本号不复用 tag）。
+
+### CI 门禁修复
+
+- **Linux 上的 unused import**：`mem/system.rs` 的 `PressureMetric` 只在 macOS（内核压力等级）与 Windows（占用率分档）分支里构造，Linux 的 `read_pressure()` 直接返回 `None`，类型名根本不出现。原导入没有按平台 gate，`clippy -- -D warnings` 在 ubuntu runner 上直接报错——而 macOS 本地永远编译不到那个组合，属于「本机全绿、CI 必红」的盲区。已改为 `#[cfg(any(target_os = "macos", windows))] use super::PressureMetric;`
 
 ### M30 修复：归档不再卡死（诊断 → [diag-m30-archive-freeze.md](./docs/diag-m30-archive-freeze.md)）
 
