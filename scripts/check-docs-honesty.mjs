@@ -4,13 +4,15 @@
  *
  *   检查 A —— MCP 工具对账：代码事实（prune-cli/src/mcp.rs 的 run_tool 分发臂
  *             与 tool_defs() 声明）必须与 README 声明的「N 个 / 工具清单」逐字一致。
+ *             **中英双版各查一遍**（README.md 英文默认版 / README.zh-CN.md 中文版），
+ *             缺一份即红——只查一份的话，另一份漂移就没人拦。
  *             三处不一致即非零退出。防止 README 工具数与实现漂移（v0.8.4 时代
  *             5→8 的漂移教训：工具加了、文档没跟，读者按文档调工具直接 unknown tool）。
  *
- *   检查 B —— 排他表述 sweep：面向外部的文档（README / CHANGELOG / 两份 spec）
- *             禁止出现「独家 / 只有 Prune / 仍无竞品跟进 / 唯一把…」类排他性
- *             竞争表述（DP-4 裁 A：全删，改可核验事实陈述）。phys_footprint 口径
- *             已被 RAMWatcher 复制的教训：排他句式不可自证，写出去就是诚信欠账。
+ *   检查 B —— 排他表述 sweep：面向外部的文档（README 中英双版 / CHANGELOG /
+ *             两份 spec）禁止出现「独家 / 只有 Prune / 仍无竞品跟进 / 唯一把…」类
+ *             排他性竞争表述（DP-4 裁 A：全删，改可核验事实陈述）。phys_footprint
+ *             口径已被 RAMWatcher 复制的教训：排他句式不可自证，写出去就是诚信欠账。
  *             语义性的「唯一」（唯一入口 / 唯一一次隐私弹窗 / 唯一破例）不匹配模式，
  *             不误伤；确需保留的表述可用 `<!-- 诚信检查豁免: 理由 -->` 行内标注。
  *
@@ -109,43 +111,60 @@ if (rejectedVerbs.length === 0) {
   );
 }
 
-// A4. README 声明段对账
-const readme = readFileSync(join(root, 'README.md'), 'utf8');
-const readmeLines = readme.split('\n');
-const headIdx = readmeLines.findIndex((l) => l.includes('MCP 工具（'));
-if (headIdx === -1) {
-  problems.push('README 里找不到「MCP 工具（N 个…」声明段');
-} else {
-  // 段落从声明头一直收到以「）。」结尾的行（工具清单跨多行）
-  let para = '';
-  for (let i = headIdx; i < readmeLines.length; i++) {
-    para += readmeLines[i] + '\n';
-    if (/）。\s*$/.test(readmeLines[i])) break;
+// A4. README 声明段对账（中英双版：README.md 默认英文，README.zh-CN.md 中文）
+//
+//     两份都要查——只查一份的话，另一份漂移就没人拦，而读者看哪一份都可能。
+//     声明头两种写法：英文 `**MCP tools (8, all read-only):**` / 中文
+//     `**MCP 工具（8 个，全部只读）：**`；工具名两种写法：`name`（描述）/
+//     `name` (description)。段落边界取「声明头 → 第一个空行」，工具清单跨行时
+//     不依赖句末标点（中英文句号不同，靠标点断句太脆）。
+const README_FILES = ['README.md', 'README.zh-CN.md'];
+const DECL_RE = /(?:工具[（(]|tools?\s*[（(])\s*(\d+)/;
+
+for (const rel of README_FILES) {
+  let text;
+  try {
+    text = readFileSync(join(root, rel), 'utf8');
+  } catch {
+    problems.push(`README 对账目标文件不存在: ${rel}（双语文档必须成对存在）`);
+    continue;
   }
-  const countM = para.match(/工具（(\d+) 个/);
-  // 工具名在 README 里的形态是 `name`（描述）——反引号后紧跟全角括号；
+  const lines = text.split('\n');
+  const headIdx = lines.findIndex((l) => /MCP/.test(l) && DECL_RE.test(l));
+  if (headIdx === -1) {
+    problems.push(`${rel} 里找不到「MCP tools (N…」/「MCP 工具（N 个…」声明段`);
+    continue;
+  }
+
+  let para = '';
+  for (let i = headIdx; i < lines.length; i++) {
+    if (i > headIdx && lines[i].trim() === '') break;
+    para += lines[i] + '\n';
+  }
+  const countM = para.match(DECL_RE);
+  // 工具名在 README 里的形态是 `name`（描述）——反引号后紧跟括号（中英双版）；
   // 段内其他反引号 token（如 `coverage`）后面是普通文字，不会被捕获。
-  const readmeTools = [...para.matchAll(/`([a-z_]+)`（/g)].map((m) => m[1]);
+  const readmeTools = [...para.matchAll(/`([a-z_]+)`\s*[（(]/g)].map((m) => m[1]);
 
   if (countM) {
     const declared = Number(countM[1]);
     if (declared !== dispatchTools.length) {
       problems.push(
-        `README 声明 MCP 工具 ${declared} 个，代码实际可分发 ${dispatchTools.length} 个` +
+        `${rel} 声明 MCP 工具 ${declared} 个，代码实际可分发 ${dispatchTools.length} 个` +
           `（${dispatchTools.join(', ')}）`,
       );
     }
   } else {
-    problems.push('README「MCP 工具（N 个」的数字解析失败');
+    problems.push(`${rel}「MCP tools (N」/「MCP 工具（N 个」的数字解析失败`);
   }
 
   const missingInReadme = dispatchTools.filter((t) => !readmeTools.includes(t));
   const extraInReadme = readmeTools.filter((t) => !dispatchTools.includes(t));
   if (missingInReadme.length) {
-    problems.push(`README MCP 清单缺工具: ${missingInReadme.join(', ')}`);
+    problems.push(`${rel} MCP 清单缺工具: ${missingInReadme.join(', ')}`);
   }
   if (extraInReadme.length) {
-    problems.push(`README MCP 清单多出（非工具）条目: ${extraInReadme.join(', ')}`);
+    problems.push(`${rel} MCP 清单多出（非工具）条目: ${extraInReadme.join(', ')}`);
   }
 }
 
@@ -155,6 +174,7 @@ if (headIdx === -1) {
 
 const PUBLIC_DOCS = [
   'README.md',
+  'README.zh-CN.md',
   'CHANGELOG.md',
   'docs/prune-feature-spec-v2.md',
   'docs/prune-tauri-technical-plan.md',
