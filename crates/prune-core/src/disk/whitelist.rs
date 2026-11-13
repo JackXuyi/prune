@@ -16,6 +16,9 @@
 //! AI 应用条目（2026-11）：本机实测 + DevCleaner / CacheCleaner / Mole 竞品字段指南对齐——
 //! 三家均把 Cursor / Claude / Ollama 缓存列为 Safe 类，但**均按路径扫**；
 //! 本表延续同一口径，并显式排除「可再生」与「用户状态」的模糊地带（见各条目注释）。
+//! 二期（2026-11-13，[f11](../../../docs/f11-ai-cache-2-plan.md)）：OpenAI 家族 /
+//! Codex CLI / HuggingFace / LM Studio / Windows 侧 AI 条目，逐条本机实测后登记；
+//! **Atlas 整目录因 browser-data（站点登录态）混入 Caches 而永不登记**。
 //! 级别语义见 `docs/prune-feature-spec-v2.md` §7.1。
 
 use std::path::{Path, PathBuf};
@@ -377,6 +380,87 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         a1_scope: false,
         os: Os::All,
     },
+    // OpenAI 家族（二期 f11，2026-11-13 本机实测）：
+    // ⚠️ `Library/Caches/com.openai.atlas` **永不登记**——459 MB 里 458 MB 是
+    // browser-data（Chromium profile：host/Default、login-staging 站点登录态），
+    // 与 HTTP 缓存混在同一目录，目录粒度做不到「只删缓存不登出网站」，宁可错过。
+    // ⚠️ `Library/Application Support/Codex` 本体含 Cookies / Local Storage /
+    // Session Storage，只登记其 Cache 子目录（纯 Chromium HTTP 缓存）。
+    // ⚠️ `Application Support/com.openai.chat` / `com.openai.atlas` 根下是
+    // conversations-v3 / drafts 等对话与浏览数据，永不登记。
+    WhitelistEntry {
+        key: "chatgpt-caches",
+        label: "ChatGPT 桌面缓存",
+        rel: "Library/Caches/com.openai.chat",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "codex-app-caches",
+        label: "Codex 桌面缓存",
+        rel: "Library/Caches/com.openai.codex",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "codex-legacy-caches",
+        label: "Codex 旧 bundle 缓存",
+        rel: "Library/Caches/Codex",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    WhitelistEntry {
+        key: "codex-app-cache",
+        label: "Codex 桌面 HTTP 缓存",
+        rel: "Library/Application Support/Codex/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // Cursor CLI 的 node 编译缓存（Library/Caches/cursor-compile-cache，
+    // 按 node 版本分桶，24 MB 实测），与上面 Application Support 侧六条互补。
+    WhitelistEntry {
+        key: "cursor-compile-cache",
+        label: "Cursor CLI 编译缓存",
+        rel: "Library/Caches/cursor-compile-cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::MacOnly,
+    },
+    // Codex CLI：只登记 cache/ 子目录（应用目录 / 工具目录 / 插件目录缓存，
+    // 全部可再生）。sessions / history.jsonl / config.toml / auth.json /
+    // memories_1.sqlite 是会话与凭据，永不登记；logs_2.sqlite 是文件（机制只收
+    // 目录）且删主库文件影响未实测，不赌。
+    WhitelistEntry {
+        key: "codex-cli-cache",
+        label: "Codex CLI 目录缓存",
+        rel: ".codex/cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::All,
+    },
+    // 模型权重类（🟡 L3）：可重下但代价高，逐项确认。HuggingFace hub 是本地
+    // LLM / diffusers 生态的事实标准缓存；LM Studio 用官方默认目录（本机未装时
+    // resolve 自动跳过，不编造体积）。
+    WhitelistEntry {
+        key: "huggingface-hub",
+        label: "HuggingFace 模型权重（可重下）",
+        rel: ".cache/huggingface/hub",
+        level: Level::L3,
+        a1_scope: false,
+        os: Os::All,
+    },
+    WhitelistEntry {
+        key: "lmstudio-models",
+        label: "LM Studio 模型权重（可重下）",
+        rel: ".cache/lm-studio/models",
+        level: Level::L3,
+        a1_scope: false,
+        os: Os::All,
+    },
     // ---------- Xcode 补扫（2026-11：DerivedData/DeviceSupport/Archives 等既有条目之外的缺口） ----------
     WhitelistEntry {
         key: "xcode-ibsupport",
@@ -498,6 +582,60 @@ pub const ENTRIES: &[WhitelistEntry] = &[
         label: "Cypress 二进制",
         rel: "AppData/Local/Cypress/Cache",
         level: Level::L3,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    // ---------- Windows AI 应用（二期 f11）----------
+    // 依据 Electron / VS Code 系通用布局（%APPDATA% = Roaming 下放 Cache /
+    // CachedData / GPUCache / logs）+ DevCleaner 字段指南，真机待验；路径偏差的
+    // 后果是「扫不出」（root 不存在时 is_whitelisted 恒 false），无误删风险。
+    // %APPDATA%\Cursor / %APPDATA%\Claude 本体（state.vscdb / workspaceStorage /
+    // 对话数据）永不登记，与 macOS 同口径。
+    WhitelistEntry {
+        key: "win-cursor-cache",
+        label: "Cursor HTTP 缓存（Windows）",
+        rel: "AppData/Roaming/Cursor/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-cursor-cacheddata",
+        label: "Cursor V8 代码缓存（Windows）",
+        rel: "AppData/Roaming/Cursor/CachedData",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-cursor-gpu",
+        label: "Cursor GPU 缓存（Windows）",
+        rel: "AppData/Roaming/Cursor/GPUCache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-cursor-logs",
+        label: "Cursor 日志（Windows）",
+        rel: "AppData/Roaming/Cursor/logs",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-claude-cache",
+        label: "Claude HTTP 缓存（Windows）",
+        rel: "AppData/Roaming/Claude/Cache",
+        level: Level::L2,
+        a1_scope: false,
+        os: Os::WindowsOnly,
+    },
+    WhitelistEntry {
+        key: "win-claude-gpu",
+        label: "Claude GPU 缓存（Windows）",
+        rel: "AppData/Roaming/Claude/GPUCache",
+        level: Level::L2,
         a1_scope: false,
         os: Os::WindowsOnly,
     },
@@ -694,24 +832,107 @@ mod tests {
     #[test]
     fn ai_entries_never_touch_user_state() {
         // 红线测试：AI 应用的「用户状态」目录永不入白名单
-        // （state.vscdb = AI 聊天记录，workspaceStorage = 工作区状态，projects = 会话记录）
+        // （state.vscdb = AI 聊天记录，workspaceStorage = 工作区状态，projects =
+        // 会话记录，sessions/history = Codex 会话，browser-data = Atlas 站点登录态，
+        // Cookies/Local Storage = 凭据与站点状态，ai-tracking = 行为记录）
         let banned = [
             "state.vscdb",
             "workspaceStorage",
             "anysphere.cursor-agent-worker",
             "projects",
+            "sessions",
+            "history",
+            "auth",
+            "Cookies",
+            "browser-data",
+            "conversations",
+            "drafts",
+            "ai-tracking",
+            "Local Storage",
         ];
         for e in ENTRIES.iter() {
-            if e.key.starts_with("cursor-") || e.key.starts_with("claude-") {
+            if e.key.starts_with("cursor-")
+                || e.key.starts_with("claude-")
+                || e.key.starts_with("codex-")
+                || e.key.starts_with("chatgpt-")
+                || e.key.starts_with("win-cursor-")
+                || e.key.starts_with("win-claude-")
+            {
                 for b in banned {
                     assert!(
                         !e.rel.contains(b),
-                        "{} 指向了用户状态路径（含 {b}），AI 聊天记录不可再生",
+                        "{} 指向了用户状态路径（含 {b}），AI 聊天/凭据不可再生",
                         e.key
                     );
                 }
             }
         }
+    }
+
+    #[test]
+    fn ai_second_wave_entries_registered() {
+        // 二期（f11）：OpenAI 家族 / Codex CLI / 权重类 / Windows 侧，key → 期望级别
+        let expect_l2 = [
+            ("chatgpt-caches", Os::MacOnly),
+            ("codex-app-caches", Os::MacOnly),
+            ("codex-legacy-caches", Os::MacOnly),
+            ("codex-app-cache", Os::MacOnly),
+            ("cursor-compile-cache", Os::MacOnly),
+            ("codex-cli-cache", Os::All),
+        ];
+        for (k, os) in expect_l2 {
+            let e = ENTRIES.iter().find(|e| e.key == k).expect("登记项应存在");
+            assert_eq!(e.level, Level::L2, "{k} 应为 L2");
+            assert_eq!(e.os, os, "{k} 平台标记错误");
+        }
+        // 权重类一律 L3：可重下但代价高，逐项确认，与 L2 缓存类分离
+        for k in ["huggingface-hub", "lmstudio-models", "ollama-models"] {
+            let e = ENTRIES.iter().find(|e| e.key == k).expect("登记项应存在");
+            assert_eq!(e.level, Level::L3, "{k} 是模型权重，必须逐项确认");
+            assert_eq!(e.os, Os::All, "{k} 是 home 相对路径，两端通用");
+        }
+        // Windows 侧 AI 条目：Electron 系缓存落 %APPDATA%（Roaming）
+        for k in [
+            "win-cursor-cache",
+            "win-cursor-cacheddata",
+            "win-cursor-gpu",
+            "win-cursor-logs",
+            "win-claude-cache",
+            "win-claude-gpu",
+        ] {
+            let e = ENTRIES.iter().find(|e| e.key == k).expect("登记项应存在");
+            assert_eq!(e.level, Level::L2, "{k} 应为 L2");
+            assert!(
+                e.rel.starts_with("AppData/Roaming/"),
+                "{k} 的 AI 桌面端缓存按 Electron 布局应在 Roaming 下，实际 {}",
+                e.rel
+            );
+        }
+    }
+
+    #[test]
+    fn atlas_whole_directory_is_never_registered() {
+        // 红线：Atlas 的 Caches 目录里 browser-data（站点登录态）与 HTTP 缓存混放，
+        // 目录粒度做不到「只删缓存不登出网站」→ 宁可错过，整目录永不登记
+        assert!(
+            !ENTRIES.iter().any(|e| e.rel.contains("com.openai.atlas")),
+            "com.openai.atlas 不得出现在白名单（browser-data 混放）"
+        );
+        // 同理：Codex 的 Application Support 根（含 Cookies / Local Storage）
+        // 只允许登记其 Cache 子目录
+        assert!(
+            !ENTRIES
+                .iter()
+                .any(|e| e.rel == "Library/Application Support/Codex"),
+            "AS/Codex 根目录不得登记，只允许 /Cache 子目录"
+        );
+        // Codex CLI 的会话与凭据目录/文件不得登记（只允许 cache/ 子目录）
+        assert!(
+            !ENTRIES
+                .iter()
+                .any(|e| e.rel.starts_with(".codex/") && e.rel != ".codex/cache"),
+            ".codex 下只允许登记 cache/ 子目录"
+        );
     }
 
     #[test]
