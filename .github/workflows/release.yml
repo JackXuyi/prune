@@ -1,8 +1,11 @@
 name: Release Desktop
 
 # 触发：
-#   - push tag（v0.1.1 之类）：三平台并行构建，产物挂到 Draft Release
-#   - 手动 workflow_dispatch：用当前版本号构建，同样产出 Draft Release（不会自动改版本号）
+#   - push tag（v0.1.1 之类）：三平台并行构建，产物先挂到 Draft Release；
+#     `release-notes` job 在三条 bundle 全部成功后同步正文并发布（draft → public），
+#     因为草稿对 updater 的 latest.json 不可见，留草稿等于自动更新收不到这一版
+#   - 手动 workflow_dispatch：用当前版本号构建（不会自动改版本号），同样走
+#     Draft → 正文同步 → 发布的完整链路；对已存在的同版本 Release 是幂等重跑
 #
 # 版本号由 scripts/bump-version.mjs 统一维护（package.json / tauri.conf.json / src-tauri/Cargo.toml），
 # 因此打 tag 前请先 pnpm bump，否则 verify 任务会直接失败。
@@ -385,15 +388,23 @@ jobs:
               'macOS 首次打开若提示未验证开发者：右键 → 打开，或 `xattr -cr /Applications/Prune.app`。',
             ].join('\n');
             const body = section ? `${table}\n\n${section}` : table;
-            const rel = await fetch(`https://api.github.com/repos/${repo}/releases/tags/${tag}`, { headers });
-            if (!rel.ok) throw new Error(`GET release failed: ${rel.status} ${await rel.text()}`);
-            const meta = await rel.json();
+            // 草稿 Release 不能走 /releases/tags/{tag}：GitHub 对 draft 一律返回 404
+            // （v0.9.4 / v0.10.0 首发的真实失败原因——三条 bundle 全绿、只有本步挂掉）。
+            // 列表端点在 contents:write 下包含草稿，按 tag_name 匹配才是可靠路径。
+            const listRes = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
+            if (!listRes.ok) throw new Error(`GET releases failed: ${listRes.status} ${await listRes.text()}`);
+            const releases = await listRes.json();
+            const meta = releases.find((r) => r.tag_name === tag);
+            if (!meta) throw new Error(`找不到 ${tag} 的 Release：tauri-action 的三条 bundle 是否都上传成功？`);
+            // draft: false 一并发布：tag 推送本身就是「发这一版」的意图，
+            // 而草稿状态的 Release 对 updater 的 latest.json 不可见——留草稿等于
+            // 自动更新永远收不到这一版。正文同步成功后才发布，失败则保持草稿。
             const patch = await fetch(`https://api.github.com/repos/${repo}/releases/${meta.id}`, {
               method: 'PATCH',
               headers: { ...headers, 'Content-Type': 'application/json' },
-              body: JSON.stringify({ body }),
+              body: JSON.stringify({ body, draft: false }),
             });
             if (!patch.ok) throw new Error(`PATCH release failed: ${patch.status} ${await patch.text()}`);
-            console.log(`✓ GitHub Release #${meta.id} 正文已同步：下载表 + CHANGELOG${section ? ` ${tag} 段` : '（无本版段）'}`);
+            console.log(`✓ GitHub Release #${meta.id} 已同步正文并发布：下载表 + CHANGELOG${section ? ` ${tag} 段` : '（无本版段）'}`);
           })().catch((e) => { console.error(e); process.exit(1); });
           NODE_SCRIPT
