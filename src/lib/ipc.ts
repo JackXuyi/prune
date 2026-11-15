@@ -26,6 +26,11 @@ import type {
   NetTotalSample,
   PortSnapshot,
   ProbeOutcome,
+  Site,
+  SiteCapability,
+  SiteList,
+  SiteProbe,
+  SiteRun,
   SpeedResult,
 } from "../types/net";
 
@@ -379,4 +384,46 @@ export function archiveCancel(): Promise<boolean> {
 /** 删除归档（必须 confirmed）：归档文件走废纸篓 + 移除账本条目 */
 export function archiveDelete(id: string, confirmed: boolean): Promise<void> {
   return invoke<void>("archive_delete", { id, confirmed });
+}
+
+// ---------------------------------------------------------------- 站点检测（F15，docs/net-sites-plan.md）
+
+/** 读站表（缺失 → 默认 10 站；损坏 → 默认 + recovered 提示） */
+export function netSitesList(): Promise<SiteList> {
+  return invoke<SiteList>("net_sites_list");
+}
+
+/** 保存站表：Rust 侧先校验后写，失败抛错（不写半套配置） */
+export function netSitesSave(sites: Site[]): Promise<SiteList> {
+  return invoke<SiteList>("net_sites_save", { sites });
+}
+
+/** 恢复默认 10 站（写 null，不是空数组——两者语义不同） */
+export function netSitesReset(): Promise<SiteList> {
+  return invoke<SiteList>("net_sites_reset");
+}
+
+/** curl 能力：false 时整页不可用（不硬编码平台） */
+export function netSitesCapability(): Promise<SiteCapability> {
+  return invoke<SiteCapability>("net_sites_capability");
+}
+
+/** 跑一轮全部站点（并发 4）；进度走 `net-sites://progress` 事件 */
+export function netSitesRun(): Promise<SiteRun> {
+  return invoke<SiteRun>("net_sites_run");
+}
+
+/** 单站重测（不改其它行）；已有上一轮结果时就地替换，保证「复制结果」与屏幕一致 */
+export function netSitesProbeOne(id: string): Promise<SiteProbe> {
+  return invoke<SiteProbe>("net_sites_probe_one", { id });
+}
+
+/** 取消：只拦「还没开始的站」，在飞的请求最多再跑 8 s */
+export function netSitesCancel(): Promise<void> {
+  return invoke<void>("net_sites_cancel");
+}
+
+/** 生成 Markdown 结果并写入系统剪贴板，返回字符数（Rust 侧原生写） */
+export function netSitesCopyReport(): Promise<number> {
+  return invoke<number>("net_sites_copy_report");
 }

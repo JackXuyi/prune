@@ -28,6 +28,9 @@ pub mod ports;
 /// L0 静态推断（`service.rs`）+ L1 主动探针（`probe.rs`，用户显式触发）。
 pub mod probe;
 pub mod service;
+/// 站点连通性 / 传输速率（docs/net-sites-plan.md，F15）：按站点测五阶段，
+/// 与 `diag` 的「网络哪一层慢」互补，不共用判定表
+pub mod sites;
 /// M14：系统口径总网速 + 每日流量（网卡分类 / 本地日期 / 数据契约）
 pub mod traffic;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof

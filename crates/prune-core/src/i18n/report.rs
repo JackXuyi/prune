@@ -10,6 +10,7 @@
 
 use crate::locale::Locale;
 use crate::net::diag::{CaptiveState, DiagStatus, LayerProbe, NetDiag, SpeedResult};
+use crate::net::sites::{FailStage, SiteProbe, SiteRun, SiteVerdict};
 
 use super::fill;
 
@@ -264,10 +265,198 @@ fn render_with(diag: &NetDiag, speed: Option<&SpeedResult>, t: &T) -> String {
     r
 }
 
+// ---------------------------------------------------------------- 站点检测报告（F15）
+
+/// 站点报告的语言表。与诊断报告同一纪律：布局在代码里，翻译只改字
+struct SiteT {
+    title: &'static str,
+    time: &'static str,
+    platform: &'static str,
+    scope: &'static str,
+    h2_table: &'static str,
+    /// 表头整行（列固定 10 个，翻译不动列数）
+    table_head: &'static str,
+    ok: &'static str,
+    slow: &'static str,
+    stalled: &'static str,
+    refused: &'static str,
+    unreachable: &'static str,
+    error: &'static str,
+    cancelled: &'static str,
+    dash: &'static str,
+    h2_notes: &'static str,
+    notes: &'static str,
+    footnote: &'static str,
+}
+
+const SITES_ZH: SiteT = SiteT {
+    title: "# Prune 站点检测报告\n\n",
+    time: "- 时间：<t:{ts}>（Unix 秒）\n",
+    platform: "- 平台：{p}\n",
+    scope: "- 范围：{n} 个站点 · 直连（不走系统代理）· 单次采样\n",
+    h2_table: "\n## 站点读数\n\n",
+    table_head: "| 站点 | 状态 | DNS | TCP | TLS | 首字节 | 速率 | 样本 | HTTP | 出口 IP |\n|---|---|---|---|---|---|---|---|---|---|\n",
+    ok: "正常",
+    slow: "偏慢",
+    stalled: "连上但无响应",
+    refused: "站点拒绝",
+    unreachable: "不可达",
+    error: "探测出错",
+    cancelled: "本轮被取消，以下为已完成的站点",
+    dash: "—",
+    h2_notes: "\n## 说明\n\n",
+    notes: "- 状态按断点判定：DNS / TCP / TLS / 首字节 / 传输，逐段短路；`无响应` 指握手完成但首字节始终不到。\n- `站点拒绝` 表示链路全通、站点返回 4xx/5xx（常见于反爬或区域限制），**不是连不上**。\n- 速率为「首字节之后」的传输速率，样本 < 200 KB 或传输 < 300 ms 时不给数字（只写样本量）。\n",
+    footnote: "\n> 口径：直连、不走系统或环境代理；只请求首页文档（≤ 2 MiB，不含图片/脚本等子资源）；不跟随重定向。以上读数用于同站前后对比，不是浏览体验的完整代理。\n",
+};
+
+const SITES_EN: SiteT = SiteT {
+    title: "# Prune site reachability report\n\n",
+    time: "- Time: <t:{ts}> (Unix seconds)\n",
+    platform: "- Platform: {p}\n",
+    scope: "- Scope: {n} sites · direct connection (system proxy bypassed) · single sample\n",
+    h2_table: "\n## Per-site readings\n\n",
+    table_head: "| Site | State | DNS | TCP | TLS | First byte | Rate | Sample | HTTP | Remote IP |\n|---|---|---|---|---|---|---|---|---|---|\n",
+    ok: "OK",
+    slow: "Slow",
+    stalled: "No response",
+    refused: "Refused",
+    unreachable: "Unreachable",
+    error: "Probe error",
+    cancelled: "This round was cancelled; only completed sites are listed",
+    dash: "—",
+    h2_notes: "\n## Notes\n\n",
+    notes: "- The state follows the first failing stage: DNS / TCP / TLS / first byte / transfer. `No response` means the handshake completed but the first byte never arrived.\n- `Refused` means the path is fully open and the site answered 4xx/5xx (bot protection or regional limits) — it is **not** an unreachable host.\n- Rate is the transfer phase after the first byte; no number is given when the sample is under 200 KB or shorter than 300 ms (only the sample size is reported).\n",
+    footnote: "\n> Scope: direct connection, system or environment proxies bypassed; only the home document is requested (≤ 2 MiB, no images/scripts); redirects are not followed. Use these numbers for before/after comparison of the same site, not as a complete proxy for browsing experience.\n",
+};
+
+fn site_table(l: Locale) -> &'static SiteT {
+    match l {
+        Locale::Zh => &SITES_ZH,
+        Locale::En => &SITES_EN,
+    }
+}
+
+fn fmt_ms(v: Option<f64>, dash: &str) -> String {
+    match v {
+        Some(v) => format!("{v:.0} ms"),
+        None => dash.to_string(),
+    }
+}
+
+/// 增量：`later − earlier`，任一缺失就 dash（不用 0 兜底）
+fn fmt_delta(later: Option<f64>, earlier: Option<f64>, dash: &str) -> String {
+    match (later, earlier) {
+        (Some(l), Some(e)) if l - e > 0.0 => format!("{:.0} ms", l - e),
+        _ => dash.to_string(),
+    }
+}
+
+fn fmt_rate(bps: Option<f64>, dash: &str) -> String {
+    match bps {
+        Some(v) if v >= 1_000_000.0 => format!("{:.1} MB/s", v / 1_000_000.0),
+        Some(v) => format!("{:.0} KB/s", v / 1_000.0),
+        None => dash.to_string(),
+    }
+}
+
+fn fmt_bytes(n: u64) -> String {
+    if n >= 1_000_000 {
+        format!("{:.1} MB", n as f64 / 1_000_000.0)
+    } else if n >= 1_000 {
+        format!("{:.0} KB", n as f64 / 1_000.0)
+    } else {
+        format!("{n} B")
+    }
+}
+
+/// 站点的状态词（报告用；UI 的文案在 TS catalog，两处措辞刻意保持一致）
+fn site_state_label(v: SiteVerdict, t: &SiteT) -> &'static str {
+    match v {
+        SiteVerdict::Ok => t.ok,
+        SiteVerdict::Slow => t.slow,
+        SiteVerdict::Stalled => t.stalled,
+        SiteVerdict::Refused => t.refused,
+        SiteVerdict::Unreachable => t.unreachable,
+        SiteVerdict::Error => t.error,
+    }
+}
+
+/// 站点检测报告的 Markdown。站点名 + URL 都写：站表随后可能被改，
+/// 报告必须记录「当时打的到底是哪个地址」。
+pub fn render_sites(run: &SiteRun, locale: Locale) -> String {
+    let t = site_table(locale);
+    let mut r = String::from(t.title);
+    r.push_str(&fill(t.time, &[("ts", &run.at.to_string())]));
+    let platform = if cfg!(target_os = "macos") {
+        "macOS"
+    } else if cfg!(windows) {
+        "Windows"
+    } else {
+        site_platform_other(locale)
+    };
+    r.push_str(&fill(t.platform, &[("p", platform)]));
+    r.push_str(&fill(t.scope, &[("n", &run.results.len().to_string())]));
+    r.push_str(t.h2_table);
+    r.push_str(t.table_head);
+    for p in &run.results {
+        r.push_str(&site_row(p, t));
+        r.push('\n');
+    }
+    if run.cancelled {
+        r.push_str(&format!("\n> {}\n", t.cancelled));
+    }
+    r.push_str(t.h2_notes);
+    r.push_str(t.notes);
+    r.push_str(t.footnote);
+    r
+}
+
+fn site_platform_other(locale: Locale) -> &'static str {
+    match locale {
+        Locale::Zh => "其他",
+        Locale::En => "Other",
+    }
+}
+
+fn site_row(p: &SiteProbe, t: &SiteT) -> String {
+    let d = t.dash;
+    let mut state = site_state_label(p.verdict, t).to_string();
+    // 断点写进状态列：报告读者看不到 UI 的着色
+    if let Some(stage) = p.stage {
+        let stage_word = match stage {
+            FailStage::Dns => "DNS",
+            FailStage::Tcp => "TCP",
+            FailStage::Tls => "TLS",
+            FailStage::Ttfb => "TTFB",
+            FailStage::Transfer => "transfer",
+            FailStage::Http => "HTTP",
+        };
+        state.push_str(&format!(" · {stage_word}"));
+    }
+    if let Some(note) = &p.note {
+        // 括号用半角：note 是 curl 原文（英文），全角括号在英文报告里很扎眼
+        state.push_str(&format!(" ({})", note.replace('|', "/")));
+    }
+    format!(
+        "| {} `{}` | {state} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        p.name,
+        p.url,
+        fmt_ms(p.dns_ms, d),
+        fmt_ms(p.tcp_ms, d),
+        fmt_delta(p.tls_ms, p.tcp_ms, d),
+        fmt_delta(p.ttfb_ms, p.tls_ms.or(p.tcp_ms), d),
+        fmt_rate(p.transfer_bps, d),
+        fmt_bytes(p.bytes),
+        p.http_code
+            .map(|c| c.to_string())
+            .unwrap_or_else(|| d.into()),
+        p.remote_ip.as_deref().unwrap_or(d),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
     fn has_cjk(s: &str) -> bool {
         s.chars().any(|c| ('\u{4e00}'..='\u{9fa5}').contains(&c))
     }
@@ -369,5 +558,92 @@ mod tests {
         assert!(zh.contains("探测失败"), "{zh}");
         let en = render(&d, None, Locale::En);
         assert!(en.contains("probe failed"), "{en}");
+    }
+
+    // ---- 站点检测报告（F15）
+
+    fn probe(name: &str, url: &str, verdict: SiteVerdict, stage: Option<FailStage>) -> SiteProbe {
+        SiteProbe {
+            id: name.to_lowercase(),
+            name: name.into(),
+            url: url.into(),
+            at: 1_700_000_000,
+            dns_ms: Some(18.0),
+            tcp_ms: Some(86.0),
+            tls_ms: Some(160.0),
+            ttfb_ms: Some(249.0),
+            total_ms: Some(1_249.0),
+            bytes: 900_000,
+            http_code: Some(200),
+            remote_ip: Some("1.2.3.4".into()),
+            transfer_bps: Some(450_000.0),
+            verdict,
+            stage,
+            note: None,
+            curl_exit: Some(0),
+        }
+    }
+
+    fn sample_sites() -> SiteRun {
+        SiteRun {
+            at: 1_700_000_000,
+            results: vec![
+                probe("apple.com", "https://www.apple.com/", SiteVerdict::Ok, None),
+                probe(
+                    "github.com",
+                    "https://github.com/",
+                    SiteVerdict::Stalled,
+                    Some(FailStage::Ttfb),
+                ),
+                probe(
+                    "openai.com",
+                    "https://openai.com/",
+                    SiteVerdict::Refused,
+                    Some(FailStage::Http),
+                ),
+                probe(
+                    "google.com",
+                    "https://www.google.com/",
+                    SiteVerdict::Unreachable,
+                    Some(FailStage::Tcp),
+                ),
+            ],
+            cancelled: false,
+            elapsed_ms: 4_200.0,
+        }
+    }
+
+    /// 站点报告同样不许漏中文（它也会被复制走）
+    #[test]
+    fn english_sites_report_has_no_cjk() {
+        let r = render_sites(&sample_sites(), Locale::En);
+        assert!(!has_cjk(&r), "英文站点报告残留中文：\n{r}");
+        assert!(r.contains("# Prune site reachability report"));
+        assert!(r.contains("No response · TTFB"));
+        assert!(r.contains("Refused · HTTP"));
+        assert!(r.contains("450 KB/s"));
+        assert!(r.contains("900 KB"));
+    }
+
+    /// 中文报告：断点与技术细节都要落在状态列里，速率与样本量同时出现
+    #[test]
+    fn chinese_sites_report_keeps_shape() {
+        let mut run = sample_sites();
+        run.results[3].note = Some("curl exit 28".into());
+        let r = render_sites(&run, Locale::Zh);
+        assert!(r.contains("# Prune 站点检测报告"));
+        assert!(
+            r.contains("| 站点 | 状态 | DNS | TCP | TLS | 首字节 | 速率 | 样本 | HTTP | 出口 IP |")
+        );
+        assert!(r.contains("不可达 · TCP (curl exit 28)"), "{r}");
+        assert!(r.contains("`https://www.google.com/`"), "URL 必须进报告");
+    }
+
+    /// 增量列：TLS 与首字节是差值，不是累计时刻（累计值会让人误读成「TLS 用了 160 ms」）
+    #[test]
+    fn sites_report_uses_deltas() {
+        let r = render_sites(&sample_sites(), Locale::Zh);
+        assert!(r.contains("| 74 ms |"), "TLS 增量应为 160−86：{r}");
+        assert!(r.contains("| 89 ms |"), "首字节增量应为 249−160：{r}");
     }
 }

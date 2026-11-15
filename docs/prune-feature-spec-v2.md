@@ -76,6 +76,7 @@ L1 细节：Yarn 缓存 6155 条目中 334 个为跨平台二进制（linux 196 
 | 应用资源 tab：每应用一张卡（进程/CPU/内存/磁盘/端口/连接/网速），默认 Top 12，六字段排序 | 按域名/对端拆流量、Windows 按进程网速（要 ETW 实时会话）、跨应用磁盘清理 |
 | 网络 tab：系统口径下载/上传速率 + 5 min 走势 + 网卡分布 + 按应用 Top 8 + 今日/近 7 天流量 | 限速 / 断网 / 掐连接（只读，不改网络状态）、跨设备或路由器的流量、历史任意时间序列 |
 | 网络诊断（M17，双平台）：DNS / 网关 / 出口三层探测 + 分层主因结论（阈值透明）+ captive portal 检测 + Markdown 报告复制；macOS 另有系统测速 + RPM | Wi-Fi 信号 / SNR（v2，CoreWLAN + wlanapi）、一键切 DNS（写系统配置 = 破坏性）、信道扫描、诊断历史落库、常驻健康度图标 |
+| 站点检测（F15，双平台）：自选站表（默认 10 个国外常用站）逐站测 DNS / TCP / TLS / 首字节 / 传输速率，断点分开显示（`refused` 与「不可达」严格区分）+ Markdown 结果复制；站表存 `settings.json` 可增删改 | 判「被墙」的结论（只报观测事实）、经代理测（v1 直连）、站点历史趋势与告警、ICMP ping / traceroute |
 
 ### 2.2 与四类竞品的错位
 
@@ -275,7 +276,7 @@ Portlivo 的菜单栏首屏是服务列表；iStat/Stats/MPM 是内存百分比�
 | CLI | `prune`（手写 arg 解析，单二进制双形态） | GUI 与 CLI 共享 `prune-core`；另含 MCP stdio server |
 | 更新 | tauri-plugin-updater（GitHub 源，minisign 签名） | |
 | 自启 | 无（Accessory 应用，用户手动启动） | 原 SMAppService 方案随迁移撤除 |
-| 隐私 | 零埋点、零遥测；网络活动仅三类：更新检查 + 网络诊断手动探测（DNS / 网关 / 出口 TCP、networkQuality）+ 局域网设备扫描（手动触发，TCP connect + mDNS/SSDP 组播；扫描目标仅限本机所在网段，不向公网发包） | 营销资产；诊断与扫描均不常驻、不落库、不上报（局域网快照仅落本机缓存 lan-snapshot.json） |
+| 隐私 | 零埋点、零遥测；网络活动仅四类：更新检查 + 网络诊断手动探测（DNS / 网关 / 出口 TCP、networkQuality）+ 站点检测（只打用户站表里的地址，首页文档 ≤ 2 MiB，不走代理）+ 局域网设备扫描（手动触发，TCP connect + mDNS/SSDP 组播；扫描目标仅限本机所在网段，不向公网发包） | 营销资产；诊断与扫描均不常驻、不落库、不上报（局域网快照仅落本机缓存 lan-snapshot.json） |
 
 **沿用 Portlivo 的可复用资产**：IA 三段式（菜单栏/主窗口/检视器）、进程画像（PPID 上溯）、键盘优先 + ⌘K。
 **明确不适用**：HTTP 健康探针、实时日志、QR 码、公网隧道。

@@ -114,6 +114,7 @@ Windows is ahead in one place: port lookup needs no admin and misses nothing, wh
 | Per-app resource cards: processes / CPU / memory / disk / ports / connections / speed | GPU and energy metrics |
 | Network tab: system-wide throughput, 5-minute trend, per-interface split, per-app Top 8, today / last 7 days | Rate limiting, disconnecting, killing connections |
 | Network diagnosis: DNS / gateway / egress latency, captive portal, one verdict with published thresholds, Markdown report | Wi-Fi signal, DNS switching (writes system config), channel scanning |
+| Site checks: your own list (10 common sites by default), per-site DNS / TCP / TLS / first byte / transfer rate with the failing stage named | A “censored” verdict, measuring through a proxy (v1 is direct), per-site history |
 | Dynamic Island events: CPU spike, memory anomaly, port conflict, new LAN face | Always-on widgets, music control, file drop |
 
 Some rows are macOS-only today (per-app network speed, per-app disk layers, the event stream), and the memory rows read Private Bytes instead of `phys_footprint` on Windows. [Platform support](#platform-support) lists exactly which.
@@ -126,7 +127,7 @@ Some rows are macOS-only today (per-app network speed, per-app disk layers, the 
 | **Apps** | One card per app: processes, CPU, memory, disk, ports, connections, network speed. Top 12 by default, six-field sorting, 24 h / 7 d / 30 d history |
 | **Memory** | Real footprint, swap gauge, evicted-victim ranking, process families, leak case files |
 | **Storage** | Volume capacity, reclaimable breakdown by level, per-entry detail, cleanup, project health, archive |
-| **Network** | Download / upload rates (physical interfaces only), trends, per-app Top 8, daily traffic, network diagnosis |
+| **Network** | Download / upload rates (physical interfaces only), trends, per-app Top 8, daily traffic, network diagnosis, site checks |
 | **Ports** | Who is listening, on which address, owned by which project; LAN devices, timeline, topology |
 
 Everything is read-only except the Storage tab's cleanup actions and the archive/restore flow — and those are the only two places where a file can move at all.
@@ -276,7 +277,7 @@ Requirements: Node 20+, pnpm 9+, Rust stable, and the Tauri 2 platform prerequis
 
 ## Status and roadmap
 
-Source version: **v0.10.0** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
+Source version: **v0.11.0** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
 
 | Area | State |
 | --- | --- |
@@ -297,6 +298,7 @@ The full milestone history lives in [CHANGELOG.md](./CHANGELOG.md); the forward 
 - [Tauri technical plan](./docs/prune-tauri-technical-plan.md) — architecture, dependencies, milestones
 - [Roadmap 2027 H1](./docs/prune-roadmap-2027h1.md) — milestones, metric gates, what is explicitly not being built
 - [Network diagnosis plan](./docs/net-diag-plan.md) — layered probes, verdict rules, dual-platform adaptation
+- [Site checks plan](./docs/net-sites-plan.md) — five per-site stages, curl scope, editable site list
 - [Research archive](./docs/research/) — competitor teardowns, measured scans, memory profiling, decisions
 - [CHANGELOG](./CHANGELOG.md) — every shipped milestone, including the ones that were bugs
 

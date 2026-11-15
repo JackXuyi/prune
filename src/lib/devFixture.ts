@@ -21,6 +21,9 @@ import type {
   PortSnapshot,
   Proto,
   ServiceKind,
+  Site,
+  SiteProbe,
+  SiteVerdict,
   SpeedResult,
 } from "../types/net";
 import { dayString } from "./format";
@@ -835,4 +838,158 @@ export function devCutReport() {
       { label: "项目依赖 node_modules", bytes: 9.4 * GB, count: 5 },
     ],
   };
+}
+
+/**
+ * 站点检测 fixture（F15）：浏览器预览里没有 Rust 侧的 curl，
+ * 给一份「五种形态都出现」的样本 —— 只在大陆直连下真实可复现：
+ * 正常 / 偏慢 / 握手过但无响应 / 403 / TCP 不通 / TLS 卡死。
+ */
+export function devSites(): Site[] {
+  return [
+    { id: "apple", name: "apple.com", url: "https://www.apple.com/" },
+    { id: "cloudflare", name: "cloudflare.com", url: "https://www.cloudflare.com/" },
+    { id: "amazon", name: "amazon.com", url: "https://www.amazon.com/" },
+    { id: "microsoft", name: "microsoft.com", url: "https://www.microsoft.com/" },
+    { id: "github", name: "github.com", url: "https://github.com/" },
+    { id: "openai", name: "openai.com", url: "https://openai.com/" },
+    { id: "google", name: "google.com", url: "https://www.google.com/" },
+    { id: "wikipedia", name: "wikipedia.org", url: "https://www.wikipedia.org/" },
+    { id: "x", name: "x.com", url: "https://x.com/" },
+    { id: "youtube", name: "youtube.com", url: "https://www.youtube.com/" },
+  ];
+}
+
+function devProbe(
+  site: Site,
+  p: Partial<SiteProbe> & { verdict: SiteVerdict },
+): SiteProbe {
+  return {
+    id: site.id,
+    name: site.name,
+    url: site.url,
+    at: Math.floor(Date.now() / 1000) - 20,
+    dnsMs: 18,
+    tcpMs: null,
+    tlsMs: null,
+    ttfbMs: null,
+    totalMs: null,
+    bytes: 0,
+    httpCode: null,
+    remoteIp: null,
+    transferBps: null,
+    stage: null,
+    note: null,
+    curlExit: 0,
+    ...p,
+  };
+}
+
+/** 与 §2 实测同量级的假数据：故意让各状态都出现一次 */
+export function devSiteProbes(): SiteProbe[] {
+  const s = devSites();
+  return [
+    devProbe(s[0], {
+      verdict: "ok",
+      tcpMs: 30,
+      tlsMs: 79,
+      ttfbMs: 126,
+      totalMs: 335,
+      bytes: 256_049,
+      httpCode: 206,
+      remoteIp: "115.231.32.12",
+      // 209 ms 传输不足 300 ms → 样本不足，与真机一致
+    }),
+    devProbe(s[1], {
+      verdict: "ok",
+      dnsMs: 25,
+      tcpMs: 285,
+      tlsMs: 548,
+      ttfbMs: 714,
+      totalMs: 2_844,
+      bytes: 1_334_522,
+      httpCode: 200,
+      remoteIp: "104.16.132.229",
+      transferBps: 626_000,
+    }),
+    devProbe(s[2], {
+      verdict: "ok",
+      dnsMs: 25,
+      tcpMs: 193,
+      tlsMs: 583,
+      ttfbMs: 900,
+      totalMs: 5_831,
+      bytes: 1_985_432,
+      httpCode: 200,
+      remoteIp: "52.94.236.248",
+      // 4931 ms 传 1.99 MB
+      transferBps: 402_000,
+    }),
+    devProbe(s[3], {
+      verdict: "slow",
+      stage: "tls",
+      dnsMs: 25,
+      tcpMs: 314,
+      tlsMs: 890,
+      ttfbMs: 1_031,
+      totalMs: 1_643,
+      bytes: 201_253,
+      httpCode: 200,
+      remoteIp: "23.45.78.9",
+      transferBps: 329_000,
+    }),
+    devProbe(s[4], {
+      verdict: "stalled",
+      stage: "ttfb",
+      dnsMs: 14,
+      tcpMs: 122,
+      tlsMs: 257,
+      totalMs: 10_002,
+      note: "curl exit 28: Operation timed out with 0 bytes received",
+      curlExit: 28,
+    }),
+    devProbe(s[5], {
+      verdict: "refused",
+      stage: "http",
+      dnsMs: 18,
+      tcpMs: 86,
+      tlsMs: 161,
+      ttfbMs: 250,
+      totalMs: 252,
+      bytes: 9_626,
+      httpCode: 403,
+      remoteIp: "104.18.33.45",
+    }),
+    devProbe(s[6], {
+      verdict: "unreachable",
+      stage: "tcp",
+      dnsMs: 16,
+      totalMs: 4_003,
+      note: "curl exit 28: Failed to connect to www.google.com port 443 after 4002 ms",
+      curlExit: 28,
+    }),
+    devProbe(s[7], {
+      verdict: "unreachable",
+      stage: "tcp",
+      dnsMs: 35,
+      totalMs: 5_002,
+      note: "curl exit 28: Failed to connect to www.wikipedia.org port 443 after 5002 ms",
+      curlExit: 28,
+    }),
+    devProbe(s[8], {
+      verdict: "unreachable",
+      stage: "tls",
+      dnsMs: 15,
+      tcpMs: 161,
+      totalMs: 4_003,
+      note: "curl exit 28: SSL connection timeout",
+      curlExit: 28,
+    }),
+    devProbe(s[9], {
+      verdict: "unreachable",
+      stage: "tcp",
+      dnsMs: 15,
+      totalMs: 4_005,
+    }),
+  ];
 }

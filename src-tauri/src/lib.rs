@@ -17,6 +17,7 @@ mod i18n;
 mod lan;
 mod net_diag;
 mod net_sampler;
+mod net_sites;
 mod port_sampler;
 mod sampler;
 mod scan;
@@ -98,6 +99,14 @@ pub fn run() {
             net_diag::net_diag_capability,
             net_diag::net_diag_copy_report,
             net_diag::clipboard_write,
+            net_sites::net_sites_list,
+            net_sites::net_sites_save,
+            net_sites::net_sites_reset,
+            net_sites::net_sites_capability,
+            net_sites::net_sites_run,
+            net_sites::net_sites_probe_one,
+            net_sites::net_sites_cancel,
+            net_sites::net_sites_copy_report,
             lan::lan_snapshot,
             lan::lan_scan,
             lan::lan_capability,
@@ -161,6 +170,8 @@ pub fn run() {
             app.manage(Arc::new(net_sampler::TotalNetState::new(store)));
             // 网络诊断（docs/net-diag-plan.md）：按需短任务，只存最近一轮结果供报告导出
             app.manage(net_diag::NetDiagState::new());
+            // 站点检测（docs/net-sites-plan.md F15）：站表存 settings，最近一轮只存内存
+            app.manage(net_sites::SiteState::new());
             // 局域网设备（docs/m18-lan-devices-spec.md §10）：同上，外加 scanning 门
             app.manage(lan::LanState::new());
             app.manage(Arc::new(updater::UpdateState::new()));

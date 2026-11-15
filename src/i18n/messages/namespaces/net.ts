@@ -14,6 +14,8 @@ const zh = {
   title: "网络",
   subMonitor: "系统口径的下载 / 上传速率 · 只算物理网卡（虚拟接口单列，避免与 VPN 重复计数）",
   subDiag: "分层定位慢在哪：DNS → 路由器 → 出口 · 手动触发，不常驻",
+  subSites:
+    "按站点测：DNS → TCP → TLS → 首字节 → 传输 · 手动触发，不常驻",
 
   unavailable: "不可读：{why}。这里不显示 0 —— 读不到和「没有流量」是两件事。",
   unavailableFallback: "系统网卡计数器读不到",
@@ -91,6 +93,7 @@ const zh = {
   subpage: {
     monitor: "监测",
     diag: "诊断",
+    sites: "站点",
     aria: "网络子页",
   },
 
@@ -153,6 +156,97 @@ const zh = {
     },
   },
 
+  /**
+   * 站点检测（F15）。措辞纪律（方案 §12）：
+   * - 只写观测事实（「TCP 无响应」），不写「被墙 / 封锁」；
+   * - `refused` 用「站点拒绝」而不是「失败」；
+   * - 速率样本不足时说「样本不足」，不出现 0 KB/s。
+   */
+  sites: {
+    headCount: "{n} 个站点 · 直连（不走系统代理）",
+    lastRun: "上次 {time}",
+    run: "全部检测",
+    running: "检测中 {done}/{total}",
+    cancel: "取消",
+    cancelledNote: "本轮已取消",
+    elapsed: "本轮耗时 {s} s",
+    edit: "编辑",
+    save: "保存",
+    cancelEdit: "取消",
+    add: "添加站点",
+    remove: "删除",
+    reset: "恢复默认（10 个常用站）",
+    empty: "站表是空的。点「编辑」加一个，或「恢复默认」拿回 10 个常用站。",
+    recovered: "存储的站表读不出来，已回落默认 10 站；原文件没有被覆盖。",
+    listError: "操作失败：{why}",
+    unavailable: "本机未找到 curl，站点检测不可用。",
+    unavailableHint:
+      "检测依赖系统 curl（macOS 10.15+ / Windows 10 1803+ 自带）。装好 curl 后重新进入这一页即可。",
+    pending: "待测",
+    probing: "检测中…",
+    rerun: "重测",
+    detailNote: "curl 原文",
+    cardAria: "查看 {name} 的检测详情",
+    detailTitle: "{name} 检测详情",
+    noProbe: "这一站还没测过。点「重测」跑一次。",
+    probedAt: "检测于 {time}",
+    unreachableChip: "不可达：{stage}",
+    waterfall: "耗时分布",
+    lgHandshake: "握手（DNS / TCP / TLS）",
+    lgTtfb: "等服务端首字节",
+    lgTransfer: "收数据",
+    lgWait: "无响应等待",
+    waitSegment: "{stage} 无响应，等了 {ms} ms",
+    colStage: "阶段",
+    colSeg: "本段",
+    colCum: "累计",
+    rateLabel: "传输速率",
+    rateBasis: "（{bytes} / {ms} ms）",
+    truncated: "本轮被 8 s 上限截断（curl 退出码 28）：速率按已收字节算，不是站点真实上限。",
+    metaHttp: "HTTP",
+    metaBytes: "取样",
+    metaIp: "出口",
+    metaExit: "curl 退出码",
+    rateSampleShort: "样本不足（{bytes} / {ms} ms）",
+    thresholds:
+      "判慢阈值：TCP >{tcp} ms · TLS >{tls} ms · 首字节 >{ttfb} ms · 传输 <{rate} KB/s（样本 <200 KB 或 <300 ms 不下结论）",
+    scope:
+      "口径：直连不走代理 · 只测首页文档（≤2 MiB，不含图片/脚本等子资源）· 不跟随跳转 · 速率只用于同站前后对比，跨站比速率是比内容。",
+    copy: "复制结果",
+    copyTitle: "生成 Markdown 结果并复制到系统剪贴板，可粘贴给 AI 或同事",
+    namePlaceholder: "名称",
+    urlPlaceholder: "https://example.com/",
+    validateHint:
+      "保存时校验：只支持 http / https，不能带凭据（user:pass@），最多 20 个站点；同一地址只会留一条。",
+    slowChip: "偏慢：{stage}",
+    refusedChip: "{code} · 站点拒绝",
+    stage: {
+      dns: "DNS",
+      tcp: "TCP",
+      tls: "TLS",
+      ttfb: "首字节",
+      transfer: "传输",
+      http: "HTTP",
+    },
+    summary: {
+      ok: "可达",
+      slow: "偏慢",
+      stalled: "无响应",
+      refused: "站点拒绝",
+      unreachable: "不可达",
+      error: "出错",
+    },
+    row: {
+      stalled: "连上了，但迟迟没有响应（{sec} s 无首字节）",
+      refused: "站点返回 {code}（可能拒绝非浏览器请求，链路本身是通的）",
+      errorNote: "探测本身出错：{why}",
+      dnsFail: "域名解析失败",
+      tcpFail: "无法建立连接：TCP 无响应（{sec} s 超时）",
+      tlsFail: "TLS 握手无响应（TCP {tcp} ms 已通）",
+      tlsFailNoTcp: "TLS 握手无响应",
+    },
+  },
+
   /** 端口绑定范围（BindScope）——安全语义的唯一来源，不是显示细节 */
   exposure: {
     any: "全部网卡",
@@ -172,6 +266,8 @@ const en: MessageTree<typeof zh> = {
     "System-level download / upload rates · physical interfaces only (virtual ones are listed separately so VPN traffic isn't counted twice)",
   subDiag:
     "Find the slow hop: DNS → router → internet · manual only, nothing runs in the background",
+  subSites:
+    "Per-site check: DNS → TCP → TLS → first byte → transfer · manual only, nothing runs in the background",
 
   unavailable:
     "Unavailable: {why}. We don't show 0 here — “can't read it” and “no traffic” are two different things.",
@@ -255,6 +351,7 @@ const en: MessageTree<typeof zh> = {
   subpage: {
     monitor: "Monitor",
     diag: "Diagnose",
+    sites: "Sites",
     aria: "Network subpages",
   },
 
@@ -319,6 +416,97 @@ const en: MessageTree<typeof zh> = {
       low: "Low",
       medium: "Medium",
       good: "Good",
+    },
+  },
+
+  /**
+   * Site checks (F15). Same wording discipline as above: describe the observed
+   * stage only (never "blocked / censored"), `refused` is not "failed", and a
+   * too-small sample never turns into "0 KB/s".
+   */
+  sites: {
+    headCount: "{n} sites · direct connection (system proxy bypassed)",
+    lastRun: "last run {time}",
+    run: "Check all",
+    running: "Checking {done}/{total}",
+    cancel: "Cancel",
+    cancelledNote: "This round was cancelled",
+    elapsed: "Took {s} s",
+    edit: "Edit",
+    save: "Save",
+    cancelEdit: "Cancel",
+    add: "Add site",
+    remove: "Remove",
+    reset: "Restore defaults (10 common sites)",
+    empty: "The list is empty. Use “Edit” to add one, or “Restore defaults” to get the 10 common sites back.",
+    recovered: "The stored site list could not be read, so the default 10 are shown. The original file was not overwritten.",
+    listError: "That didn't work: {why}",
+    unavailable: "curl was not found on this machine, so site checks are unavailable.",
+    unavailableHint:
+      "The check relies on the system curl (bundled with macOS 10.15+ / Windows 10 1803+). Install curl and reopen this page.",
+    pending: "Not checked",
+    probing: "Checking…",
+    rerun: "Recheck",
+    detailNote: "curl output",
+    cardAria: "Open the check details for {name}",
+    detailTitle: "{name} check details",
+    noProbe: "This site has not been checked yet. Hit “Recheck” to run it.",
+    probedAt: "checked {time}",
+    unreachableChip: "Unreachable: {stage}",
+    waterfall: "Where the time went",
+    lgHandshake: "handshake (DNS / TCP / TLS)",
+    lgTtfb: "waiting for the first byte",
+    lgTransfer: "receiving data",
+    lgWait: "no response",
+    waitSegment: "{stage} never answered — waited {ms} ms",
+    colStage: "Stage",
+    colSeg: "This stage",
+    colCum: "Cumulative",
+    rateLabel: "Transfer rate",
+    rateBasis: "({bytes} / {ms} ms)",
+    truncated:
+      "Cut off by the 8 s cap (curl exit 28): the rate is computed on bytes received, not the site's real ceiling.",
+    metaHttp: "HTTP",
+    metaBytes: "sample",
+    metaIp: "remote",
+    metaExit: "curl exit",
+    rateSampleShort: "sample too small ({bytes} / {ms} ms)",
+    thresholds:
+      "Slow thresholds: TCP >{tcp} ms · TLS >{tls} ms · first byte >{ttfb} ms · transfer <{rate} KB/s (no verdict under 200 KB or 300 ms of sample)",
+    scope:
+      "Scope: direct connection (no proxy) · home document only (≤ 2 MiB, no images/scripts) · redirects not followed · rates compare the same site over time, not one site against another.",
+    copy: "Copy results",
+    copyTitle: "Render a Markdown summary and copy it to the system clipboard",
+    namePlaceholder: "Name",
+    urlPlaceholder: "https://example.com/",
+    validateHint:
+      "Validated on save: http / https only, no credentials (user:pass@), 20 sites max; duplicate URLs collapse into one.",
+    slowChip: "Slow: {stage}",
+    refusedChip: "{code} · refused",
+    stage: {
+      dns: "DNS",
+      tcp: "TCP",
+      tls: "TLS",
+      ttfb: "first byte",
+      transfer: "transfer",
+      http: "HTTP",
+    },
+    summary: {
+      ok: "Reachable",
+      slow: "Slow",
+      stalled: "No response",
+      refused: "Refused",
+      unreachable: "Unreachable",
+      error: "Error",
+    },
+    row: {
+      stalled: "Connected, but nothing came back ({sec} s without a first byte)",
+      refused: "The site returned {code} (likely refusing non-browser requests — the path itself is open)",
+      errorNote: "The probe itself failed: {why}",
+      dnsFail: "DNS resolution failed",
+      tcpFail: "Could not connect: TCP gave no response ({sec} s timeout)",
+      tlsFail: "TLS handshake gave no response (TCP was up at {tcp} ms)",
+      tlsFailNoTcp: "TLS handshake gave no response",
     },
   },
 

@@ -551,3 +551,136 @@ export function probeTone(
   if (!probe || probe.medianMs == null) return "danger";
   return probe.medianMs > thresholdMs ? "warn" : "accent";
 }
+
+// ---------------------------------------------------------------- 站点检测（F15，docs/net-sites-plan.md）
+//
+// 与 prune_core::net::sites 一一对应（camelCase）。改这里必须同步 Rust 侧。
+//
+// 三条纪律来自方案 §4：
+// - 五个阶段各自可为 null（没走到这一步），**永不渲染成 0 ms**；
+// - `refused`（4xx/5xx）不是失败，链路是通的；
+// - 速率样本不足时 `transferBps` 为 null，UI 只报样本量，不报数字。
+
+/** 站表里的一站。`id` 跨保存稳定（进度事件与单站重测按它定位） */
+export interface Site {
+  id: string;
+  name: string;
+  url: string;
+}
+
+/** ok = 正常；slow = 有阶段超阈值；stalled = 握手过了但首字节不到；
+ *  refused = 站点返回 4xx/5xx（**不是连不上**）；unreachable = DNS/TCP/TLS 没打通 */
+export type SiteVerdict = "ok" | "slow" | "stalled" | "refused" | "unreachable" | "error";
+
+/** 断在哪一步，只用于文案与着色 */
+export type FailStage = "dns" | "tcp" | "tls" | "ttfb" | "transfer" | "http";
+
+/** 单站一次探测。五个时刻都是**累计值**（ms），派生增量在 `siteDelta` 里做 */
+export interface SiteProbe {
+  id: string;
+  /** 探测当时的名称 / URL 快照：站表随后可能被改，报告要记录实际打的地址 */
+  name: string;
+  url: string;
+  at: number;
+  dnsMs: number | null;
+  tcpMs: number | null;
+  tlsMs: number | null;
+  ttfbMs: number | null;
+  totalMs: number | null;
+  bytes: number;
+  httpCode: number | null;
+  remoteIp: string | null;
+  /** bytes / (total − ttfb)；样本不足为 null */
+  transferBps: number | null;
+  verdict: SiteVerdict;
+  stage: FailStage | null;
+  /** curl 原文（技术细节，展开行里展示；用户看到的结论来自 verdict + stage） */
+  note: string | null;
+  curlExit: number | null;
+}
+
+export interface SiteRun {
+  at: number;
+  results: SiteProbe[];
+  cancelled: boolean;
+  elapsedMs: number;
+}
+
+export interface SiteList {
+  sites: Site[];
+  customized: boolean;
+  /** true = 存下的站表读不出来，已回落默认（必须提示，不能静默替换） */
+  recovered: boolean;
+}
+
+export interface SiteSummary {
+  ok: number;
+  slow: number;
+  stalled: number;
+  refused: number;
+  unreachable: number;
+  error: number;
+  total: number;
+}
+
+/** curl 能力：false 时整页换成说明，不渲染带 0 的空表 */
+export interface SiteCapability {
+  curl: boolean;
+  version: string | null;
+}
+
+/** 判慢阈值（§4.4）。与 Rust 侧同名常量同步，UI 页脚逐行展示——阈值不搞黑盒 */
+export const SITE_THRESHOLDS = {
+  tcpMs: 300,
+  tlsMs: 400,
+  ttfbMs: 1000,
+  slowBps: 100_000,
+  minSpeedBytes: 200_000,
+  minSpeedMs: 300,
+  maxTimeSec: 8,
+  maxSites: 20,
+} as const;
+
+/** 阶段增量：`later − earlier`，任一缺失返回 null（不用 0 兜底） */
+export function siteDelta(later: number | null, earlier: number | null): number | null {
+  if (later == null || earlier == null) return null;
+  const d = later - earlier;
+  return d > 0 ? d : null;
+}
+
+/** 速率展示：KB/s 起步，≥ 1 MB/s 换单位。null = 样本不足，由调用方决定文案 */
+export function formatRate(bps: number | null): string {
+  if (bps == null) return "—";
+  return bps >= 1_000_000 ? `${(bps / 1_000_000).toFixed(1)} MB/s` : `${Math.round(bps / 1000)} KB/s`;
+}
+
+/** 状态 → 语义色（沿用既有三色板，不新造色） */
+export function siteTone(v: SiteVerdict): "accent" | "warn" | "danger" | "neutral" {
+  switch (v) {
+    case "ok":
+      return "accent";
+    case "slow":
+    case "refused":
+      return "warn";
+    case "stalled":
+    case "unreachable":
+      return "danger";
+    default:
+      return "neutral";
+  }
+}
+
+/** 汇总计数（顺序即 UI 展示顺序） */
+export function summarizeSites(probes: SiteProbe[]): SiteSummary {
+  const s: SiteSummary = {
+    ok: 0,
+    slow: 0,
+    stalled: 0,
+    refused: 0,
+    unreachable: 0,
+    error: 0,
+    total: probes.length,
+  };
+  for (const p of probes) s[p.verdict] += 1;
+  return s;
+}

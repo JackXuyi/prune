@@ -25,10 +25,12 @@ import { Badge } from "./primitives";
 import { MeterBar } from "./charts/MeterBar";
 import { AreaChart } from "./charts/AreaChart";
 import { TrackProgress, type TrackNode } from "./charts/TrackProgress";
+import { SitesPage } from "./SitesPage";
 
 /**
  * 网络 tab（M14 / M17）：本机下载 / 上传速率、走势、网卡分布、今日流量、按应用排名；
- * M17 起拆成「监测 / 诊断」两个二级页，诊断页图表化展示分层探测结果。
+ * M17 起拆成「监测 / 诊断」两个二级页，诊断页图表化展示分层探测结果；
+ * F15 追加「站点」页：按用户自己的站表测连通性与传输速率（docs/net-sites-plan.md）。
  *
  * 三条纪律（方案 §3 / §7）：
  * - 主数字只算**物理网卡**：开 VPN 时 `utun3` 与 `en0` 是同一批字节，相加等于双计
@@ -37,7 +39,7 @@ import { TrackProgress, type TrackNode } from "./charts/TrackProgress";
  *
  * 组件内不订阅、不采样：数据全部来自 store，保持「谁可见谁负责」的既有分工。
  */
-type NetSubPage = "monitor" | "diag";
+type NetSubPage = "monitor" | "diag" | "sites";
 
 export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
   const { t } = useI18n();
@@ -59,7 +61,11 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
       <div className="flex items-center justify-between">
         {/* 页名在顶栏（spec §1.3）；副标区分「监控 / 诊断」两个子页，保留 */}
         <p className="text-[11px] text-ink-faint">
-          {page === "monitor" ? t("net.subMonitor") : t("net.subDiag")}
+          {page === "monitor"
+            ? t("net.subMonitor")
+            : page === "diag"
+              ? t("net.subDiag")
+              : t("net.subSites")}
         </p>
         <Segmented page={page} onChange={setPage} />
       </div>
@@ -134,8 +140,10 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
 
       <p className="mt-3 text-[10px] leading-relaxed text-ink-faint">{t("net.footnote")}</p>
         </>
-      ) : (
+      ) : page === "diag" ? (
         <DiagPage />
+      ) : (
+        <SitesPage />
       )}
     </div>
   );
@@ -603,7 +611,7 @@ function AppRanking({
 
 // ---------------------------------------------------------------- 二级页切换
 
-/** 网络 tab 的二级页：监测（速率/流量）与 诊断（分层探测） */
+/** 网络 tab 的二级页：监测（速率/流量）、诊断（分层探测）、站点（按站测连通与速率） */
 function Segmented({
   page,
   onChange,
@@ -615,6 +623,7 @@ function Segmented({
   const items: { key: NetSubPage; label: string }[] = [
     { key: "monitor", label: t("net.subpage.monitor") },
     { key: "diag", label: t("net.subpage.diag") },
+    { key: "sites", label: t("net.subpage.sites") },
   ];
   return (
     <div
