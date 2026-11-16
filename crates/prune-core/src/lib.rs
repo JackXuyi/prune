@@ -39,6 +39,7 @@ pub mod mem;
 pub mod net;
 pub mod paths;
 pub mod pet;
+pub mod prune_toml;
 pub mod reclaim;
 pub mod swap;
 /// Windows 系统调用封装（GlobalMemoryStatusEx / Private Bytes），仅 Windows 编译

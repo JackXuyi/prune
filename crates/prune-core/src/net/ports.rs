@@ -12,6 +12,7 @@
 //! 2. **`n` 行可能带箭头**：已建立连接是 `n[::1]:3118->[::1]:51741`，
 //!    取 local 必须先 `split("->")`，否则端口解析成 51741。
 
+use std::path::PathBuf;
 use std::process::Command;
 
 use super::host;
@@ -434,7 +435,10 @@ pub fn scan_cached(
         }
     }
 
-    let mut entries = super::group(bindings, &tcp_scan.conns);
+    // 项目 prune.toml 的 watch.ports（W2/D-09）：对**本轮在线项目根**读一次小文件
+    //（≤ 每个几十字节），并入关注层；同时带回快照给 UI 显示「配置了但空闲」的端口
+    let configured = crate::prune_toml::collect_watch_ports(projects.values().map(PathBuf::from));
+    let mut entries = super::group_with_watched(bindings, &tcp_scan.conns, &configured);
 
     // 服务类型推断（L0）：主绑定进程的 comm / exe / cmd + 端口 + 项目文件嗅探。
     // group() 是纯函数没有 exe/cmd，这里回填；推断不出保持 None，不猜。
@@ -480,6 +484,7 @@ pub fn scan_cached(
         time_wait: kernel.as_ref().map(|k| k.time_wait),
         time_wait_ports: kernel.map(|k| k.time_wait_ports).unwrap_or_default(),
         conns_by_pid: tcp_scan.conns_by_pid,
+        configured_watch_ports: configured,
         at: now_secs(),
         scan_ms: started.elapsed().as_millis() as u64,
     }

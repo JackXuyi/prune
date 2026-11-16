@@ -210,6 +210,10 @@ pub struct PortSnapshot {
     /// 语义是「没有记录 = 0 条」，而不是「不知道」。
     #[serde(default)]
     pub conns_by_pid: std::collections::BTreeMap<i32, ConnStats>,
+    /// 项目 `prune.toml` 声明的关注端口并集（W2/D-09，旧快照缺省为空）。
+    /// UI 用它显示「配置了关注但当前空闲」的端口——空闲是状态变化，不是没有
+    #[serde(default)]
+    pub configured_watch_ports: Vec<u16>,
     pub at: i64,
     pub scan_ms: u64,
 }
@@ -227,6 +231,7 @@ impl PortSnapshot {
             time_wait: None,
             time_wait_ports: Vec::new(),
             conns_by_pid: std::collections::BTreeMap::new(),
+            configured_watch_ports: Vec::new(),
             at: 0,
             scan_ms,
         }
@@ -307,12 +312,25 @@ pub fn is_system_process(comm: &str) -> bool {
 /// 3. 绑定在全部网卡且不是系统进程——「暴露面」本身就是一个信号；
 /// 4. 能归属到某个项目目录——dev server 的 cwd 就是项目根，这类端口就是用户的开发服务
 ///    （实测：1430 → prune、3118 → meetily/frontend；没有这条规则它们会被折叠掉，
-///    而用户装 Prune 最想看的恰恰是这些）。
+///    而用户装 Prune 最想看的恰恰是这些）；
+/// 5. 项目 `prune.toml` 的 `watch.ports`（W2/D-09）——用户写进配置的关注端口，
+///    即使不命中任何内置规则也进关注层。
 pub fn is_watched(port: u16, scope: BindScope, comms: &[&str], has_project: bool) -> bool {
+    is_watched_with(port, scope, comms, has_project, &[])
+}
+
+/// 同上，`extra` 是项目配置声明的关注端口（W2/D-09）。
+pub fn is_watched_with(
+    port: u16,
+    scope: BindScope,
+    comms: &[&str],
+    has_project: bool,
+    extra: &[u16],
+) -> bool {
     if port == 0 {
         return false;
     }
-    if port < 1024 || WATCHED_PORTS.contains(&port) {
+    if port < 1024 || WATCHED_PORTS.contains(&port) || extra.contains(&port) {
         return true;
     }
     if scope == BindScope::Any && !comms.iter().any(|c| is_system_process(c)) {
@@ -346,6 +364,15 @@ pub fn port_note(port: u16, comm: &str) -> Option<String> {
 ///
 /// `conns` 是 `(port, established 数)`，由调用方从全 TCP 轮传入（可选）。
 pub fn group(bindings: Vec<PortBinding>, conns: &[(u16, u32)]) -> Vec<PortEntry> {
+    group_with_watched(bindings, conns, &[])
+}
+
+/// 同上，`extra_watched` 是项目 `prune.toml` 声明的关注端口（W2/D-09）。
+pub fn group_with_watched(
+    bindings: Vec<PortBinding>,
+    conns: &[(u16, u32)],
+    extra_watched: &[u16],
+) -> Vec<PortEntry> {
     use std::collections::BTreeMap;
 
     let mut map: BTreeMap<(u16, Proto), Vec<PortBinding>> = BTreeMap::new();
@@ -369,7 +396,7 @@ pub fn group(bindings: Vec<PortBinding>, conns: &[(u16, u32)]) -> Vec<PortEntry>
             .fold(BindScope::Unknown, |acc, b| acc.widest(b.scope));
         let comms: Vec<&str> = listeners.iter().map(|b| b.comm.as_str()).collect();
         let has_project = listeners.iter().any(|b| b.project.is_some());
-        let watched = is_watched(port, exposure, &comms, has_project);
+        let watched = is_watched_with(port, exposure, &comms, has_project, extra_watched);
         let note = listeners.iter().find_map(|b| port_note(port, &b.comm));
 
         out.push(PortEntry {
@@ -446,6 +473,22 @@ mod tests {
         assert_eq!(entries[0].conns, Some(7));
         // 有一条绑在 * 上 → 整个端口的暴露面是全开
         assert_eq!(entries[0].exposure, BindScope::Any);
+    }
+
+    /// W2/D-09：prune.toml 的 watch.ports 并入关注层——非标端口也要能被用户点名
+    #[test]
+    fn config_watch_ports_enter_watched_layer() {
+        // 不带配置：7777 不在内置关注表里，「无项目 + 非 runtime 进程名」是纯反例
+        assert!(!is_watched(7777, BindScope::Loopback, &["SomeApp"], false));
+        assert!(is_watched_with(
+            7777,
+            BindScope::Loopback,
+            &["SomeApp"],
+            false,
+            &[7777]
+        ));
+        // 0 号端口仍然无效：配置写错不能把通配 fd 变成服务
+        assert!(!is_watched_with(0, BindScope::Any, &["node"], true, &[0]));
     }
 
     #[test]

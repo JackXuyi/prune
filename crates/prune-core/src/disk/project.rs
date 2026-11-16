@@ -66,16 +66,24 @@ pub struct ProjectHealth {
 ///
 /// 聚合键是 node_modules 的父目录：`find_dirs_named` 命中即停止下钻，
 /// 所以同一项目的嵌套依赖不会重复计数（体积已含在内层目录里）。
+///
+/// `configs` 是本轮收集到的项目配置（W2/D-09）：被 `ignore.projects` 命中的
+/// 项目**不进体检、不进账本**（已定裁决：忽略的项目不进账本，否则用户会问
+/// 「为什么忽略的项目还在报表里」）；`thresholds` 覆盖偏胖 / 久未重装的默认阈值。
 pub fn build_projects(
     node_modules: &BTreeMap<String, (i64, u64)>,
     home: &Path,
     now_nanos: i64,
+    configs: &crate::prune_toml::ProjectConfigs,
 ) -> Vec<ProjectHealth> {
     // 项目根 → (体积合计, 最近一次安装的 mtime, 最大的 node_modules 路径)
     let mut acc: BTreeMap<PathBuf, (u64, i64, PathBuf)> = BTreeMap::new();
     for (path, (mtime, bytes)) in node_modules {
         let deps = PathBuf::from(path);
         let Some(root) = deps.parent() else { continue };
+        if configs.is_ignored(root) {
+            continue;
+        }
         let entry = acc
             .entry(root.to_path_buf())
             .or_insert((0, i64::MAX, deps.clone()));
@@ -97,6 +105,7 @@ pub fn build_projects(
                 .unwrap_or(&root)
                 .to_string_lossy()
                 .to_string();
+            let cfg = configs.for_root(&root);
             assemble(
                 name,
                 root,
@@ -106,6 +115,7 @@ pub fn build_projects(
                 activity_mtime,
                 lockfiles,
                 now_nanos,
+                &cfg,
             )
         })
         .collect();
@@ -146,7 +156,9 @@ fn age_days(mtime_nanos: i64, now_nanos: i64) -> u64 {
     ((now_nanos - mtime_nanos).max(0) / DAY_NANOS) as u64
 }
 
-/// 单个项目的结论装配（纯函数，单测直接喂合成时间戳）
+/// 单个项目的结论装配（纯函数，单测直接喂合成时间戳）。
+///
+/// 阈值来自项目配置（W2/D-09）：没写 `prune.toml` 时与内置默认完全一致。
 #[allow(clippy::too_many_arguments)]
 fn assemble(
     name: String,
@@ -157,18 +169,17 @@ fn assemble(
     activity_mtime: Option<i64>,
     lockfiles: Vec<String>,
     now_nanos: i64,
+    cfg: &crate::prune_toml::ProjectConfig,
 ) -> ProjectHealth {
     let deps_age_days = age_days(deps_mtime, now_nanos);
     let activity_age_days = activity_mtime.map(|t| age_days(t, now_nanos));
 
-    let stale = deps_age_days >= PROJECT_STALE_DAYS;
-    let verdict = if stale
-        && activity_age_days
-            .map(|a| a >= PROJECT_STALE_DAYS)
-            .unwrap_or(true)
-    {
+    let stale_days = cfg.stale_days_or_default();
+    let heavy_bytes = cfg.heavy_bytes();
+    let stale = deps_age_days >= stale_days;
+    let verdict = if stale && activity_age_days.map(|a| a >= stale_days).unwrap_or(true) {
         ProjectVerdict::Zombie
-    } else if deps_bytes >= PROJECT_HEAVY_BYTES {
+    } else if deps_bytes >= heavy_bytes {
         ProjectVerdict::Heavy
     } else if stale {
         ProjectVerdict::Stale
@@ -357,6 +368,7 @@ mod tests {
             activity_days.map(days_ago),
             locks.iter().map(|s| s.to_string()).collect(),
             NOW,
+            &Default::default(),
         )
     }
 
@@ -421,6 +433,7 @@ mod tests {
             Some(0),
             Vec::new(),
             NOW,
+            &Default::default(),
         );
         assert_eq!(p.deps_age_days, 0, "mtime 缺失不能变成 1970 年的年龄");
         assert_eq!(p.verdict, ProjectVerdict::Healthy);
@@ -455,7 +468,7 @@ mod tests {
             (now - DAY_NANOS, 100 << 20),
         );
 
-        let got = build_projects(&map, &home, now);
+        let got = build_projects(&map, &home, now, &Default::default());
         assert_eq!(got.len(), 2);
         assert_eq!(got[0].name, "Desktop/big", "按体积降序");
         assert_eq!(got[0].deps_bytes, 1 << 30);
@@ -476,7 +489,7 @@ mod tests {
         let home = Path::new("/Users/someone");
         let mut map = BTreeMap::new();
         map.insert("/Volumes/ext/proj/node_modules".to_string(), (NOW, 1 << 30));
-        let got = build_projects(&map, home, NOW);
+        let got = build_projects(&map, home, NOW, &Default::default());
         assert_eq!(got[0].name, "/Volumes/ext/proj");
     }
 
@@ -549,5 +562,95 @@ mod tests {
         let rows = to_day_rows(&[p], "2027-03-01");
         assert_eq!(rows[0].verdict, "heavy");
         assert_eq!(rows[0].day, "2027-03-01");
+    }
+
+    // ---------------------------------------------------------- 项目配置（W2/D-09）
+
+    /// 体检卡阈值可被 prune.toml 覆盖：阈值边界测试用配置驱动，不再依赖魔数
+    #[test]
+    fn thresholds_from_config_override_defaults() {
+        use crate::prune_toml::ProjectConfig;
+        // 默认偏胖线 = 1.5 GiB：800 MB 在默认下是 Healthy
+        let p = build(800 << 20, 3, Some(0), &["pnpm"]);
+        assert_eq!(p.verdict, ProjectVerdict::Healthy);
+
+        // 用户把偏胖线降到 0.5 GB → 同样的体积变成 Heavy
+        let cfg = ProjectConfig {
+            deps_warn_gb: Some(0.5),
+            ..Default::default()
+        };
+        let lowered = assemble(
+            "p".into(),
+            PathBuf::from("/h/p"),
+            PathBuf::from("/h/p/node_modules"),
+            800 << 20,
+            days_ago(3),
+            Some(days_ago(0)),
+            vec!["pnpm".into()],
+            NOW,
+            &cfg,
+        );
+        assert_eq!(lowered.verdict, ProjectVerdict::Heavy);
+
+        // 久未重装线从 60 天放宽到 90 天：60 天的依赖不再算 Stale
+        let cfg = ProjectConfig {
+            stale_days: Some(90),
+            ..Default::default()
+        };
+        let relaxed = assemble(
+            "p".into(),
+            PathBuf::from("/h/p"),
+            PathBuf::from("/h/p/node_modules"),
+            100 << 20,
+            days_ago(60),
+            Some(days_ago(0)),
+            vec!["pnpm".into()],
+            NOW,
+            &cfg,
+        );
+        assert_eq!(relaxed.verdict, ProjectVerdict::Healthy);
+    }
+
+    /// 被 ignore.projects 命中的项目：不进体检列表（也不进账本——账本从这份列表写入）
+    #[test]
+    fn ignored_projects_are_excluded_from_health_list() {
+        use crate::prune_toml::ProjectConfigs;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos() as i64;
+        let home = std::env::temp_dir().join(format!("prune-project-ig-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let keep = home.join("keep");
+        let gone = home.join("gone");
+        for d in [&keep, &gone] {
+            std::fs::create_dir_all(d.join("node_modules")).unwrap();
+        }
+
+        let mut map = BTreeMap::new();
+        for (d, bytes) in [(&keep, 3 << 20), (&gone, 9 << 20)] {
+            map.insert(
+                d.join("node_modules").to_string_lossy().to_string(),
+                (now, bytes),
+            );
+        }
+
+        // 无配置：两个都在
+        let got = build_projects(&map, &home, now, &Default::default());
+        assert_eq!(got.len(), 2);
+
+        // ignore.projects 命中 ~/gone → 只剩 keep（已定裁决：忽略的项目不进账本）
+        let root = home.join("gone");
+        std::fs::create_dir_all(&root).unwrap();
+        std::fs::write(
+            root.join(crate::prune_toml::FILE_NAME),
+            "[ignore]\nprojects = [\"~/gone\"]\n",
+        )
+        .unwrap();
+        let configs = ProjectConfigs::collect([&home.join("keep"), &root], &home);
+        let got = build_projects(&map, &home, now, &configs);
+        assert_eq!(got.len(), 1, "被忽略的项目不进体检");
+        assert_eq!(got[0].name, "keep");
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

@@ -212,6 +212,10 @@ pub struct DiskReport {
     /// F9/M24：按项目的依赖账本（旧报告反序列化为空）
     #[serde(default)]
     pub projects: Vec<ProjectHealth>,
+    /// W2/D-09：prune.toml 配置事件（语法回落 / 值越界 / 白名单外路径 / 被忽略项目）。
+    /// 没有事件就是 None——「没配置」与「配置生效中」在 UI 上是两种状态
+    #[serde(default)]
+    pub config_notes: Option<Vec<crate::prune_toml::ConfigNote>>,
 }
 
 /// 扫描进度（前端进度条 + 心跳日志）
@@ -619,6 +623,110 @@ pub fn scan(home: &Path, progress: Option<&ProgressFn>) -> DiskReport {
     scan_with(home, None, progress).0
 }
 
+// ---------------------------------------------------------------- 项目配置（W2/D-09）
+
+/// `ignore.paths` 校验：只能是**已登记白名单条目的子路径**（§6.1）。
+/// 指向白名单外的条目跳过 + note——用户写的 `~/Documents` 不会被悄悄当成清理排除项。
+fn validated_ignore_paths<'a>(
+    configs: &mut crate::prune_toml::ProjectConfigs,
+    whitelist_roots: impl Iterator<Item = &'a Path>,
+    home: &Path,
+) -> Vec<PathBuf> {
+    let roots: Vec<String> = whitelist_roots
+        .map(|p| p.to_string_lossy().to_string())
+        .collect();
+    let mut out = Vec::new();
+    for (root, cfg) in &configs.by_root {
+        for raw in &cfg.ignore_paths {
+            let abs = crate::prune_toml::expand_path(raw, home);
+            let s = abs.to_string_lossy().to_string();
+            let allowed = roots
+                .iter()
+                .any(|r| s == *r || (s.starts_with(r) && s[r.len()..].starts_with('/')));
+            if !allowed {
+                configs.notes.push(crate::prune_toml::ConfigNote {
+                    kind: crate::prune_toml::ConfigNoteKind::Path,
+                    file: format!("{root}/{}", crate::prune_toml::FILE_NAME),
+                    line: None,
+                    detail: Some(format!("{raw}（不在白名单内，已跳过）")),
+                });
+                continue;
+            }
+            if !out.contains(&abs) {
+                out.push(abs);
+            }
+        }
+    }
+    out
+}
+
+/// `path` 是否落在任一排除路径之下（或与之相等）
+fn under_any_ignored(path: &str, ignored: &[PathBuf]) -> bool {
+    ignored.iter().any(|p| {
+        let ps = p.to_string_lossy();
+        path == ps || (path.starts_with(ps.as_ref()) && path[ps.len()..].starts_with('/'))
+    })
+}
+
+/// 把排除路径从清理候选里拿掉：明细逐条过滤、体积同步扣减、A1 组重建浪费统计。
+///
+/// 放在组装之后、totals 之前调用——合计与明细保持一致；`entry_count` 是文件系统
+/// 事实（目录条目数），不随候选过滤变化。
+fn apply_ignore_paths(groups: &mut Vec<CacheGroup>, ignored: &[PathBuf]) {
+    for g in groups.iter_mut() {
+        // 整组都在排除路径之下 → 整组出局（保留空组会让合计出现「0 字节的候选」）
+        if under_any_ignored(&g.root, ignored) {
+            g.total_bytes = 0;
+            g.details.clear();
+            g.deadweight = None;
+            g.cleanable = false;
+            continue;
+        }
+        if g.details
+            .iter()
+            .any(|d| under_any_ignored(&d.path, ignored))
+        {
+            let before: u64 = g.details.iter().map(|d| d.bytes).sum();
+            g.details.retain(|d| !under_any_ignored(&d.path, ignored));
+            let after: u64 = g.details.iter().map(|d| d.bytes).sum();
+            g.total_bytes = g.total_bytes.saturating_sub(before.saturating_sub(after));
+        }
+        // A1 组：条目视图在 deadweight.items 里，逐项扣减并重算三桶与浪费比
+        if let Some(dw) = &mut g.deadweight {
+            if dw.items.iter().any(|i| under_any_ignored(&i.path, ignored)) {
+                // 只收集再删：借用分开，避免边遍历边 retain 的冲突
+                let victims: Vec<DeadweightItem> = dw
+                    .items
+                    .iter()
+                    .filter(|i| under_any_ignored(&i.path, ignored))
+                    .cloned()
+                    .collect();
+                for v in &victims {
+                    dw.bytes = dw.bytes.saturating_sub(v.bytes);
+                    dw.entry_count = dw.entry_count.saturating_sub(1);
+                    let key = v.platform.clone().unwrap_or_else(|| "unknown".into());
+                    if let Some(stat) = dw.by_platform.iter_mut().find(|s| s.platform == key) {
+                        stat.bytes = stat.bytes.saturating_sub(v.bytes);
+                        stat.entry_count = stat.entry_count.saturating_sub(1);
+                    }
+                }
+                dw.items.retain(|i| !under_any_ignored(&i.path, ignored));
+                dw.ratio = if dw.native_bytes > 0 {
+                    Some(dw.bytes as f64 / dw.native_bytes as f64)
+                } else {
+                    None
+                };
+                g.total_bytes = dw
+                    .bytes
+                    .saturating_add(dw.native_bytes)
+                    .saturating_add(dw.other_bytes);
+            }
+        }
+    }
+    // 整组出局后从列表里拿掉： totals 与组数一致，UI 不出现「0 字节的空组」
+    groups.retain(|g| g.total_bytes > 0 || !g.details.is_empty() || g.deadweight.is_some());
+}
+
 /// 全量 / 增量统一入口（A7）。
 ///
 /// `prev = None` → 全量；`Some(&snapshot)` → 与快照按首层条目 mtime（纳秒）diff，
@@ -661,8 +769,10 @@ pub fn scan_with(
     let mut groups: Vec<CacheGroup> = Vec::new();
     let mut fingerprints: BTreeMap<String, Vec<EntryFingerprint>> = BTreeMap::new();
 
-    // node_modules 发现与定点目录扫描互相独立 → 并行跑，墙钟取 max 而不是 sum
-    let (nm_count, nm_bytes, nm_map) = std::thread::scope(|scope| {
+    // node_modules 发现与定点目录扫描互相独立 → 并行跑，墙钟取 max 而不是 sum。
+    // scope 里除三件套外还带回：项目配置（W2/D-09）与校验过的 ignore.paths——
+    // 两者都依赖 nm 发现结果，只能等 join 之后收集。
+    let (nm_map, configs, ignore_paths) = std::thread::scope(|scope| {
         let nm = scope.spawn(|| -> (usize, u64, BTreeMap<String, (i64, u64)>) {
             let dirs =
                 find_dirs_named(&project_roots(home), "node_modules", NODE_MODULES_MAX_DEPTH);
@@ -755,25 +865,57 @@ pub fn scan_with(
             });
         }
 
-        nm.join().expect("node_modules 扫描线程失败")
+        let (_, _, nm_map) = nm.join().expect("node_modules 扫描线程失败");
+
+        // ---- 项目配置收集（W2/D-09）：只读项目根那一份 prune.toml，子包不生效 ----
+        let mut roots: Vec<PathBuf> = nm_map
+            .keys()
+            .filter_map(|k| Path::new(k).parent().map(Path::to_path_buf))
+            .collect();
+        roots.sort();
+        roots.dedup();
+        let mut configs =
+            crate::prune_toml::ProjectConfigs::collect(roots.iter().map(|p| p.as_path()), home);
+
+        // ignore.paths 只能是白名单条目的子路径；指向白名单外的条目跳过 + note（§6.3）
+        let ignore_paths =
+            validated_ignore_paths(&mut configs, entries.iter().map(|(_, p)| p.as_path()), home);
+
+        (nm_map, configs, ignore_paths)
     });
 
+    // ignore.projects：被命中的项目从**本轮报告**里剔除（不进体检、不进账本）；
+    // 快照仍保留全量，否则下一轮增量扫描会把它们当新增重算一遍
+    let nm_report: BTreeMap<String, (i64, u64)> = nm_map
+        .iter()
+        .filter(|(k, _)| !Path::new(k).parent().is_some_and(|p| configs.is_ignored(p)))
+        .map(|(k, v)| (k.clone(), *v))
+        .collect();
+    let nm_report_count = nm_report.len();
+    let nm_report_bytes: u64 = nm_report.values().map(|(_, b)| *b).sum();
+
     // 3) 项目 node_modules（L3：只统计，不逐项清理；明细供 A4 逐项确认）
-    bytes_done.fetch_add(nm_bytes, Ordering::Relaxed);
+    bytes_done.fetch_add(nm_report_bytes, Ordering::Relaxed);
     report("node-modules");
-    if nm_count > 0 {
+    if nm_report_count > 0 {
         groups.push(CacheGroup {
             key: "node-modules".into(),
-            label: format!("项目依赖（{nm_count} 个 node_modules）"),
+            label: format!("项目依赖（{nm_report_count} 个 node_modules）"),
             root: home.to_string_lossy().to_string(),
             level: Level::L3,
-            total_bytes: nm_bytes,
-            entry_count: nm_count,
+            total_bytes: nm_report_bytes,
+            entry_count: nm_report_count,
             // 聚合项：没有单一可删根（root 是 home），整项不可清；明细逐项走 L3 确认通道
             cleanable: false,
-            details: node_module_details(&nm_map, home, now_nanos),
+            details: node_module_details(&nm_report, home, now_nanos),
             deadweight: None,
         });
+    }
+
+    // ignore.paths：从清理候选中排除这些路径（§6.1）。放在组装之后、totals 之前，
+    // 让合计与明细保持一致；entry_count 是文件系统事实（目录条目数），不随候选过滤变化
+    if !ignore_paths.is_empty() {
+        apply_ignore_paths(&mut groups, &ignore_paths);
     }
 
     // A1 组置顶
@@ -802,8 +944,16 @@ pub fn scan_with(
         totals,
         // 扫描入口实时取：容量是「现在」的读数，不跟随报告缓存
         volume: volume_info(home),
-        // F9 项目体检：纯聚合 + 每项目几次 stat，跟随本轮 mtime，不额外扫描
-        projects: project::build_projects(&nm_map, home, now_nanos),
+        // F9 项目体检：纯聚合 + 每项目几次 stat，跟随本轮 mtime，不额外扫描。
+        // 传入 configs：被忽略的项目不进列表，阈值按项目覆盖
+        projects: project::build_projects(&nm_map, home, now_nanos, &configs),
+        // W2/D-09：配置事件（语法回落 / 值越界 / 白名单外路径 / 被忽略项目）。
+        // 没有事件就存 None——旧报告反序列化自然落 None
+        config_notes: if configs.notes.is_empty() {
+            None
+        } else {
+            Some(configs.notes)
+        },
     };
     let snapshot = ScanSnapshot {
         taken_at: now_ts(),
@@ -1100,5 +1250,170 @@ mod tests {
         let g: CacheGroup = serde_json::from_str(json).unwrap();
         assert!(g.details.is_empty());
         assert!(g.cleanable);
+    }
+
+    // ------------------------------------------------- 项目配置（W2/D-09）
+
+    /// 造一个最小可扫的假 home：一个项目（node_modules）+ Yarn 组里的两个平台目录
+    fn toml_fixture_home(name: &str) -> PathBuf {
+        let home = tmp(name);
+        let proj = home.join("Desktop/app");
+        std::fs::create_dir_all(proj.join("node_modules")).unwrap();
+        std::fs::write(proj.join("package.json"), "{}").unwrap();
+        let yarn = home.join("Library/Caches/Yarn/v6");
+        std::fs::create_dir_all(yarn.join("esbuild-linux-arm64")).unwrap();
+        std::fs::create_dir_all(yarn.join("esbuild-darwin-arm64")).unwrap();
+        write(&yarn.join("esbuild-linux-arm64/a.bin"), 8192);
+        write(&yarn.join("esbuild-darwin-arm64/b.bin"), 8192);
+        home
+    }
+
+    fn candidate_paths(r: &DiskReport) -> Vec<String> {
+        let mut v: Vec<String> = r
+            .groups
+            .iter()
+            .flat_map(|g| {
+                g.details.iter().map(|d| d.path.clone()).chain(
+                    g.deadweight
+                        .iter()
+                        .flat_map(|d| d.items.iter().map(|i| i.path.clone())),
+                )
+            })
+            .collect();
+        v.sort();
+        v
+    }
+
+    /// §6.5 负面测试：非法段整份拒绝后，清理候选列表必须与无配置时**逐条一致**
+    #[test]
+    fn banned_section_falls_back_to_identical_candidates() {
+        let home = toml_fixture_home("toml-banned");
+        let base = scan(&home, None);
+        assert!(base.config_notes.is_none(), "无配置时没有配置事件");
+        let base_paths = candidate_paths(&base);
+        assert!(!base_paths.is_empty(), "夹具必须先扫出候选，否则测试空转");
+
+        let proj = home.join("Desktop/app");
+        std::fs::write(proj.join("prune.toml"), "[clean]\nx = 1\n").unwrap();
+        let with = scan(&home, None);
+        assert_eq!(candidate_paths(&with), base_paths, "坏配置不能改变候选");
+        let notes = with.config_notes.expect("必须提示整份回落");
+        assert!(notes
+            .iter()
+            .any(|n| n.kind == crate::prune_toml::ConfigNoteKind::Syntax));
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// ignore.paths 指向 A1 组内子路径：该条目从浪费统计里消失，其余条目不动
+    #[test]
+    fn ignore_paths_exclude_deadweight_entries() {
+        let home = toml_fixture_home("toml-ignore");
+        let base = scan(&home, None);
+        let yarn = base
+            .groups
+            .iter()
+            .find(|g| g.key == "yarn")
+            .expect("夹具必须有 yarn 组");
+        let dw = yarn.deadweight.as_ref().expect("yarn 是 A1 组");
+        assert_eq!(
+            dw.items.len(),
+            1,
+            "只有别平台的死重进 items（本机原生的进 native 桶）"
+        );
+        assert!(dw.native_bytes > 0, "darwin-arm64 目录必须落在原生桶里");
+        let base_total = yarn.total_bytes;
+
+        // 项目 prune.toml：排除 linux 那个死重目录
+        let proj = home.join("Desktop/app");
+        std::fs::write(
+            proj.join("prune.toml"),
+            "[ignore]\npaths = [\"~/Library/Caches/Yarn/v6/esbuild-linux-arm64\"]\n",
+        )
+        .unwrap();
+        let with = scan(&home, None);
+        let yarn = with.groups.iter().find(|g| g.key == "yarn").unwrap();
+        let dw = yarn.deadweight.as_ref().unwrap();
+        assert!(
+            dw.items.is_empty(),
+            "被排除的条目不再进浪费统计（剩下的 darwin 条目在 native 桶里）"
+        );
+        assert!(
+            yarn.total_bytes < base_total,
+            "组体积同步扣减：{} < {base_total}",
+            yarn.total_bytes
+        );
+        // 原生可用桶不受影响（被删的是死重）
+        let base_dw = base
+            .groups
+            .iter()
+            .find(|g| g.key == "yarn")
+            .unwrap()
+            .deadweight
+            .as_ref()
+            .unwrap();
+        assert_eq!(dw.native_bytes, base_dw.native_bytes);
+        // totals 与明细一致：不含被排除的死重
+        assert!(with.totals.deadweight < base.totals.deadweight);
+        // 合法且在白名单内的排除路径不产生事件——有事件才是异常
+        assert!(with.config_notes.is_none());
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// ignore.projects：命中的项目从体检与 node_modules 组里消失，且不进账本（已定裁决）
+    #[test]
+    fn ignore_projects_remove_project_from_scan_report() {
+        let home = toml_fixture_home("toml-ignore-proj");
+        let base = scan(&home, None);
+        assert_eq!(base.projects.len(), 1);
+        assert!(base.projects[0].root.contains("Desktop/app"));
+
+        let proj = home.join("Desktop/app");
+        std::fs::write(
+            proj.join("prune.toml"),
+            "[ignore]\nprojects = [\"~/Desktop/app\"]\n",
+        )
+        .unwrap();
+        let with = scan(&home, None);
+        assert!(with.projects.is_empty(), "被忽略的项目不进体检");
+        let nm = with.groups.iter().find(|g| g.key == "node-modules");
+        assert!(nm.is_none(), "node_modules 组也不再出现（没扫它）");
+        let notes = with.config_notes.unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.kind == crate::prune_toml::ConfigNoteKind::Ignored),
+            "体检卡要知道有几个项目被配置跳过"
+        );
+        let _ = std::fs::remove_dir_all(&home);
+    }
+
+    /// ignore.paths 指向白名单外：该条目不生效（+ note），其余候选不变（§6.5）
+    #[test]
+    fn ignore_path_outside_whitelist_is_skipped_with_note() {
+        let home = toml_fixture_home("toml-outside");
+        let base = scan(&home, None);
+        let base_paths = candidate_paths(&base);
+
+        let proj = home.join("Desktop/app");
+        std::fs::write(
+            proj.join("prune.toml"),
+            "[ignore]\npaths = [\"~/Documents/private\"]\n",
+        )
+        .unwrap();
+        let with = scan(&home, None);
+        assert_eq!(
+            candidate_paths(&with),
+            base_paths,
+            "白名单外的路径不影响候选"
+        );
+        let notes = with.config_notes.unwrap();
+        assert!(
+            notes
+                .iter()
+                .any(|n| n.kind == crate::prune_toml::ConfigNoteKind::Path
+                    && n.detail.as_deref().unwrap_or("").contains("不在白名单内")),
+            "必须明说这条被跳过"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 }

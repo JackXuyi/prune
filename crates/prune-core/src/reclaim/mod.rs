@@ -500,6 +500,7 @@ mod tests {
             },
             volume: None,
             projects: Vec::new(),
+            config_notes: None,
         }
     }
 
