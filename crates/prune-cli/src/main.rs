@@ -9,11 +9,14 @@
 //! 之下还有 prune-core 的白名单 + 20GB 熔断两道闸。
 
 mod mcp;
+mod watch;
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+use prune_core::db::Store;
+use prune_core::disk::project::ProjectTrend as DiskTrend;
 use prune_core::disk::whitelist::Level;
 use prune_core::disk::{self, CacheGroup};
 use prune_core::leak;
@@ -42,6 +45,8 @@ pub enum Command {
         port: Option<u16>,
         json: bool,
         all: bool,
+        /// 只看冲突端口（同端口 ≥2 个不同 pid）
+        conflicts: bool,
     },
     /// `prune app <家族名>`：一个应用的五域资源画像（M8）
     App {
@@ -52,6 +57,19 @@ pub enum Command {
     Lan {
         /// 全段 TCP connect 探测（催熟 ARP 后回读邻居表，/23 约 6s）
         scan: bool,
+        json: bool,
+    },
+    /// `prune watch`：按需守护（cpu / mem / port / disk）
+    Watch {
+        interval: u64,
+        only: Vec<watch::Kind>,
+        json: bool,
+        once: bool,
+        fail_on_warn: bool,
+    },
+    /// `prune projects`：项目依赖账本（按天趋势）
+    Projects {
+        days: u32,
         json: bool,
     },
     Mcp,
@@ -131,11 +149,13 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         "port" => {
             let mut json = false;
             let mut all = false;
+            let mut conflicts = false;
             let mut port: Option<u16> = None;
             for a in it {
                 match a.as_str() {
                     "--json" => json = true,
                     "--all" | "-a" => all = true,
+                    "--conflicts" | "-c" => conflicts = true,
                     other => match other.parse::<u16>() {
                         Ok(p) if port.is_none() => port = Some(p),
                         Ok(_) => return Err("port 只接受一个端口号".into()),
@@ -145,7 +165,12 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                     },
                 }
             }
-            Ok(Command::Port { port, json, all })
+            Ok(Command::Port {
+                port,
+                json,
+                all,
+                conflicts,
+            })
         }
         "app" => {
             let mut json = false;
@@ -182,6 +207,100 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             }
             Ok(Command::Lan { scan, json })
         }
+        "watch" => {
+            let mut o = watch::Opts {
+                interval: watch::DEFAULT_INTERVAL_SEC,
+                only: Vec::new(),
+                json: false,
+                once: false,
+                fail_on_warn: false,
+            };
+            let all: Vec<&str> = it.map(|s| s.as_str()).collect();
+            let mut i = 0;
+            while i < all.len() {
+                match all[i] {
+                    "-h" | "--help" => return Err(usage()),
+                    "--json" => o.json = true,
+                    "--once" => o.once = true,
+                    "--fail-on" => {
+                        i += 1;
+                        match all.get(i).copied() {
+                            Some("warn") => o.fail_on_warn = true,
+                            Some("none") => o.fail_on_warn = false,
+                            Some(other) => {
+                                return Err(format!("--fail-on 只接受 warn|none，收到 {other:?}"))
+                            }
+                            None => return Err("--fail-on 需要一个值（warn|none）".into()),
+                        }
+                    }
+                    "--interval" => {
+                        i += 1;
+                        let v = all
+                            .get(i)
+                            .ok_or_else(|| "--interval 需要一个秒数".to_string())?;
+                        let raw = v
+                            .parse::<u64>()
+                            .map_err(|_| format!("--interval 不是数字: {v:?}"))?;
+                        // 钳制而不是报错：调用方常把环境变量直接传进来
+                        o.interval = raw.clamp(watch::MIN_INTERVAL_SEC, watch::MAX_INTERVAL_SEC);
+                        if o.interval != raw {
+                            eprintln!("提示：--interval {raw} 超出范围，按 {}s 执行", o.interval);
+                        }
+                    }
+                    "--only" => {
+                        i += 1;
+                        let v = all.get(i).ok_or_else(|| {
+                            "--only 需要逗号分隔的类别（cpu,mem,port,disk）".to_string()
+                        })?;
+                        for part in v.split(',') {
+                            if part.trim().is_empty() {
+                                continue;
+                            }
+                            let k = watch::Kind::parse(part).ok_or_else(|| {
+                                format!("--only 不认识 {part:?}；合法值：{}", watch::kinds_hint())
+                            })?;
+                            if !o.only.contains(&k) {
+                                o.only.push(k);
+                            }
+                        }
+                    }
+                    other => return Err(format!("watch 不认识参数 {other:?}\n{}", usage())),
+                }
+                i += 1;
+            }
+            Ok(Command::Watch {
+                interval: o.interval,
+                only: o.only,
+                json: o.json,
+                once: o.once,
+                fail_on_warn: o.fail_on_warn,
+            })
+        }
+        "projects" => {
+            let mut days = 30u32;
+            let mut json = false;
+            let all: Vec<&str> = it.map(|s| s.as_str()).collect();
+            let mut i = 0;
+            while i < all.len() {
+                match all[i] {
+                    "-h" | "--help" => return Err(usage()),
+                    "--json" => json = true,
+                    "--days" => {
+                        i += 1;
+                        let v = all
+                            .get(i)
+                            .ok_or_else(|| "--days 需要一个天数".to_string())?;
+                        days = v
+                            .parse::<u32>()
+                            .map_err(|_| format!("--days 不是整数: {v:?}"))?
+                            .clamp(1, 400);
+                    }
+                    other => return Err(format!("projects 不认识参数 {other:?}\n{}", usage())),
+                }
+                i += 1;
+            }
+            Ok(Command::Projects { days, json })
+        }
         other => Err(format!("不认识子命令 {other:?}\n{}", usage())),
     }
 }
@@ -199,12 +318,18 @@ fn usage() -> String {
   prune scan [--json]                 全盘扫描，输出可回收清单
   prune reclaim [--level green]       预览零风险清理项（默认 dry-run；--yes 才真删）
   prune mem [--swapped] [--json]      一次性内存读数（footprint 口径）
-  prune mem --watch [--interval N]    持续采样并输出泄漏嫌疑判定（默认 10s）
-  prune port [PORT] [--json] [--all]  谁占着这个端口（不带 PORT 列关注层；--all 含内部 IPC）
+  prune mem --watch [--interval N]    【已弃用】改用 prune watch --only mem
+  prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
+                                      按需守护：前台进程，Ctrl-C 即停，不装后台
+  prune port [PORT] [--json] [--all] [--conflicts]
+                                      谁占着这个端口（--conflicts 只看冲突端口）
+  prune projects [--days N] [--json]  项目依赖账本（按天趋势，默认 30 天）
   prune app <家族名> [--json]         一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
   prune lan [--scan] [--json]         局域网设备与暴露面（默认只读邻居表；--scan 全段探测）
   prune mcp                           启动 MCP stdio server（AI Agent 查询入口）
-  prune --version | --help"
+  prune --version | --help
+
+退出码：0 正常 / 2 用法错 / 3 权限不足 / 4 探测失败 / 10 watch 达 warn（仅 --fail-on）"
         .into()
 }
 
@@ -230,10 +355,36 @@ fn main() {
             json,
             watch,
         } => match watch {
-            Some(interval) => cmd_watch(interval),
+            Some(_) => {
+                // DP-1 裁 A：别名过渡而不是立即 Breaking。已有脚本还能跑，
+                // 但必须让写脚本的人知道正确入口在哪，且给出去除时点。
+                eprintln!(
+                    "提示：prune mem --watch 已并入 prune watch --only mem（2027-09 移除本别名）"
+                );
+                cmd_mem_watch_legacy(json)
+            }
             None => cmd_mem(swapped, json),
         },
-        Command::Port { port, json, all } => cmd_port(port, json, all),
+        Command::Watch {
+            interval,
+            only,
+            json,
+            once,
+            fail_on_warn,
+        } => watch::run(&watch::Opts {
+            interval,
+            only,
+            json,
+            once,
+            fail_on_warn,
+        }),
+        Command::Projects { days, json } => cmd_projects(days, json),
+        Command::Port {
+            port,
+            json,
+            all,
+            conflicts,
+        } => cmd_port(port, json, all, conflicts),
         Command::App { name, json } => cmd_app(&name, json),
         Command::Lan { scan, json } => cmd_lan(scan, json),
         Command::Mcp => cmd_mcp(),
@@ -241,13 +392,149 @@ fn main() {
     std::process::exit(code);
 }
 
-fn home_dir() -> PathBuf {
+// ---------------------------------------------------------------- projects
+
+/// `prune projects`：项目依赖账本（W2/D-08）。读的是 GUI/扫描写入的同一张
+/// `project_day` 表；CLI 不触发扫描——账本是「历史记录」，不是「现场重算」。
+fn cmd_projects(days: u32, json: bool) -> i32 {
+    let path = mcp::default_db_path();
+    if !path.exists() {
+        return projects_unavailable(
+            days,
+            json,
+            &format!(
+                "账本库不存在（{}）：先跑一次 prune scan 或打开 GUI",
+                path.display()
+            ),
+        );
+    }
+    let store = match Store::open(&path) {
+        Ok(s) => s,
+        Err(e) => return projects_unavailable(days, json, &format!("账本库打开失败: {e}")),
+    };
+    let now = swap::now_secs() as i64;
+    let from = prune_core::localtime::day_string(now - (days as i64) * 86_400);
+    let rows = match store.project_day_recent(&from) {
+        Ok(r) => r,
+        Err(e) => return projects_unavailable(days, json, &format!("读账本失败: {e}")),
+    };
+    if rows.is_empty() {
+        return projects_unavailable(
+            days,
+            json,
+            &format!("{from} 起没有账本记录：账本随每轮全量扫描写入，先扫一轮"),
+        );
+    }
+
+    let trends = prune_core::disk::project::build_trends(&rows);
+
+    if json {
+        let doc = serde_json::json!({
+            "schemaVersion": 1,
+            "from": from,
+            "days": days,
+            "projects": trends,
+        });
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+        return 0;
+    }
+
+    for line in readout_lines(&trends) {
+        println!("{line}");
+    }
+    println!(
+        "
+窗口 {from} 起（{} 天）。账本只记依赖目录体积；缺失的日子不补 0。",
+        days
+    );
+    0
+}
+
+/// 人读模式最多列这么多行——终端不是趋势图，58 行刷过去等于没读。
+/// `--json` 始终是全量，少列几行不会丢事实。
+pub(crate) const READOUT_MAX: usize = 20;
+
+/// 人读排序：先看「动了多少」，再看「现在多大」。
+///
+/// `build_trends` 按当前体积降序（给体检卡用，谁胖谁在前），但日常读数要回答的
+/// 是「这两天谁变了」——一个昨天 2 GB、今天 0 B 的项目，按体积排会沉到最后一行，
+/// 而它恰恰是唯一的新闻。所以这里按 |变化| 降序，变化不可测的排在有刻度的之后；
+/// 体积只作同分时的次序。
+pub(crate) fn readout_order(trends: &[DiskTrend]) -> Vec<&DiskTrend> {
+    let mut v: Vec<&DiskTrend> = trends.iter().collect();
+    v.sort_by_key(|t| {
+        let moved: i128 = match t.delta_bytes {
+            Some(d) => d.unsigned_abs() as i128,
+            None => -1, // 一个点算不出变化：排在所有有刻度的后面
+        };
+        let size = t.last.as_ref().map(|p| p.deps_bytes).unwrap_or(0) as i128;
+        (moved, size)
+    });
+    v.reverse();
+    v
+}
+
+pub(crate) fn readout_lines(trends: &[DiskTrend]) -> Vec<String> {
+    let ordered = readout_order(trends);
+    let mut out = vec![format!(
+        "{}{}{}采样",
+        pad("项目", 34),
+        pad("当前依赖", 12),
+        pad("窗口内变化", 18)
+    )];
+    for t in ordered.iter().take(READOUT_MAX) {
+        let cur = t
+            .last
+            .as_ref()
+            .map(|p| hb(p.deps_bytes))
+            .unwrap_or_else(|| "—".into());
+        // 口径纪律：一个点算不出变化，说「数据不足」而不是 0
+        let delta = match t.delta_bytes {
+            Some(d) if d > 0 => format!("+{}", hb(d as u64)),
+            Some(d) if d < 0 => format!("-{}", hb(d.unsigned_abs())),
+            Some(_) => "持平".to_string(),
+            None => format!("数据不足（{} 天）", t.samples),
+        };
+        out.push(format!(
+            "{}{}{}{} 天",
+            pad(&truncate(&t.name, 32), 34),
+            pad(&cur, 12),
+            pad(&delta, 18),
+            t.samples
+        ));
+    }
+    if ordered.len() > READOUT_MAX {
+        out.push(format!(
+            "… 另有 {} 个项目未列出（prune projects --json 看全量）",
+            ordered.len() - READOUT_MAX
+        ));
+    }
+    out
+}
+
+fn projects_unavailable(days: u32, json: bool, note: &str) -> i32 {
+    if json {
+        let doc = serde_json::json!({
+            "schemaVersion": 1,
+            "days": days,
+            "status": "unavailable",
+            "note": note,
+            "projects": [],
+        });
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+    } else {
+        eprintln!("{note}");
+    }
+    0
+}
+
+pub(crate) fn home_dir() -> PathBuf {
     prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."))
 }
 
 // ---------------------------------------------------------------- 通用输出
 
-fn hb(bytes: u64) -> String {
+pub(crate) fn hb(bytes: u64) -> String {
     const UNITS: [&str; 5] = ["B", "KB", "MB", "GB", "TB"];
     let mut v = bytes as f64;
     let mut i = 0;
@@ -282,6 +569,29 @@ fn cmd_scan(json: bool) -> i32 {
             "\r扫描完成，用时 {} ms      ",
             started.elapsed().as_millis()
         );
+    }
+
+    // W2/D-08：全量扫描顺手记一行项目账本。CLI 用户不装 GUI 也能用 `prune projects`；
+    // 失败只提示不改变退出码——账本是旁路读数，不是扫描的产出承诺。
+    {
+        let now = swap::now_secs() as i64;
+        let day = prune_core::localtime::day_string(now);
+        if let Ok(store) = Store::open(&mcp::default_db_path()) {
+            match prune_core::disk::project::record_ledger(&store, &report, &day, now) {
+                Ok(n) if n > 0 => {
+                    let _ = prune_core::disk::project::prune_ledger(
+                        &store,
+                        now,
+                        prune_core::disk::project::LEDGER_KEEP_DAYS,
+                    );
+                    if !json {
+                        eprintln!("项目账本：{day} 记入 {n} 个项目（prune projects 可看趋势）");
+                    }
+                }
+                Ok(_) => {}
+                Err(e) => eprintln!("项目账本落库失败（不影响扫描结果）: {e}"),
+            }
+        }
     }
 
     if json {
@@ -511,8 +821,60 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
 /// - 「没查到」≠「端口空闲」：查不到时把内核口径与不可见条数一起说出来；
 /// - TIME_WAIT 不是占用：单独一行解释，且没有「结束」建议；
 /// - 双栈不重复：内核里 v4/v6 各一条 fd，这里只输出一行。
-fn cmd_port(only: Option<u16>, json: bool, all: bool) -> i32 {
+fn cmd_port(only: Option<u16>, json: bool, all: bool, conflicts_only: bool) -> i32 {
     let snap = net::ports::scan(None);
+
+    // `--conflicts`：只回答「此刻谁和谁抢端口」。与 `island` 的端口事件同一判据
+    // （`owner_count() > 1`），区别是这里给**现状**，那边给**变化**。
+    if conflicts_only {
+        let entries: Vec<&net::PortEntry> = snap
+            .entries
+            .iter()
+            .filter(|e| only.map(|p| e.port == p).unwrap_or(true))
+            .collect();
+        let owned: Vec<net::PortEntry> = entries.into_iter().cloned().collect();
+        let list = net::ports::conflicts(&owned);
+        if json {
+            let doc = serde_json::json!({
+                "schemaVersion": 1,
+                "at": snap.at,
+                "conflicts": list,
+                "coverage": snap.coverage,
+            });
+            println!("{}", serde_json::to_string_pretty(&doc).unwrap());
+            return 0;
+        }
+        if list.is_empty() {
+            println!("当前没有端口冲突（同一端口 ≥2 个不同 pid 才算）。");
+            return 0;
+        }
+        println!("冲突端口 {} 个：", list.len());
+        for c in &list {
+            println!(
+                "  {}  {} 个持有者  暴露面 {}",
+                c.port,
+                c.owners,
+                exposure_cn(c.exposure)
+            );
+            for b in &c.listeners {
+                let pid = b
+                    .pid
+                    .map(|p| p.to_string())
+                    .unwrap_or_else(|| "内核".into());
+                println!(
+                    "      {} (pid {})  绑定 {}{}",
+                    b.comm,
+                    pid,
+                    b.addr,
+                    b.project_label
+                        .as_ref()
+                        .map(|l| format!("  · {l}"))
+                        .unwrap_or_default()
+                );
+            }
+        }
+        return 0;
+    }
 
     if json {
         let entries: Vec<&net::PortEntry> = snap
@@ -1083,7 +1445,14 @@ fn truncate(s: &str, max: usize) -> String {
 
 // ---------------------------------------------------------------- watch
 
-fn cmd_watch(interval: u64) -> i32 {
+/// `prune mem --watch` 的旧实现（DP-1 裁 A：保留为别名，2027-09 移除）。
+/// 新代码请用 `prune watch --only mem`——那边统一了四类事件与 JSONL 契约。
+fn cmd_mem_watch_legacy(json: bool) -> i32 {
+    let _ = json;
+    cmd_watch_compat(10)
+}
+
+fn cmd_watch_compat(interval: u64) -> i32 {
     if interval == 0 {
         eprintln!("--interval 必须 > 0");
         return 2;
@@ -1147,7 +1516,7 @@ fn print_watch_verdict(report: &leak::LeakReport) {
     println!("  → 证据只有增长事实；建议重启该应用后观察是否复现。");
 }
 
-fn ts_hms(ts: i64) -> String {
+pub(crate) fn ts_hms(ts: i64) -> String {
     // 本地时区：libc localtime（prune-core 已依赖 libc，CLI 侧直接复用）
     #[cfg(unix)]
     unsafe {
@@ -1188,9 +1557,83 @@ fn cmd_mcp() -> i32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use prune_core::disk::project::ProjectPoint as DiskProjectPoint;
 
     fn s(v: &str) -> String {
         v.to_string()
+    }
+
+    /// 造一个只关心「变化 / 当前体积」的趋势，用来测人读排序
+    fn trend(name: &str, size: u64, delta: Option<i64>, samples: u32) -> DiskTrend {
+        let point = |bytes: u64| DiskProjectPoint {
+            day: "2026-11-16".into(),
+            deps_bytes: bytes,
+            deps_age_days: 30,
+            activity_days: Some(1),
+            lockfiles: vec!["pnpm".into()],
+            verdict: "heavy".into(),
+        };
+        DiskTrend {
+            root: format!("/w/{name}"),
+            name: name.into(),
+            points: vec![point(size)],
+            first: Some(point(size)),
+            last: Some(point(size)),
+            delta_bytes: delta,
+            peak_bytes: Some(size),
+            samples,
+        }
+    }
+
+    #[test]
+    fn readout_puts_the_bigger_movement_first() {
+        let big_static = trend("big-static", 20 << 30, Some(0), 2);
+        let shrank = trend("shrank", 0, Some(-(2 << 30)), 2);
+        let grew = trend("grew", 3 << 30, Some(8 << 30), 2);
+        let unmeasured = trend("unmeasured", 40 << 30, None, 1);
+
+        let refs = vec![big_static, shrank, grew, unmeasured];
+        let order: Vec<&str> = readout_order(&refs)
+            .iter()
+            .map(|t| t.name.as_str())
+            .collect();
+        assert_eq!(
+            order,
+            vec!["grew", "shrank", "big-static", "unmeasured"],
+            "先按 |变化| 排；变化的绝对值相同才看体积；不可测的垫底——\
+             否则「昨天 2 GB 今天 0 B」这种唯一有新闻的项目会沉到最后一行"
+        );
+    }
+
+    #[test]
+    fn readout_caps_long_lists_but_says_how_many_were_hidden() {
+        let list: Vec<DiskTrend> = (0..25)
+            .map(|i| trend(&format!("p{i:02}"), (i as u64 + 1) << 20, Some(i as i64), 2))
+            .collect();
+        let lines = readout_lines(&list);
+        // 表头 1 + 至多 READOUT_MAX 行 + 省略说明 1
+        assert_eq!(lines.len(), READOUT_MAX + 2);
+        let last = lines.last().unwrap();
+        assert!(
+            last.contains("另有 5 个项目未列出") && last.contains("--json"),
+            "少列必须明说少列了几条，并指路全量：{last}"
+        );
+
+        // 不超上限时不出现省略行
+        let short: Vec<DiskTrend> = vec![trend("only", 1 << 20, Some(1), 2)];
+        let lines = readout_lines(&short);
+        assert_eq!(lines.len(), 2);
+        assert!(!lines.iter().any(|l| l.contains("未列出")));
+    }
+
+    #[test]
+    fn readout_states_insufficient_data_instead_of_zero() {
+        let lines = readout_lines(&[trend("fresh", 1 << 30, None, 1)]);
+        assert!(
+            lines[1].contains("数据不足（1 天）"),
+            "单点样本不能显示成 0 变化：{}",
+            lines[1]
+        );
     }
 
     #[test]
@@ -1266,7 +1709,8 @@ mod tests {
             Command::Port {
                 port: None,
                 json: false,
-                all: false
+                all: false,
+                conflicts: false
             }
         );
         assert_eq!(
@@ -1274,7 +1718,8 @@ mod tests {
             Command::Port {
                 port: Some(3000),
                 json: false,
-                all: false
+                all: false,
+                conflicts: false
             }
         );
         assert_eq!(
@@ -1282,7 +1727,8 @@ mod tests {
             Command::Port {
                 port: Some(3000),
                 json: true,
-                all: true
+                all: true,
+                conflicts: false
             }
         );
         // 端口 0 是通配 fd，不是服务：命令行上接受但扫描层会丢掉

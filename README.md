@@ -212,11 +212,15 @@ There is no account, no network call, and no "rate your experience" prompt. The 
 One binary, two shapes: `cargo build --release -p prune-cli` produces `target/release/prune`, sharing `prune-core` with the GUI.
 
 ```bash
-prune scan [--json]                 # full disk scan: headline / cross-platform detail / duplicate stores / Docker hints
+prune scan [--json]                 # full disk scan: headline / cross-platform detail / duplicate stores / Docker hints (also records one project-ledger row)
 prune reclaim [--level green]       # preview reclaimable items (dry-run by default; --yes deletes, via trash)
 prune mem [--swapped] [--json]      # one-shot memory reading (footprint, deep probe top 20)
-prune mem --watch [--interval N]    # continuous sampling with a leak-suspicion verdict every 60 s
-prune port [PORT] [--json] [--all]  # who owns this port (no PORT: watched layer; --all: internal IPC)
+prune mem --watch [--interval N]    # DEPRECATED: use prune watch --only mem (alias removed 2027-09)
+prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
+                                    # on-demand watch: foreground process, Ctrl-C stops it, no daemon, no log file
+prune port [PORT] [--json] [--all] [--conflicts]
+                                    # who owns this port (--conflicts: ports with >= 2 distinct holders)
+prune projects [--days N] [--json]  # project dependency ledger: per-day trend (missing days are not zero-filled)
 prune app <family> [--json]         # one app's resource profile: processes/memory/CPU/ports/conns/disk
 prune lan [--scan] [--json]         # LAN devices (default: cache only; --scan probes the subnet)
 prune mcp                           # MCP server over stdio (agent query entry point)
@@ -224,7 +228,7 @@ prune mcp                           # MCP server over stdio (agent query entry p
 
 ## MCP server
 
-**MCP tools (8, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
+**MCP tools (12, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail plus the most-swapped processes) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
 
 Wire it into any MCP-capable agent and ask questions like "what is eating disk on this machine", "is anything of mine exposed on the LAN", or "is this process leaking" — the agent reads, you decide.
 
@@ -232,7 +236,7 @@ Wire it into any MCP-capable agent and ask questions like "what is eating disk o
 
 This is a code-level property, not a slogan, and it is covered by tests:
 
-1. **Agents can look.** All 8 MCP tools are queries. There is no execution tool.
+1. **Agents can look.** All 12 MCP tools are queries. There is no execution tool.
 2. **Only a human can delete.** Cleanup happens in the GUI, behind whitelist + trash + 20 GB breaker. There is no IPC command an agent could call to delete anything.
 3. **The dispatcher refuses by name.** `reclaim` / `clean` / `execute` / `delete` and friends return an explicit read-only error that says why — not a generic "unknown tool". A test asserts that arm exists.
 4. **Whitelist as the last line.** Even if an execution path were opened later, only registered regenerable paths could be touched; free-form paths die in `prune-core`.

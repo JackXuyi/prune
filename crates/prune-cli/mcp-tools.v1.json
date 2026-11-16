@@ -1,0 +1,156 @@
+[
+  {
+    "description": "一次性内存读数：物理内存/压缩器/swap/压力 + 按应用家族聚合的真实占用（phys_footprint 口径，含被换出部分；未深探的进程为 RSS 估算，字段 hasFootprint=false）。深探 Top 20 进程约需 1-2 秒。",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "mem_snapshot"
+  },
+  {
+    "description": "内存泄漏嫌疑判定（B5）：读 Prune GUI 采集的进程序列库做线性回归。只报有证据的嫌疑，措辞克制；数据不足时显式说明而不是返回空。需要 GUI 已运行至少 30 分钟。",
+    "inputSchema": {
+      "properties": {
+        "sinceHours": {
+          "default": 6,
+          "description": "回溯多少小时的序列，默认 6",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "name": "mem_leaks"
+  },
+  {
+    "description": "全盘磁盘浪费扫描（约 15 秒，不要高频调用）：跨平台二进制死重（A1）、包管理器缓存、项目 node_modules、Docker。返回分层可回收统计。",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "disk_report"
+  },
+  {
+    "description": "端口监听反查（只读，约 40-140 ms）：谁占着某个端口，含持有进程的 pid、绑定地址（全部网卡/仅本机）、cwd 归属的项目目录与 ESTABLISHED 连接数。不传 port 时返回关注层（开发/数据库端口 + 有项目归属的端口）。coverage 说明可见性：listenTotal 是内核口径，attributed 是能归属到进程的条数，差额是权限看不到的部分——「没查到」不等于端口空闲。timeWait 是内核残留连接，没有持有进程。",
+    "inputSchema": {
+      "properties": {
+        "all": {
+          "default": false,
+          "description": "是否包含应用内部 IPC / 系统服务的折叠层，默认 false",
+          "type": "boolean"
+        },
+        "port": {
+          "description": "只看这个端口（如 3000）。不传则返回关注层全部。",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "name": "port_listeners"
+  },
+  {
+    "description": "单个应用的五域资源画像（只读，约 2-6 秒，不要高频调用）：进程数、内存（RSS 下界）、CPU、监听端口、TCP 连接数、磁盘三层（本体 / 缓存 / 数据，按实占块统计）。family 用大小写不敏感的子串匹配，如 \"cursor\"；匹配到多个家族时会返回 candidates 让你用全名重试。",
+    "inputSchema": {
+      "properties": {
+        "family": {
+          "description": "应用家族名（子串匹配即可，如 cursor / chrome / wechat）",
+          "type": "string"
+        }
+      },
+      "required": [
+        "family"
+      ],
+      "type": "object"
+    },
+    "name": "app_resources"
+  },
+  {
+    "description": "局域网设备与暴露面（只读缓存，不发包）：同网段设备列表（IP/MAC/厂商/类型/在线状态）+ 本机对它们开放的端口。数据来自最近一轮扫描（GUI 点扫描或 prune lan --scan），本工具只读缓存——若返回 status=unavailable，请先让用户扫一轮。设备厂商为 null 可能是随机化 MAC（正常现象），不代表识别失败；mDNS/SSDP 均空时 notes 会说明可能是防火墙拦截。时间线字段：firstSeen（首次发现，Unix 秒）/ lastSeen（最后活跃）/ isNew（10 分钟内新接入，true 时请向用户提示），0 表示旧版缓存无记录。",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "lan_devices"
+  },
+  {
+    "description": "白名单逐条细分视图（只读，秒级）：每条可回收缓存（包管理器 / AI 应用 / Xcode / 模拟器等白名单条目）的实时体积与级别（L1/L2 一键清理类、L3 需逐项确认类），children=true 时附一级子目录占比。与 disk_report 的分工：那个回答「全盘浪费结构」（约 15 秒），本工具回答「某条缓存现在多大、什么占的」。未安装的应用（无对应目录）不会出现在结果里。注意：本工具永不执行清理——清理必须由人在 Prune GUI 确认。",
+    "inputSchema": {
+      "properties": {
+        "children": {
+          "default": false,
+          "description": "是否列每条的一级子目录占比（按体积降序），默认 false",
+          "type": "boolean"
+        },
+        "childrenTop": {
+          "default": 8,
+          "description": "children 开启时最多列几个子目录，默认 8",
+          "type": "number"
+        },
+        "keys": {
+          "description": "只看这些条目（如 [\"cursor-cache\", \"ollama-models\"]）。缺省返回全部。",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
+    },
+    "name": "disk_scan"
+  },
+  {
+    "description": "当前端口冲突（只读，约 40-140 ms）：同一端口有 ≥2 个不同 pid 的持有者才算冲突（同一进程的 IPv4+IPv6 双栈绑定不算）。返回冲突端口、持有者 pid/进程名/项目目录与暴露面。与 port_listeners 的分工：那个回答「某个端口是谁的」，本工具回答「此刻哪些端口打起来了」——用来判断 dev server 起不来的原因。",
+    "inputSchema": {
+      "properties": {
+        "port": {
+          "description": "只看这个端口。缺省 = 全量。",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "name": "port_conflicts"
+  },
+  {
+    "description": "项目依赖账本（只读，< 50 ms）：按天记录的 node_modules 体积趋势，回答「哪个项目在悄悄变大」。**只读历史记录，不触发扫描**——账本随每轮全量扫描写入，若返回 status=unavailable 说明还没扫过。deltaBytes 仅在样本 ≥2 时有值，null 表示数据不足（不是 0）；缺失的日子不补 0。",
+    "inputSchema": {
+      "properties": {
+        "days": {
+          "default": 30,
+          "description": "回看多少天，默认 30，范围 7-400",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "name": "project_deps"
+  },
+  {
+    "description": "swap 明细与换出受害者榜（只读，约 1-2 秒）：swap 总量/已用/使用率、swapfile 个数与今日新增、内核内存压力，以及被换出最多的进程（按 swapped 字节降序，含 footprint 口径的真实占用）。用于回答「谁在把机器往磁盘上挤」。换出量读不到时字段为 null，不填 0。",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "swap_report"
+  },
+  {
+    "description": "站点连通性与传输速率（只读，3-8 秒）。**本工具会向用户配置的站点发起真实 HTTPS 请求**：默认 10 站、单轮并发 4、流量上限约 20 MB。逐站给 DNS/TCP/TLS/首字节/传输五阶段耗时与六态判定（ok/slow/stalled/refused/unreachable/error）——stalled 是「握手通了但首字节不到」，refused 是「站点返回 4xx/5xx，链路是通的」，两者与「连不上」不是一回事。不判断是否被墙：原因不可知，只报观测事实。",
+    "inputSchema": {
+      "properties": {},
+      "type": "object"
+    },
+    "name": "net_sites"
+  },
+  {
+    "description": "端口暴露面诊断结论（只读，约 40-140 ms）：直接给结论而不是原始条目——哪些端口绑定全部网卡（同网段可达）、哪些仅本机回环、权限看不到的监听有多少、TIME_WAIT 内核残留有多少。port_listeners 适合「谁占着 3000」这类点查；本工具适合「这台机器对外开着什么」这类体检。绑定具体网卡地址（192.168.x.x）与 0.0.0.0 都算局域网可达，结论里均标 attention。",
+    "inputSchema": {
+      "properties": {
+        "port": {
+          "description": "只诊断这个端口。缺省 = 全量体检。",
+          "type": "number"
+        }
+      },
+      "type": "object"
+    },
+    "name": "net_diag"
+  }
+]

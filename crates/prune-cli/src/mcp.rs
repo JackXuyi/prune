@@ -1,6 +1,6 @@
 //! MCP stdio server（`prune mcp`）：newline-delimited JSON-RPC 2.0。
 //!
-//! 三个只读工具，面向 AI Agent 查询：
+//! 十二个只读工具，面向 AI Agent 查询（数量与名称由 README 对账门禁 + 冻结快照双重锁定）：
 //! - `mem_snapshot`  一次性内存读数（家族聚合 + swap + 压力，Top 20 深探）
 //! - `mem_leaks`     B5 泄漏嫌疑判定（读 GUI 已采集的序列库，不自己采——
 //!   判定需要 30 min 序列，Agent 的即时查询等不了）
@@ -19,7 +19,9 @@ use serde_json::{json, Value};
 use prune_core::db::Store;
 use prune_core::disk;
 use prune_core::leak::{self, LeakReport};
+use prune_core::locale::Locale;
 use prune_core::mem::{self, process::Scanner};
+use prune_core::net::sites;
 
 pub const PROTOCOL_VERSION: &str = "2024-11-05";
 pub const SERVER_NAME: &str = "prune";
@@ -183,6 +185,43 @@ fn tool_defs() -> Value {
             }
         },
         {
+            "name": "port_conflicts",
+            "description": "当前端口冲突（只读，约 40-140 ms）：同一端口有 ≥2 个不同 pid 的持有者才算冲突（同一进程的 IPv4+IPv6 双栈绑定不算）。返回冲突端口、持有者 pid/进程名/项目目录与暴露面。与 port_listeners 的分工：那个回答「某个端口是谁的」，本工具回答「此刻哪些端口打起来了」——用来判断 dev server 起不来的原因。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "number",
+                        "description": "只看这个端口。缺省 = 全量。"
+                    }
+                }
+            }
+        },
+        {
+            "name": "project_deps",
+            "description": "项目依赖账本（只读，< 50 ms）：按天记录的 node_modules 体积趋势，回答「哪个项目在悄悄变大」。**只读历史记录，不触发扫描**——账本随每轮全量扫描写入，若返回 status=unavailable 说明还没扫过。deltaBytes 仅在样本 ≥2 时有值，null 表示数据不足（不是 0）；缺失的日子不补 0。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "days": {
+                        "type": "number",
+                        "description": "回看多少天，默认 30，范围 7-400",
+                        "default": 30
+                    }
+                }
+            }
+        },
+        {
+            "name": "swap_report",
+            "description": "swap 明细与换出受害者榜（只读，约 1-2 秒）：swap 总量/已用/使用率、swapfile 个数与今日新增、内核内存压力，以及被换出最多的进程（按 swapped 字节降序，含 footprint 口径的真实占用）。用于回答「谁在把机器往磁盘上挤」。换出量读不到时字段为 null，不填 0。",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
+            "name": "net_sites",
+            "description": "站点连通性与传输速率（只读，3-8 秒）。**本工具会向用户配置的站点发起真实 HTTPS 请求**：默认 10 站、单轮并发 4、流量上限约 20 MB。逐站给 DNS/TCP/TLS/首字节/传输五阶段耗时与六态判定（ok/slow/stalled/refused/unreachable/error）——stalled 是「握手通了但首字节不到」，refused 是「站点返回 4xx/5xx，链路是通的」，两者与「连不上」不是一回事。不判断是否被墙：原因不可知，只报观测事实。",
+            "inputSchema": { "type": "object", "properties": {} }
+        },
+        {
             "name": "net_diag",
             "description": "端口暴露面诊断结论（只读，约 40-140 ms）：直接给结论而不是原始条目——哪些端口绑定全部网卡（同网段可达）、哪些仅本机回环、权限看不到的监听有多少、TIME_WAIT 内核残留有多少。port_listeners 适合「谁占着 3000」这类点查；本工具适合「这台机器对外开着什么」这类体检。绑定具体网卡地址（192.168.x.x）与 0.0.0.0 都算局域网可达，结论里均标 attention。",
             "inputSchema": {
@@ -220,6 +259,10 @@ pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
         "net_diag" => Ok(tool_net_diag(args)),
         "app_resources" => Ok(tool_app_resources(args)),
         "lan_devices" => Ok(tool_lan_devices()),
+        "port_conflicts" => Ok(tool_port_conflicts(args)),
+        "project_deps" => Ok(tool_project_deps(args)),
+        "swap_report" => Ok(tool_swap_report()),
+        "net_sites" => Ok(tool_net_sites()),
         // 执行类请求显式拒绝（M29）：让 Agent 与读代码的人都直接看到底线，
         // 而不是落进 unknown tool 的笼统报错。此清单只增不减。
         "reclaim" | "clean" | "clean_item" | "execute" | "delete" | "remove" | "kill" | "write"
@@ -644,6 +687,134 @@ fn tool_port_listeners(args: &Value) -> Value {
 }
 
 /// L4 Docker 组的命令提示（A6：只给命令，永不执行）
+/// W2/D-07：当前冲突（现状），与 `port_listeners`（点查）互补。
+/// 判据只在 `net::ports::conflicts` 一处，CLI `--conflicts` 与本工具同源。
+fn tool_port_conflicts(args: &Value) -> Value {
+    let port = args
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .filter(|p| *p > 0 && *p <= 65535)
+        .map(|p| p as u16);
+
+    let snap = prune_core::net::ports::scan(None);
+    let entries: Vec<prune_core::net::PortEntry> = snap
+        .entries
+        .iter()
+        .filter(|e| port.map(|p| e.port == p).unwrap_or(true))
+        .cloned()
+        .collect();
+    let list = prune_core::net::ports::conflicts(&entries);
+
+    json!({
+        "schemaVersion": 1,
+        "at": snap.at,
+        "scanMs": snap.scan_ms,
+        "conflicts": list,
+        "count": list.len(),
+        "coverage": snap.coverage,
+        "note": if list.is_empty() {
+            "当前没有端口冲突。注意「没查到」不等于「端口空闲」——coverage 说明可见范围。"
+        } else {
+            "同一端口有多个不同 pid 的持有者。不要建议 kill：让用户自己决定停哪个。"
+        },
+    })
+}
+
+/// W2/D-08：项目依赖账本。**只读历史，不触发扫描**（理由同 lan_devices：
+/// Agent 高频调用不能每次都跑 15 s 全盘扫描）。
+fn tool_project_deps(args: &Value) -> Value {
+    let days = args
+        .get("days")
+        .and_then(|v| v.as_u64())
+        .unwrap_or(30)
+        .clamp(7, 400) as i64;
+
+    let path = default_db_path();
+    if !path.exists() {
+        return json!({
+            "schemaVersion": 1,
+            "status": "unavailable",
+            "note": "账本库不存在：Prune 尚未扫描过。请让用户先运行 prune scan 或打开 GUI。",
+        });
+    }
+    let store = match Store::open(&path) {
+        Ok(s) => s,
+        Err(e) => {
+            return json!({
+                "schemaVersion": 1,
+                "status": "unavailable",
+                "note": format!("账本库打开失败: {e}"),
+            })
+        }
+    };
+    let now = prune_core::swap::now_secs() as i64;
+    let from = prune_core::localtime::day_string(now - days * 86_400);
+    let rows = match store.project_day_recent(&from) {
+        Ok(r) => r,
+        Err(e) => {
+            return json!({
+                "schemaVersion": 1,
+                "status": "unavailable",
+                "note": format!("读账本失败: {e}"),
+            })
+        }
+    };
+    if rows.is_empty() {
+        return json!({
+            "schemaVersion": 1,
+            "status": "unavailable",
+            "from": from,
+            "note": "窗口内没有账本记录：账本随全量扫描写入，先扫一轮再问。",
+        });
+    }
+    let trends = prune_core::disk::project::build_trends(&rows);
+    json!({
+        "schemaVersion": 1,
+        "from": from,
+        "days": days,
+        "projects": trends,
+        "note": "deltaBytes 为 null 表示窗口内样本不足 2 个（不是 0）；缺失日不补 0，points 里没有那天就是那天没扫过。",
+    })
+}
+
+/// W2/D-11：swap 明细 + 换出受害者榜。与 `mem_snapshot` 的分工：那边给家族
+/// 全量聚合（payload 大），这边只回答「谁被换出到磁盘」。
+fn tool_swap_report() -> Value {
+    let swap = prune_core::swap::collect(None);
+    let pressure = prune_core::mem::system::read_pressure();
+    let mut scanner = Scanner::new();
+    let mut procs = scanner.scan().procs;
+    probe_top(&mut procs, 12);
+
+    json!({
+        "schemaVersion": 1,
+        "swap": swap,
+        "usedRatio": swap.used_ratio(),
+        "pressure": pressure,
+        "topSwapped": mem::top_swapped(&procs, 5),
+        "note": "换出量来自 footprint 深探（macOS）；Windows 只有 Private Bytes 近似口径，缺字段返回 null 而不是 0。",
+    })
+}
+
+/// W2/D-11：站点五阶段检测。**唯一有外部网络副作用的工具**——描述里已写明，
+/// 单轮上限由 `SITE_MAX_COUNT` 与 `SITE_MAX_BYTES` 共同约束。
+fn tool_net_sites() -> Value {
+    let (list, recovered) = sites::sites_from_settings(Locale::Zh);
+    let at = prune_core::swap::now_secs() as i64;
+    let run = sites::run(&list, at, Locale::Zh);
+    let summary = sites::summarize(&run.results);
+    json!({
+        "schemaVersion": 1,
+        "at": run.at,
+        "elapsedMs": run.elapsed_ms,
+        "results": run.results,
+        "summary": summary,
+        "customized": !recovered,
+        "recovered": recovered,
+        "note": "stalled = 握手完成但首字节不到；refused = 站点返回 4xx/5xx（链路是通的）。不判断是否被墙——原因不可知。",
+    })
+}
+
 pub fn docker_hints() -> Vec<(&'static str, &'static str)> {
     vec![
         ("docker system prune", "清理悬空镜像、停止的容器、无用网络"),
@@ -793,6 +964,10 @@ mod tests {
                 "app_resources",
                 "lan_devices",
                 "disk_scan",
+                "port_conflicts",
+                "project_deps",
+                "swap_report",
+                "net_sites",
                 "net_diag"
             ]
         );
@@ -800,6 +975,24 @@ mod tests {
             assert!(t["description"].as_str().unwrap().len() > 10);
             assert!(t["inputSchema"].is_object());
         }
+    }
+
+    /// 契约冻结（W2/D-11）：工具面（名字 + 描述 + inputSchema）与
+    /// `mcp-tools.v1.json` 逐字段相等。改工具必须同批更新快照 ——
+    /// 让「改契约」成为一个显式动作，而不是随手加个字段。
+    ///
+    /// 为什么冻结比多加一个工具值钱：开发者写的是脚本和 Agent 提示词，
+    /// 描述与 schema 的静默变化会让提示词失效，而失效现场在上游客户端里。
+    #[test]
+    fn tool_defs_match_frozen_snapshot() {
+        let frozen: Value = serde_json::from_str(include_str!("../mcp-tools.v1.json"))
+            .expect("mcp-tools.v1.json 必须是合法 JSON");
+        let live = tool_defs();
+        assert_eq!(
+            frozen,
+            live,
+            "MCP 工具面已变更：请同批更新 crates/prune-cli/mcp-tools.v1.json（并提升 schemaVersion）"
+        );
     }
 
     #[test]
