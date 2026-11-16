@@ -2,6 +2,18 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.13.0
+
+### Wave 1：契约 v1 · prune doctor · prune mcp install · CLI 参考（[方案](./docs/wave1-contract-doctor-plan.md)）
+
+- **D-03 契约 v1（补齐 + 冻结）**：8 个命令级 `--json` 输出点全部带 `schemaVersion: 1`。新增 `docs_json` 模块作为唯一产出层（CLI 打印与快照测试共用同一批函数），补齐 `scan` / `mem` / `port`（默认分支）/ `app` / `lan` 五处裸直出；顶层平铺不引入 `{data}` 包装（已发布的 3 个输出点都是平铺，包装等于现在就破坏一次）。`lan` 缓存与 CLI 输出分离：缓存继续写裸 `LanSnapshot`（GUI/MCP 读），只有 CLI 打印包信封。新增冻结快照 `crates/prune-cli/cli-contract.v1.json`——由生产函数导出（`PRUNE_DUMP_CONTRACT=1 cargo test` 重写），测试逐字段比对；改契约从此是一个显式动作
+- **退出码收敛（W1-DP-2）**：新增 `ExitCode` 枚举（0/2/3/4/10），usage 的退出码行由它派生而非手抄。给「3 权限不足」真实的产生条件：`port --json` 主输出为空且 `coverage.note` 根因是权限 → 3；采集失败 → 4；差额说明（部分不可见）仍是 0——数据事实不是进程失败。此前 usage 承诺了 3 但全仓没有任何 `return 3`
+- **D-04 `prune doctor`**：四域体检，给出「结论 + 证据 + 下一步」而不是再抛一遍原始读数。磁盘实时扫（~15s，独立线程 + `--timeout`）、内存/端口/网络轻量探测，总预算 30s；判据全部复用既有口径（磁盘水位 15%/5% 与菜单栏 island 同判据、内存压力级别、端口冲突 `owner_count > 1`、网络 `NetDiag.status/verdict/captive`）。硬约束：任一域读不到 → `severity: "unknown"` + 原因，绝不显示 0；`--only disk,mem,port,net` 裁剪、`--timeout` 封顶 30s；全部选中域不可读时按根因给 3 / 4
+- **D-05 `prune mcp install`**：把 MCP server 写进 Claude Desktop / Cursor / VS Code 的用户级配置。默认 dry-run（`--write` 才落盘）；VS Code 用顶层键 `servers` + `"type":"stdio"`（抄 `mcpServers` 的块是「合法 JSON、不报错、不加载」）；`command` 写 `current_exe()` 绝对路径（裸名是「装成功但加载失败」的头号原因）；七步算法：坏 JSON 一律拒绝（`--force` 也不覆盖）、父目录不存在视为「未检测到客户端」、幂等 noop、写前备份 `.prune-bak-<时间戳>`（0600）、原子写、写后读回校验（顶层其他键逐一相等）、失败回滚。路径由代码常量给出，不接受 `--path`
+- **D-06 CLI 参考 + 门禁 D/E**：新建 `docs/cli-reference.md`（中文单语，与 CLI 文案约定一致）——命令总表、每命令节（语法/flags/JSON 顶层键/退出码/示例）、退出码总表、JSON 契约规则、MCP 工具指向冻结快照。`check-docs-honesty.mjs` 新增检查 D（cli-reference ↔ usage 双向对账：子命令双向 + flag ⊆ usage）与检查 E（退出码表 ↔ `ExitCode` 枚举 ↔ ALL 表双向相等），负向验证均能拦下漂移
+- **README 开发者入口重排**：安装 → 从源码构建 → 最初两分钟 → CLI → MCP 挪进前 1/3（此前开发者要滑过 200 行产品文案才能看到怎么装怎么接）；CLI 段补 doctor 与 mcp install 入口 + cli-reference 链接；中英双版同步
+- 版本 0.11.0 → 0.13.0（0.12.0 留给 D-01/02 签名与 brew）
+
 ## 0.11.0
 
 ### F15 站点连通性与传输速率（[方案](./docs/net-sites-plan.md)）

@@ -21,6 +21,11 @@ Tauri 2 · Rust · React 19 · no account · no telemetry · no elevated permiss
 
 ## Contents
 
+- [Install](#install)
+- [Build from source](#build-from-source)
+- [First two minutes](#first-two-minutes)
+- [CLI](#cli)
+- [MCP server](#mcp-server)
 - [Why this exists](#why-this-exists)
 - [Who it is for](#who-it-is-for)
 - [Platform support](#platform-support)
@@ -31,16 +36,94 @@ Tauri 2 · Rust · React 19 · no account · no telemetry · no elevated permiss
 - [Memory and apps](#memory-and-apps)
 - [Network, ports, LAN](#network-ports-lan)
 - [Event stream: the Dynamic Island](#event-stream-the-dynamic-island)
-- [First two minutes](#first-two-minutes)
-- [CLI](#cli)
-- [MCP server](#mcp-server)
 - [Agents read, humans delete](#agents-read-humans-delete)
-- [Install](#install)
-- [Build from source](#build-from-source)
 - [Status and roadmap](#status-and-roadmap)
 - [Docs](#docs)
 - [Keywords](#keywords)
 - [License](#license)
+
+## Install
+
+Download the latest build from [Releases](https://github.com/JackXuyi/prune/releases/latest):
+
+| Platform | File |
+| --- | --- |
+| macOS Apple Silicon (M1 and later) | `Prune_*_aarch64.dmg` |
+| macOS Intel | `Prune_*_x64.dmg` |
+| Windows 10+ x64 (beta) | `Prune_*_x64-setup.exe` (recommended) or `Prune_*_x64_en-US.msi` |
+
+**macOS, three steps**
+
+1. Open the dmg and drag **Prune** into **Applications**.
+2. Launch it. If macOS says it "cannot be opened because the developer cannot be verified", go to **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway** (once).
+3. If that button is missing on your macOS version, run once in Terminal:
+   `xattr -dr com.apple.quarantine /Applications/Prune.app`
+
+**Windows**: run `Prune_*_x64-setup.exe`; if SmartScreen warns you, choose **More info → Run anyway**.
+
+**Linux**: no GUI build is published. `cargo build --release -p prune-cli` gives you the CLI/MCP binary — see [Platform support](#platform-support) for what it can and cannot read there.
+
+**Why this is needed**: the build is ad-hoc signed — no paid Apple Developer account, no notarization — so Gatekeeper does not recognize it. That is the entire reason for the prompt. The bundles are complete, and in-app updates do not use this path (the updater verifies its own signatures), so upgrading from the tray menu will not show this again. This is not a disclaimer: it is the fact, and the choice is yours.
+
+
+## Build from source
+
+```bash
+pnpm install
+pnpm tauri dev      # development
+pnpm tauri build    # package .app / .dmg
+cargo build --release -p prune-cli   # CLI + MCP binary
+cargo test --workspace               # Rust test suite
+pnpm check:docs                      # docs honesty gate (MCP tool reconciliation + public-claim sweep)
+```
+
+Requirements: Node 20+, pnpm 9+, Rust stable, and the Tauri 2 platform prerequisites.
+
+
+## First two minutes
+
+1. Launch. The storage tab starts scanning immediately — no five-step onboarding, no sign-up.
+2. The first scan ends on a card that reports the 🟢 total only.
+3. One click reclaims it: dry-run → whitelist → trash, all on 🟢 entries.
+4. A receipt appears: what this run removed and what has been removed cumulatively.
+
+There is no account, no network call, and no "rate your experience" prompt. The only optional action on that screen copies six numbers to the clipboard so you can paste them into a bug report or an interview.
+
+
+## CLI
+
+One binary, two shapes: `cargo build --release -p prune-cli` produces `target/release/prune`, sharing `prune-core` with the GUI.
+
+```bash
+prune scan [--json]                 # full disk scan: headline / cross-platform detail / duplicate stores / Docker hints (also records one project-ledger row)
+prune reclaim [--level green]       # preview reclaimable items (dry-run by default; --yes deletes, via trash)
+prune mem [--swapped] [--json]      # one-shot memory reading (footprint, deep probe top 20)
+prune mem --watch [--interval N]    # DEPRECATED: use prune watch --only mem (alias removed 2027-09)
+prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
+                                    # on-demand watch: foreground process, Ctrl-C stops it, no daemon, no log file
+prune port [PORT] [--json] [--all] [--conflicts]
+                                    # who owns this port (--conflicts: ports with >= 2 distinct holders)
+prune projects [--days N] [--json]  # project dependency ledger: per-day trend (missing days are not zero-filled)
+prune app <family> [--json]         # one app's resource profile: processes/memory/CPU/ports/conns/disk
+prune lan [--scan] [--json]         # LAN devices (default: cache only; --scan probes the subnet)
+prune mcp                           # MCP server over stdio (agent query entry point)
+```
+prune doctor [--json] [--only disk,mem,port,net] [--timeout N]
+                                    # four-domain checkup: verdict + evidence + next step for disk/mem/ports/net
+prune mcp install [--client claude|cursor|vscode|all] [--write] [--json]
+                                    # write the MCP server into client config (dry-run by default; --write to apply)
+```
+
+Full command reference (flags per command / JSON contract / exit codes): [docs/cli-reference.md](./docs/cli-reference.md).
+
+## MCP server
+
+**MCP tools (12, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail plus the most-swapped processes) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
+
+Wire it into any MCP-capable agent and ask questions like "what is eating disk on this machine", "is anything of mine exposed on the LAN", or "is this process leaking" — the agent reads, you decide.
+
+
+One command to connect (dry-run by default, `--write` to apply, broken JSON is refused and backed up first): `prune mcp install` previews what would be written for each client; `prune mcp install --client vscode --write` applies it.
 
 ## Why this exists
 
@@ -198,40 +281,6 @@ The collapsed state is icon + label + reading; hovering expands to show *who* is
 
 **macOS only.** The panel is an `NSPanel` positioned against the notch; on Windows the island commands are no-ops, so no event ever fires.
 
-## First two minutes
-
-1. Launch. The storage tab starts scanning immediately — no five-step onboarding, no sign-up.
-2. The first scan ends on a card that reports the 🟢 total only.
-3. One click reclaims it: dry-run → whitelist → trash, all on 🟢 entries.
-4. A receipt appears: what this run removed and what has been removed cumulatively.
-
-There is no account, no network call, and no "rate your experience" prompt. The only optional action on that screen copies six numbers to the clipboard so you can paste them into a bug report or an interview.
-
-## CLI
-
-One binary, two shapes: `cargo build --release -p prune-cli` produces `target/release/prune`, sharing `prune-core` with the GUI.
-
-```bash
-prune scan [--json]                 # full disk scan: headline / cross-platform detail / duplicate stores / Docker hints (also records one project-ledger row)
-prune reclaim [--level green]       # preview reclaimable items (dry-run by default; --yes deletes, via trash)
-prune mem [--swapped] [--json]      # one-shot memory reading (footprint, deep probe top 20)
-prune mem --watch [--interval N]    # DEPRECATED: use prune watch --only mem (alias removed 2027-09)
-prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
-                                    # on-demand watch: foreground process, Ctrl-C stops it, no daemon, no log file
-prune port [PORT] [--json] [--all] [--conflicts]
-                                    # who owns this port (--conflicts: ports with >= 2 distinct holders)
-prune projects [--days N] [--json]  # project dependency ledger: per-day trend (missing days are not zero-filled)
-prune app <family> [--json]         # one app's resource profile: processes/memory/CPU/ports/conns/disk
-prune lan [--scan] [--json]         # LAN devices (default: cache only; --scan probes the subnet)
-prune mcp                           # MCP server over stdio (agent query entry point)
-```
-
-## MCP server
-
-**MCP tools (12, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail plus the most-swapped processes) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
-
-Wire it into any MCP-capable agent and ask questions like "what is eating disk on this machine", "is anything of mine exposed on the LAN", or "is this process leaking" — the agent reads, you decide.
-
 ## Agents read, humans delete
 
 This is a code-level property, not a slogan, and it is covered by tests:
@@ -243,45 +292,9 @@ This is a code-level property, not a slogan, and it is covered by tests:
 
 Plus the product-level commitment: **zero telemetry**. No analytics SDK, no phone-home, no URL with a device id. The activation numbers Prune records stay in a local SQLite file and leave the machine only if you copy them.
 
-## Install
-
-Download the latest build from [Releases](https://github.com/JackXuyi/prune/releases/latest):
-
-| Platform | File |
-| --- | --- |
-| macOS Apple Silicon (M1 and later) | `Prune_*_aarch64.dmg` |
-| macOS Intel | `Prune_*_x64.dmg` |
-| Windows 10+ x64 (beta) | `Prune_*_x64-setup.exe` (recommended) or `Prune_*_x64_en-US.msi` |
-
-**macOS, three steps**
-
-1. Open the dmg and drag **Prune** into **Applications**.
-2. Launch it. If macOS says it "cannot be opened because the developer cannot be verified", go to **System Settings → Privacy & Security**, scroll to the bottom, and click **Open Anyway** (once).
-3. If that button is missing on your macOS version, run once in Terminal:
-   `xattr -dr com.apple.quarantine /Applications/Prune.app`
-
-**Windows**: run `Prune_*_x64-setup.exe`; if SmartScreen warns you, choose **More info → Run anyway**.
-
-**Linux**: no GUI build is published. `cargo build --release -p prune-cli` gives you the CLI/MCP binary — see [Platform support](#platform-support) for what it can and cannot read there.
-
-**Why this is needed**: the build is ad-hoc signed — no paid Apple Developer account, no notarization — so Gatekeeper does not recognize it. That is the entire reason for the prompt. The bundles are complete, and in-app updates do not use this path (the updater verifies its own signatures), so upgrading from the tray menu will not show this again. This is not a disclaimer: it is the fact, and the choice is yours.
-
-## Build from source
-
-```bash
-pnpm install
-pnpm tauri dev      # development
-pnpm tauri build    # package .app / .dmg
-cargo build --release -p prune-cli   # CLI + MCP binary
-cargo test --workspace               # Rust test suite
-pnpm check:docs                      # docs honesty gate (MCP tool reconciliation + public-claim sweep)
-```
-
-Requirements: Node 20+, pnpm 9+, Rust stable, and the Tauri 2 platform prerequisites.
-
 ## Status and roadmap
 
-Source version: **v0.11.0** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
+Source version: **v0.13.0** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
 
 | Area | State |
 | --- | --- |
@@ -298,6 +311,8 @@ The full milestone history lives in [CHANGELOG.md](./CHANGELOG.md); the forward 
 
 ## Docs
 
+- [CLI reference](./docs/cli-reference.md) — per-command syntax / JSON contract / exit codes (auto-reconciled with usage)
+- [CLI reference](./docs/cli-reference.md) — per-command syntax / JSON contract / exit codes (auto-reconciled with usage)
 - [Product spec v2](./docs/prune-feature-spec-v2.md) — positioning, modules, safety levels
 - [Tauri technical plan](./docs/prune-tauri-technical-plan.md) — architecture, dependencies, milestones
 - [Roadmap 2027 H1](./docs/prune-roadmap-2027h1.md) — milestones, metric gates, what is explicitly not being built

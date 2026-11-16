@@ -21,6 +21,11 @@ Tauri 2 · Rust · React 19 · 无需账号 · 零遥测 · 不申请提权。
 
 ## 目录
 
+- [安装](#安装)
+- [从源码构建](#从源码构建)
+- [最初两分钟](#最初两分钟)
+- [CLI](#cli)
+- [MCP 服务](#mcp-服务)
 - [为什么做这个](#为什么做这个)
 - [谁适合用](#谁适合用)
 - [多端支持](#多端支持)
@@ -31,16 +36,94 @@ Tauri 2 · Rust · React 19 · 无需账号 · 零遥测 · 不申请提权。
 - [内存与应用](#内存与应用)
 - [网络、端口、局域网](#网络端口局域网)
 - [事件流：灵动岛](#事件流灵动岛)
-- [最初两分钟](#最初两分钟)
-- [CLI](#cli)
-- [MCP 服务](#mcp-服务)
 - [Agent 能看，人才能删](#agent-能看人才能删)
-- [安装](#安装)
-- [从源码构建](#从源码构建)
 - [状态与路线图](#状态与路线图)
 - [相关文档](#相关文档)
 - [关键词](#关键词)
 - [License](#license)
+
+## 安装
+
+从 [Releases](https://github.com/JackXuyi/prune/releases/latest) 下载对应平台的最新安装包：
+
+| 平台 | 下载哪个文件 |
+| --- | --- |
+| macOS（Apple Silicon，M1 及之后） | `Prune_*_aarch64.dmg` |
+| macOS（Intel） | `Prune_*_x64.dmg` |
+| Windows 10+ x64（beta） | `Prune_*_x64-setup.exe`（推荐）或 `Prune_*_x64_en-US.msi` |
+
+**macOS 安装三步**
+
+1. 双击 dmg，把 **Prune** 拖进 **Applications**。
+2. 首次打开：若弹出「无法打开，因为无法验证开发者」——到 **系统设置 → 隐私与安全性**，滚到底部点 **「仍要打开」**（只需一次）。
+3. 若没有「仍要打开」按钮（部分 macOS 版本行为不同），在终端执行一次：
+   `xattr -dr com.apple.quarantine /Applications/Prune.app`
+
+**Windows**：双击 `Prune_*_x64-setup.exe`；若 SmartScreen 弹「Windows 已保护你的电脑」，点 **更多信息 → 仍要运行**。
+
+**Linux**：没有发布 GUI 构建。执行 `cargo build --release -p prune-cli` 可得到 CLI / MCP 二进制——它能读到什么、读不到什么，见[多端支持](#多端支持)。
+
+**为什么会有这一步**：当前产物采用 ad-hoc 签名（未购买 Apple 开发者账号、未公证），Gatekeeper 不认识它——这就是拦截弹窗的全部原因。安装包本身完整；应用内更新不走这条链路（updater 有独立验签），装好后从托盘菜单「检查更新」升级不会再遇到弹窗。这一段不是免责声明，是把事实摆在你面前，判断留给你。
+
+
+## 从源码构建
+
+```bash
+pnpm install
+pnpm tauri dev      # 开发调试
+pnpm tauri build    # 打包 .app / .dmg
+cargo build --release -p prune-cli   # CLI + MCP 二进制
+cargo test --workspace               # Rust 测试
+pnpm check:docs                      # 文档诚信门禁（MCP 工具对账 + 公开表述 sweep）
+```
+
+依赖：Node 20+、pnpm 9+、Rust stable，以及 Tauri 2 的平台前置条件。
+
+
+## 最初两分钟
+
+1. 打开。存储 tab 立即开始扫描——没有五步 onboarding，没有注册。
+2. 首扫结束在一张只报 🟢 体量的引导卡上。
+3. 一键回收：dry-run → 白名单 → 废纸篓，只碰 🟢 条目。
+4. 成绩单弹出：本次清掉多少、累计清掉多少。
+
+没有账号、没有网络请求、没有「给个好评」弹窗。那一屏上唯一的可选动作是把六个数字复制到剪贴板，方便你贴进 issue 或访谈记录。
+
+
+## CLI
+
+单二进制双形态（`cargo build --release -p prune-cli` → `target/release/prune`），与 GUI 共享 `prune-core`：
+
+```bash
+prune scan [--json]                 # 全盘扫描：主数字 / A1 明细 / A3 重复 / A6 Docker 提示（并记一行项目账本）
+prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run；--yes 才真删，走废纸篓）
+prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
+prune mem --watch [--interval N]    # 【已弃用】改用 prune watch --only mem（2027-09 移除别名）
+prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
+                                    # 按需守护：前台进程、Ctrl-C 即停、不装后台、不写日志
+prune port [PORT] [--json] [--all] [--conflicts]
+                                    # 谁占着这个端口（--conflicts 只看同端口 ≥2 个持有者）
+prune projects [--days N] [--json]  # 项目依赖账本：按天趋势与变化量（缺失日不补 0）
+prune app <家族名> [--json]         # 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
+prune lan [--scan] [--json]         # 局域网设备（默认只读缓存；--scan 主动探测网段）
+prune mcp                           # MCP stdio server（AI Agent 查询入口）
+```
+prune doctor [--json] [--only disk,mem,port,net] [--timeout N]
+                                    # 四域体检：磁盘/内存/端口/网络的结论+证据+下一步
+prune mcp install [--client claude|cursor|vscode|all] [--write] [--json]
+                                    # 把 MCP server 写进客户端配置（默认 dry-run；--write 才落盘）
+```
+
+完整命令参考（每命令 flags / JSON 契约 / 退出码）见 [docs/cli-reference.md](./docs/cli-reference.md)。
+
+## MCP 服务
+
+**MCP 工具（12 个，全部只读）：** `mem_snapshot`（一次性内存读数）/ `mem_leaks`（读 GUI 序列库的泄漏嫌疑）/ `disk_report`（全盘扫描，约 15 s）/ `disk_scan`（白名单逐条细分 + 可选子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明可见范围）/ `port_conflicts`（此刻哪些端口有多个持有者）/ `project_deps`（项目依赖账本与趋势，只读历史不触发扫描）/ `swap_report`（swap 明细 + 换出受害者榜）/ `net_sites`（站点五阶段检测，**会发起真实 HTTPS 请求**，单轮 ≤ 20 MB）/ `net_diag`（暴露面诊断结论：谁在对外监听）/ `app_resources`（应用维度五域画像）/ `lan_devices`（局域网设备，只读缓存不发包）。
+
+接进任何支持 MCP 的 Agent，就能问「这台机器什么在吃磁盘」「我有什么暴露在局域网」「这个进程在漏吗」——Agent 负责读，你负责决定。
+
+
+一条命令接入（默认 dry-run，`--write` 才落盘，坏 JSON 自动拒绝、写前备份）：`prune mcp install` 预览三个客户端将写入的内容，`prune mcp install --client vscode --write` 执行。
 
 ## 为什么做这个
 
@@ -198,40 +281,6 @@ Prune 不要 root、不要全盘访问、不要辅助功能。macOS 唯一一次
 
 **仅 macOS**：这个面板是贴着刘海的 `NSPanel`；Windows 上灵动岛相关命令都是空实现，不会触发任何事件。
 
-## 最初两分钟
-
-1. 打开。存储 tab 立即开始扫描——没有五步 onboarding，没有注册。
-2. 首扫结束在一张只报 🟢 体量的引导卡上。
-3. 一键回收：dry-run → 白名单 → 废纸篓，只碰 🟢 条目。
-4. 成绩单弹出：本次清掉多少、累计清掉多少。
-
-没有账号、没有网络请求、没有「给个好评」弹窗。那一屏上唯一的可选动作是把六个数字复制到剪贴板，方便你贴进 issue 或访谈记录。
-
-## CLI
-
-单二进制双形态（`cargo build --release -p prune-cli` → `target/release/prune`），与 GUI 共享 `prune-core`：
-
-```bash
-prune scan [--json]                 # 全盘扫描：主数字 / A1 明细 / A3 重复 / A6 Docker 提示（并记一行项目账本）
-prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run；--yes 才真删，走废纸篓）
-prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
-prune mem --watch [--interval N]    # 【已弃用】改用 prune watch --only mem（2027-09 移除别名）
-prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
-                                    # 按需守护：前台进程、Ctrl-C 即停、不装后台、不写日志
-prune port [PORT] [--json] [--all] [--conflicts]
-                                    # 谁占着这个端口（--conflicts 只看同端口 ≥2 个持有者）
-prune projects [--days N] [--json]  # 项目依赖账本：按天趋势与变化量（缺失日不补 0）
-prune app <家族名> [--json]         # 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
-prune lan [--scan] [--json]         # 局域网设备（默认只读缓存；--scan 主动探测网段）
-prune mcp                           # MCP stdio server（AI Agent 查询入口）
-```
-
-## MCP 服务
-
-**MCP 工具（12 个，全部只读）：** `mem_snapshot`（一次性内存读数）/ `mem_leaks`（读 GUI 序列库的泄漏嫌疑）/ `disk_report`（全盘扫描，约 15 s）/ `disk_scan`（白名单逐条细分 + 可选子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明可见范围）/ `port_conflicts`（此刻哪些端口有多个持有者）/ `project_deps`（项目依赖账本与趋势，只读历史不触发扫描）/ `swap_report`（swap 明细 + 换出受害者榜）/ `net_sites`（站点五阶段检测，**会发起真实 HTTPS 请求**，单轮 ≤ 20 MB）/ `net_diag`（暴露面诊断结论：谁在对外监听）/ `app_resources`（应用维度五域画像）/ `lan_devices`（局域网设备，只读缓存不发包）。
-
-接进任何支持 MCP 的 Agent，就能问「这台机器什么在吃磁盘」「我有什么暴露在局域网」「这个进程在漏吗」——Agent 负责读，你负责决定。
-
 ## Agent 能看，人才能删
 
 这不是宣传语，是四条可验证的代码层约束，并且有测试固化：
@@ -243,45 +292,9 @@ prune mcp                           # MCP stdio server（AI Agent 查询入口�
 
 再加一条产品级承诺：**零遥测**。没有分析 SDK、没有回连、没有带设备 id 的 URL。激活相关的计数只写本地 SQLite，只有你复制它时才会离开这台机器。
 
-## 安装
-
-从 [Releases](https://github.com/JackXuyi/prune/releases/latest) 下载对应平台的最新安装包：
-
-| 平台 | 下载哪个文件 |
-| --- | --- |
-| macOS（Apple Silicon，M1 及之后） | `Prune_*_aarch64.dmg` |
-| macOS（Intel） | `Prune_*_x64.dmg` |
-| Windows 10+ x64（beta） | `Prune_*_x64-setup.exe`（推荐）或 `Prune_*_x64_en-US.msi` |
-
-**macOS 安装三步**
-
-1. 双击 dmg，把 **Prune** 拖进 **Applications**。
-2. 首次打开：若弹出「无法打开，因为无法验证开发者」——到 **系统设置 → 隐私与安全性**，滚到底部点 **「仍要打开」**（只需一次）。
-3. 若没有「仍要打开」按钮（部分 macOS 版本行为不同），在终端执行一次：
-   `xattr -dr com.apple.quarantine /Applications/Prune.app`
-
-**Windows**：双击 `Prune_*_x64-setup.exe`；若 SmartScreen 弹「Windows 已保护你的电脑」，点 **更多信息 → 仍要运行**。
-
-**Linux**：没有发布 GUI 构建。执行 `cargo build --release -p prune-cli` 可得到 CLI / MCP 二进制——它能读到什么、读不到什么，见[多端支持](#多端支持)。
-
-**为什么会有这一步**：当前产物采用 ad-hoc 签名（未购买 Apple 开发者账号、未公证），Gatekeeper 不认识它——这就是拦截弹窗的全部原因。安装包本身完整；应用内更新不走这条链路（updater 有独立验签），装好后从托盘菜单「检查更新」升级不会再遇到弹窗。这一段不是免责声明，是把事实摆在你面前，判断留给你。
-
-## 从源码构建
-
-```bash
-pnpm install
-pnpm tauri dev      # 开发调试
-pnpm tauri build    # 打包 .app / .dmg
-cargo build --release -p prune-cli   # CLI + MCP 二进制
-cargo test --workspace               # Rust 测试
-pnpm check:docs                      # 文档诚信门禁（MCP 工具对账 + 公开表述 sweep）
-```
-
-依赖：Node 20+、pnpm 9+、Rust stable，以及 Tauri 2 的平台前置条件。
-
 ## 状态与路线图
 
-源码版本：**v0.11.0**——免费、MIT 许可，未来两个季度没有商业化计划。顶部徽章跟随 Releases 页最新**已构建发布**的版本。
+源码版本：**v0.13.0**——免费、MIT 许可，未来两个季度没有商业化计划。顶部徽章跟随 Releases 页最新**已构建发布**的版本。
 
 | 方向 | 状态 |
 | --- | --- |
@@ -298,6 +311,7 @@ pnpm check:docs                      # 文档诚信门禁（MCP 工具对账 + �
 
 ## 相关文档
 
+- [CLI 参考](./docs/cli-reference.md) —— 每命令语法 / JSON 契约 / 退出码（与 usage 自动对账）
 - [产品功能方案 v2](./docs/prune-feature-spec-v2.md) —— 定位、模块、安全分级
 - [Tauri 技术方案](./docs/prune-tauri-technical-plan.md) —— 架构、依赖、里程碑
 - [产品 Roadmap 2027 H1](./docs/prune-roadmap-2027h1.md) —— 里程碑、指标门禁、明确不做

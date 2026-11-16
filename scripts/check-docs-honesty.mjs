@@ -22,6 +22,16 @@
  *             敲出「不认识子命令」。同时要求三份配方各自覆盖 port / projects /
  *             watch 三个子命令（方案 §9.2 的任务集不许被静默删减）。
  *
+ *   检查 D —— cli-reference 对账（W1/D-06）：`docs/cli-reference.md` 的每个
+ *             `prune <子命令>`（章节标题 + shell 行 + 反引号命令）必须在 usage()
+ *             里；usage() 的每个子命令必须有对应小节；文档里的 flag ⊆ usage
+ *             flags。usage 是命令面的唯一权威，双向漂移即红。
+ *
+ *   检查 E —— 退出码对账（W1/D-06）：`cli-reference.md` 退出码表 ↔ main.rs
+ *             `ExitCode` 枚举 ↔ usage() 退出码行，三方集合双向相等——
+ *             防止再出现「usage 写了 3、代码从不返回」类脱节（W1-DP-2 修复
+ *             的教训固化成门禁）。
+ *
  * 接线：package.json build 链（check-i18n 之后）+ `pnpm check:docs` 本地单独跑。
  * 纯静态解析，零依赖、零构建，ubuntu runner 1 秒内完成。
  */
@@ -316,6 +326,126 @@ for (const rel of EDITOR_DOCS) {
 }
 
 // ---------------------------------------------------------------------------
+// 检查 D：cli-reference 对账（docs/cli-reference.md ↔ main.rs usage()，双向）
+// ---------------------------------------------------------------------------
+
+const CLI_REF = 'docs/cli-reference.md';
+let refText = '';
+try {
+  refText = readFileSync(join(root, CLI_REF), 'utf8');
+} catch {
+  problems.push(`${CLI_REF} 不存在（W1/D-06 要求 CLI 唯一参考文档）`);
+}
+
+if (refText) {
+  // D1. 章节覆盖：usage 的每个子命令必须有 `## prune <sub>` 小节
+  const refSections = new Set([...refText.matchAll(/^## prune ([a-z-]+)/gm)].map((m) => m[1]));
+  const usageSubSet = new Set(USAGE_SUBCOMMANDS);
+  for (const sub of usageSubSet) {
+    if (!refSections.has(sub)) {
+      problems.push(`${CLI_REF} 缺子命令 "${sub}" 的小节（## prune ${sub}）——usage 全集必须覆盖`);
+    }
+  }
+  // 文档自己声明的子命令不能是 usage 里没有的
+  for (const sub of refSections) {
+    if (!usageSubSet.has(sub)) {
+      problems.push(`${CLI_REF} 章节 "## prune ${sub}" 不在 main.rs usage() 里（实际: ${USAGE_SUBCOMMANDS.join(', ')}）`);
+    }
+  }
+
+  // D2. 命令对账：文档里会被用户照着敲的 `prune ...`（shell 行 + 反引号命令），
+  //     子命令与 flag 必须能过 usage 的账。
+  //     token 预处理：剥掉 [ ] / | 包装（usage 写法 `[--json]`、表格里的
+  //     `claude\|cursor\|…`），<占位符> 一律跳过。
+  const clean = (tk) => tk.replace(/[\[\]|]/g, '');
+  const refCommands = [];
+  for (const m of refText.matchAll(/`prune ([^`]+)`/g)) refCommands.push(m[1]);
+  for (const line of refText.split('\n')) {
+    const s = line.trim();
+    if (s.startsWith('prune ') && !s.includes('```')) refCommands.push(s);
+  }
+  for (const raw of refCommands) {
+    let tokens = raw.split(/\s+/).map(clean).filter((t) => t && !t.startsWith('<'));
+    // 反引号捕获不带 "prune" 前缀，shell 行带——统一剥掉
+    if (tokens[0] === 'prune') tokens = tokens.slice(1);
+    if (tokens.length < 1) continue;
+    const sub = tokens[0];
+    if (sub.startsWith('-')) {
+      // 裸 flag 形态（prune --version / --help）：按 usage 子串校验
+      if (usageText && !usageText.includes(sub)) {
+        problems.push(`${CLI_REF} 用了 usage 里不存在的 flag 子命令: ${raw}`);
+      }
+      continue;
+    }
+    if (!usageSubSet.has(sub)) {
+      problems.push(
+        `${CLI_REF} 子命令 "${sub}" 不在 main.rs usage() 里（实际: ${USAGE_SUBCOMMANDS.join(', ')}）: prune ${raw}`,
+      );
+      continue;
+    }
+    for (const tk of tokens.slice(1)) {
+      if (tk.startsWith('-') && !usageFlags.has(tk)) {
+        problems.push(`${CLI_REF} flag "${tk}" 不在 main.rs usage() 里: prune ${raw}`);
+      }
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 检查 E：退出码三方对账（cli-reference 表 ↔ ExitCode 枚举 ↔ usage 退出码行）
+// ---------------------------------------------------------------------------
+
+// E1. main.rs 的 ExitCode 枚举成员。枚举声明里变体不带 `ExitCode::` 前缀
+//     （`Ok = 0,`），必须先取 enum 块再抠成员；`ExitCode::ALL` 表里的
+//     `(ExitCode::Ok, "正常")` 是 usage 派生行的数据源，一起对账。
+const enumBlockStart = cliSource.indexOf('pub enum ExitCode');
+const enumBlockEnd = cliSource.indexOf('}', enumBlockStart);
+const enumCodes = new Map();
+const enumLabels = new Map();
+if (enumBlockStart === -1 || enumBlockEnd === -1) {
+  problems.push('main.rs 里提取不到 ExitCode 枚举（检查 E 解析失效）');
+} else {
+  const enumBlock = cliSource.slice(enumBlockStart, enumBlockEnd);
+  for (const m of enumBlock.matchAll(/(\w+)\s*=\s*(\d+)/g)) enumCodes.set(m[2], m[1]);
+  for (const m of cliSource.matchAll(/\(ExitCode::(\w+),\s*"([^"]*)"\)/g)) {
+    enumLabels.set(m[1], m[2]);
+  }
+  for (const [code, variant] of enumCodes) {
+    if (!enumLabels.has(variant)) {
+      problems.push(`ExitCode::${variant}（=${code}）没有进 ALL 表——usage 派生行会漏掉它`);
+    }
+  }
+  // usage 的退出码行由 exit_code_line() 派生（W1-DP-2），不是字面量——
+  // 对账对象是 ALL 表（上面已查）+ usage 里必须有派生调用
+  if (!usageText.includes('exit_code_line()')) {
+    problems.push('main.rs usage() 缺 exit_code_line() 派生调用（退出码行必须由枚举生成，不许手抄）');
+  }
+}
+if (enumCodes.size === 0) {
+  problems.push('main.rs 里提取不到 ExitCode 枚举成员（检查 E 解析失效）');
+}
+
+// E3. cli-reference 退出码总表 ↔ 枚举，双向相等
+if (refText) {
+  const tableIdx = refText.indexOf('## 退出码总表');
+  const tableText = tableIdx !== -1 ? refText.slice(tableIdx, refText.indexOf('## ', tableIdx + 4)) : '';
+  const docCodes = new Set(
+    [...tableText.matchAll(/^\|\s*(\d+)\s*\|/gm)].map((m) => m[1]),
+  );
+  if (docCodes.size === 0) {
+    problems.push(`${CLI_REF}「退出码总表」提取不到码（检查 E 解析失效）`);
+  }
+  const missingInDoc = [...enumCodes.keys()].filter((c) => !docCodes.has(c));
+  const extraInDoc = [...docCodes].filter((c) => !enumCodes.has(c));
+  if (missingInDoc.length) {
+    problems.push(`${CLI_REF} 退出码表缺枚举成员: ${missingInDoc.join(', ')}`);
+  }
+  if (extraInDoc.length) {
+    problems.push(`${CLI_REF} 退出码表多出枚举之外的码: ${extraInDoc.join(', ')}`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 
 if (problems.length) {
   console.error(`✗ 文档诚信检查失败（${problems.length} 项）：\n`);
@@ -331,5 +461,7 @@ console.log(
   `✓ 文档诚信检查通过：MCP ${dispatchTools.length} 个工具三处对账一致` +
     `（dispatch ↔ tool_defs ↔ README）；排他表述 sweep ${PUBLIC_DOCS.length} 份公开文档零命中` +
     `；执行类动词显式拒绝 ${rejectedVerbs.length} 个（${rejectedVerbs.join(', ')}）` +
-    `；编辑器配方 ${EDITOR_DOCS.length} 份命令对账一致（子命令 ${USAGE_SUBCOMMANDS.join('/')}）`,
+    `；编辑器配方 ${EDITOR_DOCS.length} 份命令对账一致（子命令 ${USAGE_SUBCOMMANDS.join('/')}）` +
+    `；cli-reference 对账一致（${[...new Set(USAGE_SUBCOMMANDS)].length} 子命令 ↔ ${CLI_REF}，` +
+    `退出码 ${enumCodes.size} 个文档↔枚举双向相等）`,
 );
