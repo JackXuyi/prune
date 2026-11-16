@@ -627,3 +627,50 @@ WAL 影响：新增写入是每天每项目 1 行，可忽略；但**首次写�
 1. **D-07 前端**：`PortSnapshot` 已有 `conflicts()` 可直接消费，前端只需三处接线（总览卡 / 菜单栏行 / island 深链参数）。
 2. **D-08 前端**：`ProjectTrend` 已含 `points/first/last/deltaBytes/samples`，UI 只负责「数据不足（N 天）」的文案分支。
 3. **D-09**：接扫描忽略规则前，先定「忽略的项目是否仍出现在账本里」——建议：**不进账本**（否则用户会问「为什么忽略的项目还在报表里」）。
+
+---
+
+## 17. 第二批次实施记录（D-07 前端 / D-08d / D-09 / D-12）
+
+### 17.1 交付
+
+| 交付 | 落地位置 | 状态 |
+|---|---|---|
+| **D-07 三处前端** | `StatsBoard` 新增 `LocalServiceCard`（冲突行优先 + 关注层摘要）；`MenuBarPanel` 新增 `LocalServiceRows`（冲突/关注行，深链 `openMain(…, focus)`）；island 端口事件带 `focus = String(port)` | ✅ |
+| **D-07 深链** | `open_main` 加 `focus` 参数 → `ui://focus` 事件 → MainWindow 写 `portStore.focusQuery`（复用 PortBoard 既有消费者） | ✅ |
+| **D-07 配置端口空闲提示** | `PortList`：`configuredIdle`（配置了 watch.ports 但本轮无人占用）+ `ports.configIdle` 文案 | ✅ |
+| **D-08d 火花线** | `ProjectHealthCard` 行内「趋势」按钮 → 弹窗：`Sparkline`（baselineZero）+ 首末值/样本数/窗口说明；`samples<2` 时如实「数据不足」，`deltaBytes=null` 不画涨跌 | ✅ |
+| **D-09 解析器** | `prune-core/src/prune_toml.rs`（约 1000 行含测试，手写 TOML 子集，D-C1 不引 toml crate） | ✅ 28 单测 |
+| **D-09 安全边界** | 仅 5 键（`ignore.projects/paths`、`thresholds.deps_warn_gb/stale_days`、`watch.ports`）；禁止 `[reclaim]/[auto]/[clean]` 段（「Prune 不接受任何自动执行配置」）；禁止 `root/home`（路径重定向）；扩展键拒绝（「只能收窄，不能扩大」） | ✅ |
+| **D-09 合并规则** | 语法错 → 整份回退 + 说明；键越界 → 单键回退 + 说明；带绝对路径/~ 的非法条目 → 条目级丢弃 + 说明；只读项目根下的配置 | ✅ |
+| **D-09 扫描集成** | `disk::scan_with`：`ProjectConfigs::collect` → 忽略项目不进报告（快照保留全量映射，防增量误判「新增」）；`ignore.paths` 走 `apply_ignore_paths` 后置过滤（A1 桶核算重算，总账一致） | ✅ |
+| **D-09 watch 集成** | `collect_watch_ports()` 轻量侧入口（每轮 stat+read，坏文件静默跳过）→ `group_with_watched` 并入关注层；快照带 `configuredWatchPorts` 供「配置了但空闲」 | ✅ |
+| **D-09 GUI 提示** | 体检卡 `configNotes` 区（忽略计数 + 翻译后说明行）；Rust 侧只存结构化 `ConfigNote` 事实，句子在前端按 kind 映射（GUI 双语约定） | ✅ |
+| **D-09 模板复制** | 设置页「复制模板」：模板唯一真源在 `prune_toml::TEMPLATE`（含「模板可被干净解析」测试），经 `prune_toml_template` 命令下发；前端不存副本 | ✅ |
+| **D-12 配方包** | `docs/editors/{vscode,jetbrains,zed}.md` 三份；命令与本版 usage 逐字一致 | ✅ |
+| **D-12 门禁** | `check-docs-honesty.mjs` 新增**检查 C**：配方命令子命令/flag ↔ `main.rs` usage() 自动对账 + 三份各自覆盖 port/projects/watch（负向验证：`prune doctor --json` 能被拦下） | ✅ |
+
+### 17.2 决策与偏差
+
+| # | 事项 | 裁定 | 理由 |
+|---|---|---|---|
+| 1 | 忽略的项目是否进账本 | **不进**（采纳 §16.5 建议） | 用户设了忽略，报表里还在，等于配置没生效 |
+| 2 | D-09 方案原文「键值越界 → 键回退」扩了一条：**条目级丢弃** | 新增第三级粒度 | 数组里 1 个绝对路径拼错不应销毁其余 49 条合法条目；文档里明写这是对方案 §6.4 的扩展 |
+| 3 | D-12 方案原文 `doctor --json` | 改用 `watch --once --json` | `prune doctor` 未实现（未排期）；`watch --once` 一轮拉全 cpu/mem/port/disk，语义最接近。三份配方文档内已注明此偏差 |
+| 4 | 有效白名单内忽略（没命中任何候选）不产生说明事件 | 静默 | 用户写了 ignore.paths 但该路径无候选——配置生效了，报「已忽略」反而像警告 |
+| 5 | 模板文本从前端移到核心 | `TEMPLATE` 常量 + Tauri 命令下发 | i18n 门禁：GUI 文案必须双语，模板注释是单语中文（CLI 同侧约定）；核心下发避免两份漂移 |
+
+### 17.3 门禁（第二批收口）
+
+| 项 | 结果 |
+|---|---|
+| `pnpm tsc --noEmit` | 0 error |
+| `pnpm check:i18n` | 无硬编码中文（模板移出前端后通过） |
+| `cargo test --workspace` | 全绿（core 485，含 `template_parses_cleanly`） |
+| `cargo clippy --workspace --all-targets -D warnings` | 0 error |
+| `cargo fmt --check` | 无 diff |
+| `pnpm check:docs` | 检查 A/B 通过 + **检查 C**：配方 3 份命令对账一致 |
+| `pnpm build` | 成功（chunk >500 kB 警告为存量） |
+
+**未做**：真机走查（GUI 视觉演练 / configNotes 实扫 / 模板复制 / island 深链）待下一批收口时补记。
+

@@ -16,6 +16,12 @@
  *             语义性的「唯一」（唯一入口 / 唯一一次隐私弹窗 / 唯一破例）不匹配模式，
  *             不误伤；确需保留的表述可用 `<!-- 诚信检查豁免: 理由 -->` 行内标注。
  *
+ *   检查 C —— 编辑器配方对账（W2/D-12）：`docs/editors/*.md` 里出现的每条
+ *             `prune ...` 命令，子命令与 flag 必须能在 `main.rs` 的 usage()
+ *             字符串里找到——配方是给用户逐字粘贴的，命令漂移 = 用户照文档
+ *             敲出「不认识子命令」。同时要求三份配方各自覆盖 port / projects /
+ *             watch 三个子命令（方案 §9.2 的任务集不许被静默删减）。
+ *
  * 接线：package.json build 链（check-i18n 之后）+ `pnpm check:docs` 本地单独跑。
  * 纯静态解析，零依赖、零构建，ubuntu runner 1 秒内完成。
  */
@@ -217,7 +223,98 @@ for (const rel of PUBLIC_DOCS) {
 }
 
 // ---------------------------------------------------------------------------
-// 汇总输出
+// 检查 C：编辑器配方命令对账（docs/editors/*.md ↔ main.rs usage()）
+// ---------------------------------------------------------------------------
+
+const EDITOR_DOCS = ['docs/editors/vscode.md', 'docs/editors/jetbrains.md', 'docs/editors/zed.md'];
+
+// C1. 从 main.rs 提取 usage() 字符串——它是命令面的唯一权威
+const cliSource = readFileSync(join(root, 'crates/prune-cli/src/main.rs'), 'utf8');
+const usageStart = cliSource.indexOf('fn usage() -> String {');
+const usageEnd = cliSource.indexOf('fn main()', usageStart);
+if (usageStart === -1 || usageEnd === -1) {
+  problems.push('main.rs 里找不到 usage() 函数体（检查 C 解析失效）');
+}
+const usageText =
+  usageStart !== -1 && usageEnd !== -1 ? cliSource.slice(usageStart, usageEnd) : '';
+
+// 子命令集合：usage 文本里 "  prune <子命令>" 行首的词
+const USAGE_SUBCOMMANDS = [...usageText.matchAll(/^\s+prune ([a-z]+)/gm)].map((m) => m[1]);
+// flag 白名单：usage 文本里出现过的 --xxx / -x 形态 token。
+// usage 里 flag 常写成 [--json] / [--all | -a]——前面的分隔符是 `[` 或 `|`，
+// 所以分隔符集要含 [\s(|。
+const usageFlags = new Set(
+  [...usageText.matchAll(/(?:^|[\s(|[])(--[a-z][a-z-]*|-[a-z])\b/g)].map((m) => m[1]),
+);
+
+if (usageText && USAGE_SUBCOMMANDS.length === 0) {
+  problems.push('main.rs usage() 提取到 0 个子命令——解析失效，请检查脚本或源结构');
+}
+
+// C2. 从配方文档提取「会被用户逐字粘贴/填写」的命令字符串：
+//     - JSON 任务片段：`"command": "prune …"`
+//     - JetBrains 表格：`| Arguments | `…` |`（Program 行只有 `prune`，无子命令，跳过）
+//     - shell 块里的直跑行：以 `prune ` 开头的行
+const editorCommands = [];
+for (const rel of EDITOR_DOCS) {
+  let text;
+  try {
+    text = readFileSync(join(root, rel), 'utf8');
+  } catch {
+    problems.push(`编辑器配方文件不存在: ${rel}（方案 §9.2 要求三份，删文件必须先改方案）`);
+    continue;
+  }
+
+  const found = [];
+  for (const m of text.matchAll(/"command"\s*:\s*"([^"]+)"/g)) found.push(m[1]);
+  for (const m of text.matchAll(/^\s*\|\s*(?:Arguments|Command)\s*\|\s*`([^`]+)`\s*\|/gm)) {
+    found.push(m[1]);
+  }
+  for (const line of text.split('\n')) {
+    const s = line.trim();
+    if (s.startsWith('prune ') && !s.includes('```')) found.push(s);
+  }
+
+  const covered = new Set();
+  for (const raw of found) {
+    let tokens = raw.trim().split(/\s+/);
+    // JetBrains 表格的 Arguments 行不带 "prune" 前缀（Program 行单独写）——
+    // 仅当首 token 本身是已知子命令时才补前缀，散文/示例值静默跳过
+    if (tokens[0] !== 'prune' && USAGE_SUBCOMMANDS.includes(tokens[0])) {
+      tokens = ['prune', ...tokens];
+    }
+    if (tokens[0] !== 'prune' || tokens.length < 2) continue; // "prune" 单独出现（Program 行）或非命令
+    const sub = tokens[1];
+    covered.add(sub);
+    // 子命令校验：裸 flag 子命令（--version/--help）按 usage 文本子串校验
+    if (sub.startsWith('-')) {
+      if (usageText && !usageText.includes(sub)) {
+        problems.push(`${rel} 配方用了 usage 里不存在的子命令: ${raw}`);
+      }
+      continue;
+    }
+    if (!USAGE_SUBCOMMANDS.includes(sub)) {
+      problems.push(
+        `${rel} 配方子命令 "${sub}" 不在 main.rs usage() 里（实际子命令: ${USAGE_SUBCOMMANDS.join(', ')}）: ${raw}`,
+      );
+      continue;
+    }
+    // flag 校验：每个 - 开头的 token 必须在 usage 文本里出现过
+    for (const tk of tokens.slice(2)) {
+      if (tk.startsWith('-') && !usageFlags.has(tk)) {
+        problems.push(`${rel} 配方 flag "${tk}" 不在 main.rs usage() 里: ${raw}`);
+      }
+    }
+  }
+
+  // C3. 任务集不许被静默删减：三份配方各自覆盖 port / projects / watch
+  for (const required of ['port', 'projects', 'watch']) {
+    if (!covered.has(required)) {
+      problems.push(`${rel} 缺子命令 "${required}" 的配方（方案 §9.2 任务集要求覆盖）`);
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 
 if (problems.length) {
@@ -233,5 +330,6 @@ if (problems.length) {
 console.log(
   `✓ 文档诚信检查通过：MCP ${dispatchTools.length} 个工具三处对账一致` +
     `（dispatch ↔ tool_defs ↔ README）；排他表述 sweep ${PUBLIC_DOCS.length} 份公开文档零命中` +
-    `；执行类动词显式拒绝 ${rejectedVerbs.length} 个（${rejectedVerbs.join(', ')}）`,
+    `；执行类动词显式拒绝 ${rejectedVerbs.length} 个（${rejectedVerbs.join(', ')}）` +
+    `；编辑器配方 ${EDITOR_DOCS.length} 份命令对账一致（子命令 ${USAGE_SUBCOMMANDS.join('/')}）`,
 );
