@@ -294,7 +294,7 @@ Plus the product-level commitment: **zero telemetry**. No analytics SDK, no phon
 
 ## Status and roadmap
 
-Source version: **v0.13.0** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
+Source version: **v0.13.1** — free, MIT, no commercial plan for the next two quarters. The badge at the top tracks the newest **published** build on the Releases page.
 
 | Area | State |
 | --- | --- |

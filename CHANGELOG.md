@@ -2,6 +2,14 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.13.1
+
+### 修 0.13.0 的 Windows 构建失败（功能与 0.13.0 相同，0.13.0 未对外分发）
+
+- **`panel_fit_height` 在 Windows 上编不过（4 个 E0433 / E0425）**：贴高命令直接引用了 `crate::popover`（整个模块 `#[cfg(target_os = "macos")]`）与 `crate::tray::PANEL_H`（同样 mac 门控）。本地只在 macOS 编，CI 的 Windows 腿才暴露。改法：popover 分支整段用 `#[cfg(target_os = "macos")]` 块包起来——编译期就要消失，不能写成运行期的 `if false`；降级路径（Windows 常态 / popover 初始化失败）统一走 `panel.set_size`。`tray::PANEL_W` 去掉 cfg 门（跨平台都要用），`PANEL_H` 保持 mac 专属
+- **`net_diag` 两处 unused import**：`Read` / `Instant` 只被 macOS 的 `networkQuality` 路径使用，按平台收窄，Windows / Linux 不再报 warning
+- 0.13.0 的 Release 因 Windows 腿失败而未发布（三条 bundle 全绿才会同步正文并发布，留草稿等于 updater 收不到这一版）：本版携带 0.13.0 的全部内容，直接替换
+
 ## 0.13.0
 
 ### Wave 1：契约 v1 · prune doctor · prune mcp install · CLI 参考（[方案](./docs/wave1-contract-doctor-plan.md)）
