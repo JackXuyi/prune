@@ -69,14 +69,28 @@ export function MenuBarPanel() {
     const el = surfaceRef.current;
     if (!el) return;
     let last = -1;
-    const ro = new ResizeObserver(() => {
+    const report = (force = false) => {
       const h = el.offsetHeight + 16;
-      if (h === last) return;
+      if (!force && h === last) return;
       last = h;
       void fireAndForget(panelFitHeight(h), "panel_fit_height");
-    });
+    };
+    const ro = new ResizeObserver(() => report());
     ro.observe(el);
-    return () => ro.disconnect();
+    // 视口变化兜底：popover init 会把 webview 重新嵌框（视口尺寸跳变），
+    // 但表面「自然高」没变——RO 不触发，此前上报过的值必须强制重发一次，
+    // 否则面板停在初始 432，内容高超出部分被裁（真机遮挡的根因之一）。
+    let raf = 0;
+    const onViewportResize = () => {
+      cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(() => report(true));
+    };
+    window.addEventListener("resize", onViewportResize);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", onViewportResize);
+      cancelAnimationFrame(raf);
+    };
   }, []);
 
   return (

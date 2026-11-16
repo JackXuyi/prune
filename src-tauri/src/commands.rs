@@ -423,6 +423,9 @@ pub fn prune_toml_template() -> String {
 #[tauri::command]
 pub fn panel_fit_height(app: AppHandle, height: f64) {
     let h = height.clamp(240.0, 760.0);
+    // 无论哪条路径，先记录最近上报值：popover init 时 webview 还在隐藏窗口上，
+    // 此前（启动期）的上报都走了 legacy set_size——init 必须能捡回这个值
+    crate::popover::remember_fit(h);
     if crate::popover::is_popover_mode() {
         let _ = app.run_on_main_thread(move || crate::popover::fit_height(h));
     } else if let Some(panel) = app.get_webview_window(crate::tray::PANEL_LABEL) {

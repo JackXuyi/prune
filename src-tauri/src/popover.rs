@@ -40,6 +40,30 @@ static SLOT: Mutex<Slot> = Mutex::new(Slot::Uninit);
 /// 决定缩放 popover 还是缩放降级窗口——两条路径的几何句柄不同。
 static POPOVER_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
+/// 前端最近一次上报的内容自然高（px，逻辑点取整；0 = 尚未上报）。
+///
+/// 面板 webview 在 app 启动时就挂载（隐藏窗口），此时 popover 还没初始化，
+/// 上报只能落在隐藏窗口上（legacy set_size）。init 时用它作初始 contentSize——
+/// 否则用户第一次点开面板永远回到常量 432，W2 本地服务段（~90px）被裁掉，
+/// 这正是真机「面板底部有遮挡」的根因。
+static LAST_FIT_PX: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+/// 记录最近一次贴高上报（commands 层在分流前调用；原子写，线程安全）
+pub fn remember_fit(px: f64) {
+    let v = px.round().clamp(0.0, u32::MAX as f64) as u32;
+    LAST_FIT_PX.store(v, Ordering::Release);
+}
+
+/// init 用初始高度：最近上报值；从未上报过则回退常量 PANEL_H
+fn last_fit_px() -> f64 {
+    let v = LAST_FIT_PX.load(Ordering::Acquire);
+    if v > 0 {
+        v as f64
+    } else {
+        PANEL_H
+    }
+}
+
 /// MainThreadOnly 的 ObjC 句柄不能进 static（不 Send）。
 /// SAFETY: 本模块所有 ObjC 访问都经 `run_on_main_thread` 串行到主线程，
 /// 该包装只解除「存进 Mutex」的 Send 要求，不改变访问线程。
@@ -199,10 +223,15 @@ impl PopoverUi {
         let anchor = build_anchor(frame, mtm);
 
         // 3) WKWebView 搬进 NSViewController.view
+        //    初始高度用前端最近上报的内容高（last_fit_px）——面板 webview 在
+        //    启动时已挂载并上报过贴高，但只能落在隐藏窗口上；若这里硬设回
+        //    常量 432，内容高 > 432 时底部被裁且 RO 不会再触发（表面自然高
+        //    没变），遮挡就永久留下了。
+        let init_h = last_fit_px().max(PANEL_H);
         let vc: Retained<NSViewController> =
             NSViewController::initWithNibName_bundle(NSViewController::alloc(mtm), None, None);
         let host = vc.view();
-        let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(PANEL_W, PANEL_H));
+        let content = NSRect::new(NSPoint::new(0.0, 0.0), NSSize::new(PANEL_W, init_h));
         {
             webview.removeFromSuperview();
             webview.setFrame(content);
@@ -223,14 +252,14 @@ impl PopoverUi {
         // 4) popover 本体（objc2 未生成 initWithContentViewController，用 +new 后设属性）
         let popover: Retained<NSPopover> = unsafe { msg_send![NSPopover::class(), new] };
         popover.setContentViewController(Some(&vc));
-        popover.setContentSize(NSSize::new(PANEL_W, PANEL_H));
+        popover.setContentSize(NSSize::new(PANEL_W, init_h));
         popover.setBehavior(NSPopoverBehavior::Transient);
 
         let delegate = PopoverDelegate::new();
         let proto: &ProtocolObject<dyn NSPopoverDelegate> = ProtocolObject::from_ref(&*delegate);
         popover.setDelegate(Some(proto));
 
-        eprintln!("[ns-popover] 初始化完成（{PANEL_W}×{PANEL_H}，锚点 {frame:?}）");
+        eprintln!("[ns-popover] 初始化完成（{PANEL_W}×{init_h:.0}，锚点 {frame:?}）");
         Ok(Self {
             popover,
             anchor,
