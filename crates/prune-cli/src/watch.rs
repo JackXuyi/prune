@@ -359,6 +359,12 @@ pub fn run(opts: &Opts) -> i32 {
 }
 
 /// 跑一轮、输出、退出（CI 用）。`--json` 时**恰好一行**合法 JSON。
+///
+/// 顶层键全集见 [`ONCE_TOP_KEYS`]（契约快照 `cli-contract.v1.json` 引用它）。
+/// 仅测试路径消费（快照对账）；生产键集合以 `run_once` 的实际插入为准。
+#[cfg(test)]
+pub const ONCE_TOP_KEYS: &[&str] = &["schemaVersion", "ts", "mode", "cpu", "mem", "ports", "disk"];
+
 fn run_once(opts: &Opts, th: &Thresholds) -> i32 {
     let ts = (now_ms() / 1000) as i64;
     let mut doc = json!({ "schemaVersion": 1, "ts": ts, "mode": "once" });

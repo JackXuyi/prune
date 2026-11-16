@@ -8,7 +8,10 @@
 //! 安全底线（D-C4）：`reclaim` **默认 dry-run**，真执行必须显式 `--yes`，
 //! 之下还有 prune-core 的白名单 + 20GB 熔断两道闸。
 
+mod docs_json;
+mod doctor;
 mod mcp;
+mod mcp_install;
 mod watch;
 
 use std::io::{BufRead, Write};
@@ -72,7 +75,21 @@ pub enum Command {
         days: u32,
         json: bool,
     },
+    /// `prune doctor [--json] [--only disk,mem,port,net] [--timeout N]`：
+    /// 四域体检（W1/D-04）——结论 + 证据 + 下一步，30s 内出结果
+    Doctor {
+        json: bool,
+        only: Vec<doctor::Domain>,
+        timeout: u64,
+    },
     Mcp,
+    /// `prune mcp install [--client claude|cursor|vscode|all] [--write] [--json] [--force]`
+    /// 把 MCP server 写进客户端用户级配置（W1/D-05）。默认 dry-run。
+    McpInstall {
+        client: mcp_install::ClientSpec,
+        write: bool,
+        json: bool,
+    },
     Version,
 }
 
@@ -84,7 +101,49 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         "-V" | "--version" | "version" => Ok(Command::Version),
         "-h" | "--help" | "help" => Err(usage()),
         "mcp" => {
-            no_more_args(&mut it)?;
+            // `prune mcp` = stdio server；`prune mcp install …` = 写客户端配置
+            let rest: Vec<&str> = it.map(|s| s.as_str()).collect();
+            if rest.first() == Some(&"install") {
+                let mut client = mcp_install::ClientSpec::All;
+                let mut write = false;
+                let mut json = false;
+                let mut i = 1;
+                while i < rest.len() {
+                    match rest[i] {
+                        "--client" => {
+                            i += 1;
+                            let v = rest.get(i).ok_or_else(|| {
+                                "--client 需要一个值（claude|cursor|vscode|all）".to_string()
+                            })?;
+                            client = mcp_install::ClientSpec::parse(v).ok_or_else(|| {
+                                format!("--client 不认识 {v:?}；合法值：claude|cursor|vscode|all")
+                            })?;
+                        }
+                        "--write" => write = true,
+                        "--json" => json = true,
+                        // 安全边界：不接受用户传路径（写哪个文件由代码常量决定）
+                        "--force" => {
+                            eprintln!(
+                                "提示：坏 JSON 无论如何都不覆盖；--force 仅用于确认已知风险操作"
+                            );
+                        }
+                        other => {
+                            return Err(format!("mcp install 不认识参数 {other:?}\n{}", usage()))
+                        }
+                    }
+                    i += 1;
+                }
+                return Ok(Command::McpInstall {
+                    client,
+                    write,
+                    json,
+                });
+            }
+            if let Some(a) = rest.first() {
+                if *a != "install" {
+                    return Err(format!("不认识参数 {a:?}\n{}", usage()));
+                }
+            }
             Ok(Command::Mcp)
         }
         "scan" => {
@@ -276,6 +335,53 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                 fail_on_warn: o.fail_on_warn,
             })
         }
+        "doctor" => {
+            let mut json = false;
+            let mut only: Vec<doctor::Domain> = Vec::new();
+            let mut timeout = doctor::DISK_TIMEOUT_SECS;
+            let all: Vec<&str> = it.map(|s| s.as_str()).collect();
+            let mut i = 0;
+            while i < all.len() {
+                match all[i] {
+                    "-h" | "--help" => return Err(usage()),
+                    "--json" => json = true,
+                    "--only" => {
+                        i += 1;
+                        let v = all.get(i).ok_or_else(|| {
+                            "--only 需要逗号分隔的域（disk,mem,port,net）".to_string()
+                        })?;
+                        for part in v.split(',') {
+                            if part.trim().is_empty() {
+                                continue;
+                            }
+                            let d = doctor::Domain::parse(part).ok_or_else(|| {
+                                format!("--only 不认识 {part:?}；合法值：disk,mem,port,net")
+                            })?;
+                            if !only.contains(&d) {
+                                only.push(d);
+                            }
+                        }
+                    }
+                    "--timeout" => {
+                        i += 1;
+                        let v = all
+                            .get(i)
+                            .ok_or_else(|| "--timeout 需要一个秒数".to_string())?;
+                        timeout = v
+                            .parse::<u64>()
+                            .map_err(|_| format!("--timeout 不是数字: {v:?}"))?
+                            .clamp(1, doctor::TIMEOUT_CAP_SECS);
+                    }
+                    other => return Err(format!("doctor 不认识参数 {other:?}\n{}", usage())),
+                }
+                i += 1;
+            }
+            Ok(Command::Doctor {
+                json,
+                only,
+                timeout,
+            })
+        }
         "projects" => {
             let mut days = 30u32;
             let mut json = false;
@@ -305,18 +411,68 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
     }
 }
 
-fn no_more_args(it: &mut std::slice::Iter<String>) -> Result<(), String> {
-    if let Some(a) = it.next() {
-        return Err(format!("不认识参数 {a:?}\n{}", usage()));
+// ---------------------------------------------------------------- 退出码
+
+/// CLI 退出码（契约 v1 的一部分；`usage()` 的退出码行由它派生，防再出现
+/// 「文档写了、代码没有」——W1-DP-2 裁 A：给 3 一个真实的产生条件）。
+///
+/// 收敛判据（wave1 方案 §3.3）：
+/// - 0：结论已出。包括「读到部分数据 + 在 `coverage.note` 里说明差额」——
+///   部分不可见是数据事实，不是进程失败；升级成退出码会让 CI 对每台机器报错；
+/// - 2：用法错（parse_args 失败、必填缺失、--only 未知域）；
+/// - 3：主输出为空**且**根因是权限（lsof 被拒等）；
+/// - 4：主输出为空且根因不是权限（超时、命令不存在、无法解析）；
+/// - 10：watch 达 warn（仅 --fail-on）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ExitCode {
+    Ok = 0,
+    Usage = 2,
+    Permission = 3,
+    ProbeFailed = 4,
+    WatchWarn = 10,
+}
+
+impl ExitCode {
+    pub const ALL: &[(ExitCode, &'static str)] = &[
+        (ExitCode::Ok, "正常"),
+        (ExitCode::Usage, "用法错"),
+        (ExitCode::Permission, "权限不足"),
+        (ExitCode::ProbeFailed, "探测失败"),
+        (ExitCode::WatchWarn, "watch 达 warn（仅 --fail-on）"),
+    ];
+
+    pub fn as_i32(self) -> i32 {
+        self as i32
     }
-    Ok(())
+}
+
+/// 契约快照的 `exitCodes` 段（code → 机器可读短名）。
+pub fn exit_code_map() -> serde_json::Value {
+    serde_json::json!({
+        "0": "ok",
+        "2": "usage",
+        "3": "permission",
+        "4": "probe_failed",
+        "10": "watch_warn",
+    })
+}
+
+/// `usage()` 的退出码行——从枚举派生而不是手抄，两处永不脱节。
+pub fn exit_code_line() -> String {
+    let parts: Vec<String> = ExitCode::ALL
+        .iter()
+        .map(|(c, d)| format!("{} {}", *c as i32, d))
+        .collect();
+    format!("退出码：{}", parts.join(" / "))
 }
 
 fn usage() -> String {
-    "\
+    format!(
+        "\
 用法：
   prune scan [--json]                 全盘扫描，输出可回收清单
-  prune reclaim [--level green]       预览零风险清理项（默认 dry-run；--yes 才真删）
+  prune reclaim [--level green] [--yes]
+                                      预览零风险清理项（默认 dry-run；--yes 才真删）
   prune mem [--swapped] [--json]      一次性内存读数（footprint 口径）
   prune mem --watch [--interval N]    【已弃用】改用 prune watch --only mem
   prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
@@ -324,13 +480,18 @@ fn usage() -> String {
   prune port [PORT] [--json] [--all] [--conflicts]
                                       谁占着这个端口（--conflicts 只看冲突端口）
   prune projects [--days N] [--json]  项目依赖账本（按天趋势，默认 30 天）
+  prune doctor [--json] [--only disk,mem,port,net] [--timeout N]
+                                      四域体检：磁盘/内存/端口/网络的结论+证据+下一步
   prune app <家族名> [--json]         一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
   prune lan [--scan] [--json]         局域网设备与暴露面（默认只读邻居表；--scan 全段探测）
   prune mcp                           启动 MCP stdio server（AI Agent 查询入口）
+  prune mcp install [--client claude|cursor|vscode|all] [--write] [--json]
+                                      把 MCP server 写进客户端用户级配置（默认 dry-run）
   prune --version | --help
 
-退出码：0 正常 / 2 用法错 / 3 权限不足 / 4 探测失败 / 10 watch 达 warn（仅 --fail-on）"
-        .into()
+{}",
+        exit_code_line()
+    )
 }
 
 fn main() {
@@ -379,6 +540,15 @@ fn main() {
             fail_on_warn,
         }),
         Command::Projects { days, json } => cmd_projects(days, json),
+        Command::Doctor {
+            json,
+            only,
+            timeout,
+        } => doctor::run(&doctor::Opts {
+            only,
+            timeout_secs: timeout,
+            json,
+        }),
         Command::Port {
             port,
             json,
@@ -388,6 +558,11 @@ fn main() {
         Command::App { name, json } => cmd_app(&name, json),
         Command::Lan { scan, json } => cmd_lan(scan, json),
         Command::Mcp => cmd_mcp(),
+        Command::McpInstall {
+            client,
+            write,
+            json,
+        } => mcp_install::run(client, write, json, swap::now_secs() as i64),
     };
     std::process::exit(code);
 }
@@ -429,12 +604,7 @@ fn cmd_projects(days: u32, json: bool) -> i32 {
     let trends = prune_core::disk::project::build_trends(&rows);
 
     if json {
-        let doc = serde_json::json!({
-            "schemaVersion": 1,
-            "from": from,
-            "days": days,
-            "projects": trends,
-        });
+        let doc = docs_json::projects_doc(&from, days, &trends);
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
     }
@@ -514,13 +684,7 @@ pub(crate) fn readout_lines(trends: &[DiskTrend]) -> Vec<String> {
 
 fn projects_unavailable(days: u32, json: bool, note: &str) -> i32 {
     if json {
-        let doc = serde_json::json!({
-            "schemaVersion": 1,
-            "days": days,
-            "status": "unavailable",
-            "note": note,
-            "projects": [],
-        });
+        let doc = docs_json::projects_unavailable_doc(days, note);
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
     } else {
         eprintln!("{note}");
@@ -530,6 +694,21 @@ fn projects_unavailable(days: u32, json: bool, note: &str) -> i32 {
 
 pub(crate) fn home_dir() -> PathBuf {
     prune_core::paths::home_dir().unwrap_or_else(|| PathBuf::from("."))
+}
+
+/// 主输出为空时的退出码收敛（W1-DP-2）：3（权限不足）/ 4（探测失败）/
+/// 0（含差额说明或真实「没有」）。
+///
+/// 判据来自 `Coverage.note` 的三种形态：
+/// - `端口采集失败：…` → lsof 不可用 / 执行失败 → 4；
+/// - `无法读取进程的 socket 信息（权限不足）` → 全量被拒 → 3；
+/// - `有 N 个监听端口无法归属…` → 部分不可见，**数据事实**，仍是 0。
+pub(crate) fn exit_code_for_empty(note: Option<&str>) -> i32 {
+    match note {
+        Some(n) if n.starts_with("端口采集失败") => ExitCode::ProbeFailed.as_i32(),
+        Some(n) if n.contains("权限不足") => ExitCode::Permission.as_i32(),
+        _ => ExitCode::Ok.as_i32(),
+    }
 }
 
 // ---------------------------------------------------------------- 通用输出
@@ -595,7 +774,10 @@ fn cmd_scan(json: bool) -> i32 {
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&report).unwrap());
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&docs_json::scan_doc(&report)).unwrap()
+        );
         return 0;
     }
 
@@ -752,13 +934,12 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
     let pressure = mem::system::read_pressure();
 
     if json {
-        let doc = serde_json::json!({
-            "physicalTotal": mem::system::physical_total(),
-            "swap": swap_info,
-            "pressure": pressure,
-            "families": mem::aggregate(&procs),
-            "topSwapped": mem::top_swapped(&procs, 5),
-        });
+        let doc = docs_json::mem_doc(
+            &swap_info,
+            pressure,
+            &mem::aggregate(&procs),
+            &mem::top_swapped(&procs, 5),
+        );
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
     }
@@ -835,12 +1016,7 @@ fn cmd_port(only: Option<u16>, json: bool, all: bool, conflicts_only: bool) -> i
         let owned: Vec<net::PortEntry> = entries.into_iter().cloned().collect();
         let list = net::ports::conflicts(&owned);
         if json {
-            let doc = serde_json::json!({
-                "schemaVersion": 1,
-                "at": snap.at,
-                "conflicts": list,
-                "coverage": snap.coverage,
-            });
+            let doc = docs_json::port_conflicts_doc(snap.at, &list, &snap.coverage);
             println!("{}", serde_json::to_string_pretty(&doc).unwrap());
             return 0;
         }
@@ -882,16 +1058,10 @@ fn cmd_port(only: Option<u16>, json: bool, all: bool, conflicts_only: bool) -> i
             .iter()
             .filter(|e| only.map(|p| e.port == p).unwrap_or(all || e.watched))
             .collect();
-        let doc = serde_json::json!({
-            "port": only,
-            "entries": entries,
-            "coverage": snap.coverage,
-            "timeWait": snap.time_wait,
-            "timeWaitPorts": snap.time_wait_ports,
-            "scanMs": snap.scan_ms,
-        });
+        let owned: Vec<net::PortEntry> = entries.into_iter().cloned().collect();
+        let doc = docs_json::port_doc(only, &owned, &snap);
         println!("{}", serde_json::to_string_pretty(&doc).unwrap());
-        return 0;
+        return exit_code_for_empty(snap.coverage.note.as_deref());
     }
 
     // 单端口查询：给出完整解释（持有者 + 项目 + 连接 + 暴露面）
@@ -1180,7 +1350,10 @@ fn cmd_lan(scan: bool, json: bool) -> i32 {
     }
 
     if json {
-        println!("{}", serde_json::to_string_pretty(&snap).unwrap());
+        // 信封与缓存分离（wave1 方案 §3.2）：缓存写裸 LanSnapshot（GUI/MCP 读），
+        // CLI 打印走 lan_doc 包信封。
+        let doc = docs_json::lan_doc(&snap);
+        println!("{}", serde_json::to_string_pretty(&doc).unwrap());
         return 0;
     }
 
@@ -1311,19 +1484,7 @@ fn cmd_app(query: &str, json: bool) -> i32 {
         }
         Ok(r) => {
             if json {
-                let doc = serde_json::json!({
-                    "family": r.family,
-                    "processCount": r.process_count,
-                    "memoryBytes": r.memory_bytes,
-                    "memoryExact": r.memory_exact,
-                    "cpu": r.cpu,
-                    "cpuCovered": r.cpu_covered,
-                    "conns": r.conns,
-                    "ports": r.ports.iter().map(|(p, s)| serde_json::json!({
-                        "port": p, "exposure": exposure_cn(*s),
-                    })).collect::<Vec<_>>(),
-                    "disk": r.disk,
-                });
+                let doc = docs_json::app_doc(&r);
                 println!("{}", serde_json::to_string_pretty(&doc).unwrap());
                 return 0;
             }
@@ -1558,6 +1719,80 @@ fn cmd_mcp() -> i32 {
 mod tests {
     use super::*;
     use prune_core::disk::project::ProjectPoint as DiskProjectPoint;
+
+    /// 退出码 usage 行 ↔ 枚举逐项一致（防再出现「文档写了、代码没有」，
+    /// wave1 方案 §3.3；检查 E 的 Rust 侧镜像）。
+    #[test]
+    fn usage_exit_codes_match_enum() {
+        let line = exit_code_line();
+        for (code, desc) in ExitCode::ALL {
+            assert!(
+                line.contains(&format!("{} {}", *code as i32, desc)),
+                "usage 退出码行缺 {code:?}（{desc}）：{line}"
+            );
+        }
+        // 5 项之外不允许私货：数字集合必须恰好是枚举成员
+        for n in [1, 5, 6, 7, 8, 9] {
+            assert!(
+                !line.contains(&format!("/ {n} ")) && !line.contains(&format!(" {n} /")),
+                "usage 退出码行出现了枚举之外的码 {n}：{line}"
+            );
+        }
+    }
+
+    /// 退出码 3 / 4 的产生判据（W1-DP-2）：「没查到」必须能与
+    /// 「没权限」「探不了」区分；差额说明（部分不可见）仍是 0。
+    #[test]
+    fn exit_code_for_empty_separates_permission_from_probe_failure() {
+        assert_eq!(exit_code_for_empty(None), 0);
+        assert_eq!(exit_code_for_empty(Some("")), 0);
+        // 差额说明是数据事实，不是进程失败
+        assert_eq!(
+            exit_code_for_empty(Some(
+                "有 3 个监听端口无法归属到进程（可能属于其他用户或系统进程）"
+            )),
+            0
+        );
+        assert_eq!(
+            exit_code_for_empty(Some("无法读取进程的 socket 信息（权限不足）")),
+            3
+        );
+        assert_eq!(
+            exit_code_for_empty(Some("端口采集失败：lsof 无法执行：No such file")),
+            4
+        );
+    }
+
+    /// 契约冻结（wave1 方案 §3.4）：`--json` 顶层键集合与
+    /// `cli-contract.v1.json` 逐字段相等。改任何 docs_json 函数的键集合
+    /// 都会让这里红——「改契约」因此成为一个显式动作。
+    #[test]
+    fn cli_contract_matches_frozen_snapshot() {
+        use serde_json::Value;
+        let frozen: Value = serde_json::from_str(include_str!("../cli-contract.v1.json"))
+            .expect("cli-contract.v1.json 必须是合法 JSON");
+        let actual = docs_json::contract_shape();
+        assert_eq!(
+            actual, frozen,
+            "CLI 契约已变更：同批更新 crates/prune-cli/cli-contract.v1.json（破坏性变更需提升 schemaVersion 并在 CHANGELOG 写明）"
+        );
+    }
+
+    /// 快照导出工具：`PRUNE_DUMP_CONTRACT=1 cargo test -p prune-cli dump_contract`
+    /// 用生产函数重写冻结文件。绝不手写快照。
+    #[test]
+    fn dump_contract_when_env_set() {
+        if std::env::var("PRUNE_DUMP_CONTRACT").is_err() {
+            return;
+        }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/cli-contract.v1.json");
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&docs_json::contract_shape()).unwrap() + "\n",
+        )
+        .unwrap();
+        eprintln!("已导出契约快照：{path}");
+    }
 
     fn s(v: &str) -> String {
         v.to_string()

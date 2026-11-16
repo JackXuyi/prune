@@ -1,0 +1,111 @@
+{
+  "commands": {
+    "app": {
+      "keys": [
+        "conns",
+        "cpu",
+        "cpuCovered",
+        "disk",
+        "family",
+        "memoryBytes",
+        "memoryExact",
+        "ports",
+        "processCount",
+        "schemaVersion"
+      ]
+    },
+    "doctor": {
+      "keys": [
+        "at",
+        "coverage",
+        "elapsedMs",
+        "findings",
+        "schemaVersion"
+      ]
+    },
+    "lan": {
+      "keys": [
+        "at",
+        "cidr",
+        "devices",
+        "exposedPorts",
+        "iface",
+        "notes",
+        "scanMs",
+        "scanned",
+        "schemaVersion",
+        "total"
+      ]
+    },
+    "mem": {
+      "keys": [
+        "families",
+        "physicalTotal",
+        "pressure",
+        "schemaVersion",
+        "swap",
+        "topSwapped"
+      ]
+    },
+    "port": {
+      "keys": [
+        "coverage",
+        "entries",
+        "port",
+        "scanMs",
+        "schemaVersion",
+        "timeWait",
+        "timeWaitPorts"
+      ]
+    },
+    "port_conflicts": {
+      "keys": [
+        "at",
+        "conflicts",
+        "coverage",
+        "schemaVersion"
+      ]
+    },
+    "projects": {
+      "keys": [
+        "days",
+        "from",
+        "projects",
+        "schemaVersion"
+      ]
+    },
+    "scan": {
+      "keys": [
+        "configNotes",
+        "dup",
+        "groups",
+        "incremental",
+        "projects",
+        "scanElapsedMs",
+        "scannedAt",
+        "schemaVersion",
+        "totals",
+        "volume"
+      ]
+    },
+    "watch_once": {
+      "keys": [
+        "schemaVersion",
+        "ts",
+        "mode",
+        "cpu",
+        "mem",
+        "ports",
+        "disk"
+      ]
+    }
+  },
+  "exitCodes": {
+    "0": "ok",
+    "10": "watch_warn",
+    "2": "usage",
+    "3": "permission",
+    "4": "probe_failed"
+  },
+  "schemaVersion": 1
+}
