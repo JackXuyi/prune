@@ -189,6 +189,149 @@ fn assemble(
     }
 }
 
+/// 项目账本的时间轴（W2/D-08）：一组按天记录（`ProjectDayRow`）→ 每个项目一条趋势。
+///
+/// 口径纪律（测试固化）：
+/// - 只统计**有记录的天**，缺失日不补 0（补 0 会把「那天没扫」说成「那天依赖为 0」）；
+/// - `delta_bytes` 只在 `samples >= 2` 时给出，否则 `None`（UI 显示「数据不足」，不是 0）；
+/// - 首末两点间隔不足 7 天时，展示层应写「N 天」而不是「30 天涨了 X」——这是
+///   UI 文案义务，本结构只提供事实（points 的 day 字段）。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectPoint {
+    pub day: String,
+    pub deps_bytes: u64,
+    pub deps_age_days: u64,
+    pub activity_days: Option<u64>,
+    pub lockfiles: Vec<String>,
+    pub verdict: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectTrend {
+    pub root: String,
+    pub name: String,
+    /// 只含有记录的天，按 day 升序
+    pub points: Vec<ProjectPoint>,
+    pub first: Option<ProjectPoint>,
+    pub last: Option<ProjectPoint>,
+    /// last − first；`samples < 2` 时为 None（不是 0）
+    pub delta_bytes: Option<i64>,
+    pub peak_bytes: Option<u64>,
+    /// 窗口内有记录的天数
+    pub samples: u32,
+}
+
+/// 体检结果 → 账本行（`day` 由调用方给本地日期）
+pub fn to_day_rows(health: &[ProjectHealth], day: &str) -> Vec<crate::db::ProjectDayRow> {
+    health
+        .iter()
+        .map(|p| crate::db::ProjectDayRow {
+            day: day.to_string(),
+            root: p.root.clone(),
+            name: p.name.clone(),
+            deps_bytes: p.deps_bytes,
+            deps_age_days: p.deps_age_days,
+            activity_days: p.activity_age_days,
+            lockfiles: p.lockfiles.clone(),
+            verdict: verdict_str(p.verdict).to_string(),
+        })
+        .collect()
+}
+
+fn verdict_str(v: ProjectVerdict) -> &'static str {
+    match v {
+        ProjectVerdict::Healthy => "healthy",
+        ProjectVerdict::Stale => "stale",
+        ProjectVerdict::Heavy => "heavy",
+        ProjectVerdict::Zombie => "zombie",
+    }
+}
+
+/// 账本行 → 每个项目一条趋势，按最后一天体积降序（与体检卡同序）。
+pub fn build_trends(rows: &[crate::db::ProjectDayRow]) -> Vec<ProjectTrend> {
+    let mut by_root: BTreeMap<&str, Vec<&crate::db::ProjectDayRow>> = BTreeMap::new();
+    for r in rows {
+        by_root.entry(r.root.as_str()).or_default().push(r);
+    }
+
+    let mut out: Vec<ProjectTrend> = by_root
+        .into_iter()
+        .map(|(root, mut list)| {
+            list.sort_by(|a, b| a.day.cmp(&b.day));
+            // 同一天重复行不该出现（主键约束），但库被外部改过时按最后一条为准
+            list.dedup_by(|a, b| a.day == b.day);
+            let points: Vec<ProjectPoint> = list
+                .iter()
+                .map(|r| ProjectPoint {
+                    day: r.day.clone(),
+                    deps_bytes: r.deps_bytes,
+                    deps_age_days: r.deps_age_days,
+                    activity_days: r.activity_days,
+                    lockfiles: r.lockfiles.clone(),
+                    verdict: r.verdict.clone(),
+                })
+                .collect();
+            let first = points.first().cloned();
+            let last = points.last().cloned();
+            let samples = points.len() as u32;
+            let delta_bytes = if samples >= 2 {
+                Some(
+                    last.as_ref().map(|p| p.deps_bytes).unwrap_or(0) as i64
+                        - first.as_ref().map(|p| p.deps_bytes).unwrap_or(0) as i64,
+                )
+            } else {
+                None
+            };
+            ProjectTrend {
+                root: root.to_string(),
+                // 展示名取最后一行（项目可能被改过名，以最新记录为准）
+                name: list.last().map(|r| r.name.clone()).unwrap_or_default(),
+                points,
+                first,
+                last,
+                delta_bytes,
+                peak_bytes: list.iter().map(|r| r.deps_bytes).max(),
+                samples,
+            }
+        })
+        .collect();
+
+    out.sort_by_key(|t| std::cmp::Reverse(t.last.as_ref().map(|p| p.deps_bytes).unwrap_or(0)));
+    out
+}
+
+/// 账本保留天数（W2/D-08）。400 天：够画一年趋势，也不至于让表无限长。
+pub const LEDGER_KEEP_DAYS: i64 = 400;
+
+/// 把一轮扫描的项目体检结果写进账本。
+///
+/// **只接受全量扫描**：增量扫描只更新部分目录，写进去会把体积记小——那不是
+/// 「今天变小了」，是「今天没看全」，两者在趋势图上长得一样，但后者是假事实。
+pub fn record_ledger(
+    store: &crate::db::Store,
+    report: &super::DiskReport,
+    day: &str,
+    now: i64,
+) -> Result<usize, String> {
+    if report.incremental {
+        return Ok(0);
+    }
+    let rows = to_day_rows(&report.projects, day);
+    store
+        .project_day_upsert(day, &rows, now)
+        .map_err(|e| format!("project_day 落库失败: {e}"))
+}
+
+/// 按保留期清理旧账本行（边界当天保留，口径同 `net_prune_before`）
+pub fn prune_ledger(store: &crate::db::Store, now: i64, keep_days: i64) -> Result<usize, String> {
+    let cutoff = crate::localtime::day_string(now - keep_days * 86_400);
+    store
+        .project_day_prune_before(&cutoff)
+        .map_err(|e| format!("project_day 清理失败: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -335,5 +478,76 @@ mod tests {
         map.insert("/Volumes/ext/proj/node_modules".to_string(), (NOW, 1 << 30));
         let got = build_projects(&map, home, NOW);
         assert_eq!(got[0].name, "/Volumes/ext/proj");
+    }
+
+    // ---------------------------------------------------------- 账本趋势（W2/D-08）
+
+    fn row(day: &str, root: &str, bytes: u64) -> crate::db::ProjectDayRow {
+        crate::db::ProjectDayRow {
+            day: day.into(),
+            root: root.into(),
+            name: root.trim_start_matches("/h/").into(),
+            deps_bytes: bytes,
+            deps_age_days: 5,
+            activity_days: Some(2),
+            lockfiles: vec!["pnpm".into()],
+            verdict: "healthy".into(),
+        }
+    }
+
+    #[test]
+    fn trend_single_point_has_no_delta() {
+        let t = build_trends(&[row("2027-03-01", "/h/a", 1 << 30)]);
+        assert_eq!(t.len(), 1);
+        assert_eq!(t[0].samples, 1);
+        assert_eq!(
+            t[0].delta_bytes, None,
+            "一个点算不出 delta，必须是 None 而不是 0"
+        );
+        assert_eq!(t[0].peak_bytes, Some(1 << 30));
+    }
+
+    #[test]
+    fn trend_delta_uses_first_and_last_recorded_day() {
+        // 中间缺 3 天：不补 0，delta 仍按首末有记录的点算
+        let rows = vec![
+            row("2027-03-01", "/h/a", 1 << 30),
+            row("2027-03-04", "/h/a", (1 << 30) + (512 << 20)),
+        ];
+        let t = &build_trends(&rows)[0];
+        assert_eq!(t.samples, 2);
+        assert_eq!(t.delta_bytes, Some(512 << 20));
+        assert_eq!(t.points.len(), 2, "缺失日不产生点");
+    }
+
+    #[test]
+    fn trend_shrinking_project_reports_negative_delta() {
+        let rows = vec![
+            row("2027-03-01", "/h/a", 4 << 30),
+            row("2027-03-02", "/h/a", 1 << 30),
+        ];
+        assert_eq!(build_trends(&rows)[0].delta_bytes, Some(-(3i64 << 30)));
+    }
+
+    #[test]
+    fn trends_sorted_by_latest_size_and_split_by_root() {
+        let rows = vec![
+            row("2027-03-01", "/h/small", 1 << 20),
+            row("2027-03-01", "/h/big", 9 << 30),
+            row("2027-03-02", "/h/big", 10 << 30),
+        ];
+        let t = build_trends(&rows);
+        assert_eq!(t.len(), 2, "按 root 分组");
+        assert_eq!(t[0].name, "big", "按最新体积降序");
+        assert_eq!(t[0].points.len(), 2);
+        assert_eq!(t[1].samples, 1);
+    }
+
+    #[test]
+    fn to_day_rows_carries_verdict_string() {
+        let p = build(2 << 30, 0, Some(0), &["npm"]);
+        let rows = to_day_rows(&[p], "2027-03-01");
+        assert_eq!(rows[0].verdict, "heavy");
+        assert_eq!(rows[0].day, "2027-03-01");
     }
 }

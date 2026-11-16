@@ -24,6 +24,8 @@ pub mod appicon;
 pub mod archive;
 pub mod base64;
 pub mod classify;
+/// 无 Tauri 的设置读取（W2/D-10）：CLI / MCP 与 GUI 读同一份 settings.json
+pub mod config;
 pub mod db;
 pub mod disk;
 /// Rust 侧用户可见文案表（诊断结论 / 报告 / 错误串）。逻辑与文案分家：

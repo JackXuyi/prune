@@ -114,7 +114,39 @@ CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS project_day (
+    day           TEXT    NOT NULL,              -- 本地日期 'YYYY-MM-DD'（W2/D-08）
+    root          TEXT    NOT NULL,              -- 项目根绝对路径（主键之一，改名不影响）
+    name          TEXT    NOT NULL,              -- 展示名（相对 home）
+    deps_bytes    INTEGER NOT NULL,              -- node_modules 合计（含嵌套）
+    deps_age_days INTEGER NOT NULL,              -- 依赖上次安装距当天
+    activity_days INTEGER,                       -- 项目最后活动距今；NULL = 查不到标记文件
+    lockfiles     TEXT    NOT NULL,              -- JSON 数组 ['npm','pnpm']
+    verdict       TEXT    NOT NULL,              -- healthy|stale|heavy|zombie
+    updated_at    INTEGER NOT NULL,
+    PRIMARY KEY (day, root)
+);
+CREATE INDEX IF NOT EXISTS idx_project_day_root ON project_day (root, day);
 ";
+
+/// 账本的一行（W2/D-08）：某一天、某个项目的依赖快照。
+///
+/// 天粒度而不是每次扫描一行：每小时扫一次 × 30 个项目 × 90 天 = 6.5 万行，
+/// 而 90 天视图只要 90 个点。天粒度 30 × 90 ≈ 2,700 行，一条 SQL 聚合完事。
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProjectDayRow {
+    /// 本地日期 `YYYY-MM-DD`（字典序即时间序）
+    pub day: String,
+    pub root: String,
+    pub name: String,
+    pub deps_bytes: u64,
+    pub deps_age_days: u64,
+    pub activity_days: Option<u64>,
+    pub lockfiles: Vec<String>,
+    /// 当天的体检结论（healthy / stale / heavy / zombie）
+    pub verdict: String,
+}
 
 impl Store {
     pub fn open(path: &Path) -> rusqlite::Result<Self> {
@@ -500,6 +532,87 @@ impl Store {
     pub fn cut_prune_before(&self, cutoff: i64) -> rusqlite::Result<usize> {
         let conn = self.lock();
         conn.execute("DELETE FROM cut_log WHERE ts < ?1", params![cutoff])
+    }
+
+    // ------------------------------------------------------------- 项目账本（W2/D-08）
+
+    /// 覆盖写「某天某项目」的一行。同一天多次扫描取**最后一次**——它是当天
+    /// 最完整的事实；增量扫描不写（只更新部分目录，写进去会把体积记小，是假事实）。
+    pub fn project_day_upsert(
+        &self,
+        day: &str,
+        rows: &[ProjectDayRow],
+        now: i64,
+    ) -> rusqlite::Result<usize> {
+        if rows.is_empty() {
+            return Ok(0);
+        }
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare(
+                "INSERT INTO project_day
+                     (day, root, name, deps_bytes, deps_age_days, activity_days,
+                      lockfiles, verdict, updated_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+                 ON CONFLICT(day, root) DO UPDATE SET
+                     name          = excluded.name,
+                     deps_bytes    = excluded.deps_bytes,
+                     deps_age_days = excluded.deps_age_days,
+                     activity_days = excluded.activity_days,
+                     lockfiles     = excluded.lockfiles,
+                     verdict       = excluded.verdict,
+                     updated_at    = excluded.updated_at",
+            )?;
+            for r in rows {
+                let locks = serde_json::to_string(&r.lockfiles).unwrap_or_else(|_| "[]".into());
+                stmt.execute(params![
+                    day,
+                    r.root,
+                    r.name,
+                    sat(r.deps_bytes),
+                    sat(r.deps_age_days),
+                    r.activity_days.map(sat),
+                    locks,
+                    r.verdict,
+                    now
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(rows.len())
+    }
+
+    /// 自 `from_day`（含）起的账本行，按 (root, day) 升序。
+    ///
+    /// 只返回**有记录的日子**：缺失日由调用方标「数据不足」，不在这里补 0
+    /// —— 补 0 等于把「那天没扫过」说成「那天依赖是 0 字节」。
+    pub fn project_day_recent(&self, from_day: &str) -> rusqlite::Result<Vec<ProjectDayRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT day, root, name, deps_bytes, deps_age_days, activity_days, lockfiles, verdict
+             FROM project_day WHERE day >= ?1 ORDER BY root ASC, day ASC",
+        )?;
+        let rows = stmt.query_map(params![from_day], |r| {
+            let locks: String = r.get(6)?;
+            Ok(ProjectDayRow {
+                day: r.get(0)?,
+                root: r.get(1)?,
+                name: r.get(2)?,
+                deps_bytes: r.get::<_, i64>(3)?.max(0) as u64,
+                deps_age_days: r.get::<_, i64>(4)?.max(0) as u64,
+                activity_days: r.get::<_, Option<i64>>(5)?.map(|v| v.max(0) as u64),
+                lockfiles: serde_json::from_str(&locks).unwrap_or_default(),
+                verdict: r.get(7)?,
+            })
+        })?;
+        rows.collect()
+    }
+
+    /// 删除早于 `day` 的行（保留期由调用方算好本地日期传进来）
+    pub fn project_day_prune_before(&self, day: &str) -> rusqlite::Result<usize> {
+        let conn = self.lock();
+        conn.execute("DELETE FROM project_day WHERE day < ?1", params![day])
     }
 
     // ------------------------------------------------------------- M2 激活读数
@@ -1166,5 +1279,79 @@ mod tests {
         let _ = std::fs::remove_file(&path);
         let _ = std::fs::remove_file(path.with_extension("db-wal"));
         let _ = std::fs::remove_file(path.with_extension("db-shm"));
+    }
+
+    // ---------------------------------------------------------- W2/D-08 项目账本
+
+    fn day_row(day: &str, root: &str, bytes: u64) -> ProjectDayRow {
+        ProjectDayRow {
+            day: day.into(),
+            root: root.into(),
+            name: root.trim_start_matches("/Users/x/").into(),
+            deps_bytes: bytes,
+            deps_age_days: 3,
+            activity_days: Some(1),
+            lockfiles: vec!["pnpm".into()],
+            verdict: "healthy".into(),
+        }
+    }
+
+    #[test]
+    fn project_day_upsert_overwrites_same_day() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .project_day_upsert("2027-03-01", &[day_row("2027-03-01", "/Users/x/a", 100)], 1)
+            .unwrap();
+        // 同一天再扫一次：覆盖写，取最后一次（当天最完整的事实）
+        store
+            .project_day_upsert("2027-03-01", &[day_row("2027-03-01", "/Users/x/a", 250)], 2)
+            .unwrap();
+
+        let rows = store.project_day_recent("2027-03-01").unwrap();
+        assert_eq!(rows.len(), 1, "同一天同项目只应有一行");
+        assert_eq!(rows[0].deps_bytes, 250);
+    }
+
+    #[test]
+    fn project_day_recent_only_returns_recorded_days() {
+        let store = Store::open_in_memory().unwrap();
+        store
+            .project_day_upsert("2027-03-01", &[day_row("2027-03-01", "/Users/x/a", 100)], 1)
+            .unwrap();
+        store
+            .project_day_upsert("2027-03-05", &[day_row("2027-03-05", "/Users/x/a", 400)], 2)
+            .unwrap();
+
+        let rows = store.project_day_recent("2027-03-01").unwrap();
+        assert_eq!(rows.len(), 2, "缺少的 3 天不补 0 行");
+        assert_eq!(rows[0].day, "2027-03-01");
+        assert_eq!(rows[1].day, "2027-03-05");
+    }
+
+    #[test]
+    fn project_day_prune_keeps_cutoff_day() {
+        let store = Store::open_in_memory().unwrap();
+        for d in ["2027-02-27", "2027-02-28", "2027-03-01"] {
+            store
+                .project_day_upsert(d, &[day_row(d, "/Users/x/a", 1)], 1)
+                .unwrap();
+        }
+        let removed = store.project_day_prune_before("2027-02-28").unwrap();
+        assert_eq!(removed, 1, "只删严格早于 cutoff 的行");
+        let left = store.project_day_recent("2027-01-01").unwrap();
+        assert_eq!(left.len(), 2, "边界当天必须保留");
+    }
+
+    #[test]
+    fn project_day_roundtrips_lockfiles_and_nulls() {
+        let store = Store::open_in_memory().unwrap();
+        let mut r = day_row("2027-03-01", "/Users/x/a", 7);
+        r.lockfiles = vec!["npm".into(), "yarn".into()];
+        r.activity_days = None;
+        store.project_day_upsert("2027-03-01", &[r], 1).unwrap();
+
+        let got = &store.project_day_recent("2027-03-01").unwrap()[0];
+        assert_eq!(got.lockfiles, vec!["npm", "yarn"]);
+        assert_eq!(got.activity_days, None, "查不到活动痕迹必须是 None，不是 0");
     }
 }

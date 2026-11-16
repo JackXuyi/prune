@@ -174,6 +174,26 @@ pub async fn scan_now(app: &AppHandle, full: bool) -> Result<(), String> {
         if let Err(e) = store.scan_log_add(now_secs(), level) {
             eprintln!("[m2-scan] scan_log 落库失败（不影响扫描结果）: {e}");
         }
+
+        // W2/D-08 项目账本：只记全量扫描（增量没看全，写进去会把体积记小）。
+        // 失败不阻塞扫描——账本是旁路读数，不是扫描的前置条件。
+        if is_full {
+            let now = now_secs();
+            let day = prune_core::localtime::day_string(now);
+            match prune_core::disk::project::record_ledger(store, &report, &day, now) {
+                Ok(n) => {
+                    if let Err(e) = prune_core::disk::project::prune_ledger(
+                        store,
+                        now,
+                        prune_core::disk::project::LEDGER_KEEP_DAYS,
+                    ) {
+                        eprintln!("[w2-ledger] 旧账本清理失败（不影响本次记录）: {e}");
+                    }
+                    eprintln!("[w2-ledger] {day} 记入 {n} 个项目");
+                }
+                Err(e) => eprintln!("[w2-ledger] 账本落库失败（不影响扫描结果）: {e}"),
+            }
+        }
     }
 
     eprintln!(

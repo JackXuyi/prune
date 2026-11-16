@@ -530,6 +530,160 @@ pub fn report_markdown(run: &SiteRun, locale: Locale) -> String {
 
 // ---------------------------------------------------------------- 单测
 
+// ---------------------------------------------------------------- 探测执行（W2/D-11）
+//
+// 探测原本只存在于 `src-tauri/src/net_sites.rs`（GUI 专属）。MCP `net_sites` 与
+// `prune sites` 也需要同一套执行逻辑，所以下沉到 core：**同一份 build_curl_args +
+// judge + 文案**，GUI / CLI / MCP 三方不可能量出不同结果。
+// GUI 侧的 `run_all` 仍保留进度事件与取消（那是 UI 关注点），单站探测改为调用这里。
+
+/// 默认 UA 前缀。实测：默认 curl UA 下 github 会呈 stalled（ttfb=0），
+/// 明示身份后同分钟即正常返回——UA 是口径的一部分，不是可选装饰。
+pub const UA_PREFIX: &str = "PruneSiteProbe/";
+
+/// 本次构建的 UA（带版本号，便于对方站点识别来源）
+pub fn user_agent() -> String {
+    format!("{}{}", UA_PREFIX, crate::version())
+}
+
+/// 跑一次 curl 并判定。任何「机制层」失败都落成 `verdict = Error` + note，
+/// 绝不编造读数（方案 §12）。
+pub fn probe(site: &Site, at: i64, locale: Locale) -> SiteProbe {
+    use std::process::{Command, Stdio};
+
+    let t = err_text(locale);
+    let args = build_curl_args(site, &user_agent());
+    let out = match Command::new("curl")
+        .args(&args)
+        .stdin(Stdio::null())
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            return error_probe(
+                site,
+                at,
+                fill(t.sites_curl_spawn, &[("err", &e.to_string())]),
+            )
+        }
+    };
+    let exit = out.status.code().unwrap_or(-1);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    let note = detail_note(exit, &stderr);
+    match parse_curl_output(&stdout) {
+        Ok(raw) => judge(site, &raw, exit, note, at),
+        Err(e) => {
+            // -w 行都没拿到：curl 连 URL 都没解析成功（如 exit 3）
+            let why = match note {
+                Some(n) => format!("{e}; {n}"),
+                None => e,
+            };
+            error_probe(site, at, why)
+        }
+    }
+}
+
+/// 一整轮：4 个 worker 抢索引，结果按**配置顺序**回填（调用方不需要重排）。
+///
+/// 无进度事件、无取消——那是 GUI 的关注点（`src-tauri/src/net_sites.rs` 的
+/// `run_all`）。CLI / MCP 要的是「一次调用一个结果」，中断由进程信号接管。
+pub fn run(sites: &[Site], at: i64, locale: Locale) -> SiteRun {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Mutex;
+    use std::time::Instant;
+
+    let started = Instant::now();
+    let next = AtomicUsize::new(0);
+    let slots: Mutex<Vec<Option<SiteProbe>>> = Mutex::new(vec![None; sites.len()]);
+    let workers = SITE_CONCURRENCY.min(sites.len().max(1));
+
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            let slots = &slots;
+            let next = &next;
+            scope.spawn(move || loop {
+                let i = next.fetch_add(1, Ordering::SeqCst);
+                if i >= sites.len() {
+                    return;
+                }
+                let probe = probe(&sites[i], at, locale);
+                if let Ok(mut s) = slots.lock() {
+                    s[i] = Some(probe);
+                }
+            });
+        }
+    });
+
+    let results = slots
+        .into_inner()
+        .unwrap_or_default()
+        .into_iter()
+        .flatten()
+        .collect();
+    SiteRun {
+        at,
+        results,
+        cancelled: false,
+        elapsed_ms: started.elapsed().as_secs_f64() * 1000.0,
+    }
+}
+
+/// curl 的失败原文 → 一行短说明。note 是**技术细节**（英文原样），
+/// 用户看到的结论来自 `verdict` + `stage` 的本地化文案
+fn detail_note(exit: i32, stderr: &str) -> Option<String> {
+    let line = stderr
+        .lines()
+        .map(str::trim)
+        .find(|l| !l.is_empty())
+        .map(|l| l.chars().take(160).collect::<String>());
+    match (exit, line) {
+        (0, None) => None,
+        (0, Some(l)) => Some(l),
+        (e, Some(l)) => Some(format!("curl exit {e}: {l}")),
+        (e, None) => Some(format!("curl exit {e}")),
+    }
+}
+
+fn error_probe(site: &Site, at: i64, note: String) -> SiteProbe {
+    SiteProbe {
+        id: site.id.clone(),
+        name: site.name.clone(),
+        url: site.url.clone(),
+        at,
+        dns_ms: None,
+        tcp_ms: None,
+        tls_ms: None,
+        ttfb_ms: None,
+        total_ms: None,
+        bytes: 0,
+        http_code: None,
+        remote_ip: None,
+        transfer_bps: None,
+        verdict: SiteVerdict::Error,
+        stage: None,
+        note: Some(note),
+        curl_exit: None,
+    }
+}
+
+/// 站点表来源：设置文件里的 `netSites`（用户自定义）→ 校验 → 失败回落默认。
+///
+/// 与 GUI 的 `load_sites` 同语义，返回值第二项 = 「是否回落了默认」，
+/// 调用方必须把这件事说出来（静默换掉用户配置是最坏的失败方式）。
+pub fn sites_from_settings(locale: Locale) -> (Vec<Site>, bool) {
+    let custom = crate::config::get_value("netSites")
+        .and_then(|v| serde_json::from_value::<Vec<Site>>(v).ok())
+        .filter(|s| !s.is_empty());
+    match custom {
+        Some(list) => match validate_sites(&list, locale) {
+            Ok(ok) => (ok, false),
+            Err(_) => (default_sites(), true),
+        },
+        None => (default_sites(), false),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,5 +1116,35 @@ mod tests {
             ),
             (1, 1, 1, 1, 1, 1, 6)
         );
+    }
+
+    // ---------------------------------------------------------- 执行层（W2/D-11）
+
+    /// 打一个**本机必然拒连**的端口：验证 `run` 真的调用 curl、按配置顺序回填、
+    /// 且失败落成可解释的 verdict，而不是 panic 或编造读数。
+    /// 不发外部网络请求（CI 与离线环境都能跑）。
+    #[test]
+    fn run_probes_local_refused_port_without_network() {
+        let sites = vec![Site {
+            id: "self".into(),
+            name: "self".into(),
+            url: "http://127.0.0.1:1/".into(),
+        }];
+        let run = super::run(&sites, 1_800_000_000, Locale::En);
+        assert_eq!(run.results.len(), 1, "按配置顺序回填，一站一条");
+        assert!(!run.cancelled);
+        let p = &run.results[0];
+        assert_eq!(p.id, "self");
+        assert_eq!(p.at, 1_800_000_000);
+        // 拒连 → 链路层没打通（TCP），不是 ok
+        assert_ne!(p.verdict, SiteVerdict::Ok);
+        assert!(p.curl_exit.is_some(), "必须记录 curl 退出码，便于解释");
+    }
+
+    #[test]
+    fn user_agent_carries_version() {
+        let ua = super::user_agent();
+        assert!(ua.starts_with(UA_PREFIX));
+        assert!(ua.contains(crate::version()));
     }
 }

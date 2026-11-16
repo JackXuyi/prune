@@ -11,7 +11,7 @@
 //! 3. **取消只停「还没开始的站」**：在飞的 curl 最多再跑 8 s 自然结束。
 //!    杀子进程要共享 `Child` 句柄 + 平台差异，收益不抵复杂度（方案 §4.6）。
 
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -29,8 +29,8 @@ const EVENT_PROGRESS: &str = "net-sites://progress";
 const EVENT_DONE: &str = "net-sites://done";
 /// settings.json 的键。沿用 settings 模块（不另建文件）
 const SETTING_KEY: &str = "netSites";
-/// 明示身份，不伪装浏览器 UA：403 是读数，不是要绕过的障碍
-const UA: &str = concat!("PruneSiteProbe/", env!("CARGO_PKG_VERSION"));
+// UA 与 curl 参数口径已下沉到 `prune_core::net::sites`（`user_agent()` /
+// `build_curl_args`）：明示身份、不伪装浏览器 UA —— 403 是读数，不是要绕过的障碍。
 
 pub struct SiteState {
     /// 单轮互斥（只存 bool，不跨 await 持有）
@@ -153,78 +153,13 @@ pub fn net_sites_capability() -> SiteCapability {
 
 // ---------------------------------------------------------------- 单站探测（薄壳）
 
-/// 跑一次 curl 并判定。任何「机制层」失败都落成 `verdict = Error` + note，
-/// 绝不编造读数（方案 §12）。
+/// 单站探测的实现在 `prune_core::net::sites::probe`（W2/D-11 下沉）。
+///
+/// 下沉理由：MCP `net_sites` 与 `prune sites` 也要打同一批站点，若各写一份
+/// curl 调用，同一台机器同一分钟会量出两种结果。这里只保留一个转发，
+/// GUI 的差异（进度事件 / 取消 / 单轮互斥）都在本文件其余部分。
 fn probe_site(site: &Site, at: i64, locale: Locale) -> SiteProbe {
-    let t = err_text(locale);
-    let args = sites::build_curl_args(site, UA);
-    let out = match Command::new("curl")
-        .args(&args)
-        .stdin(Stdio::null())
-        .output()
-    {
-        Ok(o) => o,
-        Err(e) => {
-            return error_probe(
-                site,
-                at,
-                fill(t.sites_curl_spawn, &[("err", &e.to_string())]),
-            )
-        }
-    };
-    let exit = out.status.code().unwrap_or(-1);
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let note = detail_note(exit, &stderr);
-    match sites::parse_curl_output(&stdout) {
-        Ok(raw) => sites::judge(site, &raw, exit, note, at),
-        Err(e) => {
-            // -w 行都没拿到：curl 连 URL 都没解析成功（如 exit 3）
-            let why = match note {
-                Some(n) => format!("{e}; {n}"),
-                None => e,
-            };
-            error_probe(site, at, why)
-        }
-    }
-}
-
-/// curl 的失败原文 → 一行短说明。note 是**技术细节**（英文原样），
-/// 用户看到的结论来自 `verdict` + `stage` 的本地化文案
-fn detail_note(exit: i32, stderr: &str) -> Option<String> {
-    let line = stderr
-        .lines()
-        .map(str::trim)
-        .find(|l| !l.is_empty())
-        .map(|l| l.chars().take(160).collect::<String>());
-    match (exit, line) {
-        (0, None) => None,
-        (0, Some(l)) => Some(l),
-        (e, Some(l)) => Some(format!("curl exit {e}: {l}")),
-        (e, None) => Some(format!("curl exit {e}")),
-    }
-}
-
-fn error_probe(site: &Site, at: i64, note: String) -> SiteProbe {
-    SiteProbe {
-        id: site.id.clone(),
-        name: site.name.clone(),
-        url: site.url.clone(),
-        at,
-        dns_ms: None,
-        tcp_ms: None,
-        tls_ms: None,
-        ttfb_ms: None,
-        total_ms: None,
-        bytes: 0,
-        http_code: None,
-        remote_ip: None,
-        transfer_bps: None,
-        verdict: sites::SiteVerdict::Error,
-        stage: None,
-        note: Some(note),
-        curl_exit: None,
-    }
+    sites::probe(site, at, locale)
 }
 
 // ---------------------------------------------------------------- 整轮（并发池）

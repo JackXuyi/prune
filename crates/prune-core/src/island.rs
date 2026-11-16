@@ -17,6 +17,12 @@ pub const SAMPLE_INTERVAL_SEC: u64 = 2;
 /// 滞回带宽（百分点）：触发后要掉到 `threshold − HYSTERESIS_PCT` 才重新武装。
 pub const HYSTERESIS_PCT: f32 = 10.0;
 
+/// 磁盘水位：可用比例低于它 → Warn（15%）。低于 5% → Critical。
+pub const DISK_WARN_RATIO: f64 = 0.15;
+pub const DISK_CRITICAL_RATIO: f64 = 0.05;
+/// 磁盘滞回：报告后可用比例回到「线 + 5pp」以上才重新武装
+pub const DISK_REARM_MARGIN: f64 = 0.05;
+
 /// CPU 暴走阈值组。GUI 侧从 settings.json 读，核心层不认识配置文件。
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct CpuThresholds {
@@ -653,6 +659,110 @@ impl LanWatchMonitor {
     }
 }
 
+// ───────────────────────── 磁盘水位（W2/D-10） ─────────────────────────
+
+/// 磁盘水位阈值组。与 CPU / 内存不同，水位是**慢变量**：一天可能只变 1–2 个百分点，
+/// 所以不用「持续窗口」，用**滞回 + 边沿**（掉到线下报一次，回来才重新武装）。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DiskThresholds {
+    /// 可用比例低于它 → Warn，默认 0.15（15%）
+    pub warn_ratio: f64,
+    /// 可用比例低于它 → Critical，默认 0.05（5%）
+    pub critical_ratio: f64,
+}
+
+impl Default for DiskThresholds {
+    fn default() -> Self {
+        Self {
+            warn_ratio: DISK_WARN_RATIO,
+            critical_ratio: DISK_CRITICAL_RATIO,
+        }
+    }
+}
+
+impl DiskThresholds {
+    /// 钳制到安全区间：warn 必须在 2%–50%，critical 必须严格小于 warn
+    /// （两者相等会让「Warn → Critical」失去升级语义）。
+    pub fn clamped(self) -> Self {
+        let warn = self.warn_ratio.clamp(0.02, 0.50);
+        let critical = self.critical_ratio.clamp(0.005, warn - 0.005);
+        Self {
+            warn_ratio: warn,
+            critical_ratio: critical,
+        }
+    }
+}
+
+/// 预警等级。只有两档：磁盘满不是一个需要「趋势分析」的问题，是需要立刻腾空间的问题。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DiskSeverity {
+    Warn,
+    Critical,
+}
+
+/// 磁盘水位监视器：**看存量，用滞回**。
+///
+/// - 首轮就看到低于线 → 立刻报（与端口不同：端口首轮建基线是因为「存量端口」正常，
+///   而「磁盘已经只剩 4%」本身就是需要知道的事实，压着不报才是错的）；
+/// - 报告后必须回到 `warn + 5pp` 以上才重新武装 —— 在 15% 上下抖动的机器
+///   不该每轮报一次；
+/// - Warn 可以直接升级到 Critical（同一个 key 的更严重状态，不是重复提报）。
+#[derive(Debug, Default)]
+pub struct DiskMonitor {
+    firing: Option<DiskSeverity>,
+}
+
+impl DiskMonitor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 配置变更时调用：重新武装（理由同 CpuMonitor::reset）
+    pub fn reset(&mut self) {
+        self.firing = None;
+    }
+
+    /// 当前是否处于已提报状态（供 `--once` 之类的快照读使用）
+    pub fn firing(&self) -> Option<DiskSeverity> {
+        self.firing
+    }
+
+    /// 投入一个可用比例（0~1）。返回本拍要提报的等级。
+    pub fn observe(&mut self, free_ratio: f64, th: &DiskThresholds) -> Option<DiskSeverity> {
+        let th = th.clamped();
+        let free = free_ratio.clamp(0.0, 1.0);
+
+        if free <= th.critical_ratio {
+            if self.firing != Some(DiskSeverity::Critical) {
+                self.firing = Some(DiskSeverity::Critical);
+                return Some(DiskSeverity::Critical);
+            }
+            return None;
+        }
+
+        if free <= th.warn_ratio {
+            // Warn 状态下不重复报；Critical 降回 Warn 也不再报（同一次事件内）
+            if self.firing.is_none() {
+                self.firing = Some(DiskSeverity::Warn);
+                return Some(DiskSeverity::Warn);
+            }
+            return None;
+        }
+
+        // 回到安全区：越过武装线才清状态，避免边界抖动反复触发
+        if let Some(level) = self.firing {
+            let rearm = match level {
+                DiskSeverity::Warn => th.warn_ratio,
+                DiskSeverity::Critical => th.critical_ratio,
+            } + DISK_REARM_MARGIN;
+            if free >= rearm {
+                self.firing = None;
+            }
+        }
+        None
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1274,5 +1384,53 @@ mod tests {
         assert!(rl.would_allow(0), "查一次不消耗配额");
         assert!(rl.allow(0), "查完还能放行");
         assert!(!rl.would_allow(1000), "满额后查询应返回 false");
+    }
+
+    // ---------------------------------------------------------- 磁盘水位（W2/D-10）
+
+    #[test]
+    fn disk_fires_immediately_on_first_low_sample() {
+        let mut m = DiskMonitor::new();
+        let th = DiskThresholds::default();
+        // 与端口不同：首轮就看到低水位必须报（存量磁盘满不是「基线」）
+        assert_eq!(m.observe(0.12, &th), Some(DiskSeverity::Warn));
+        // 同状态不重复报
+        assert_eq!(m.observe(0.10, &th), None);
+        // 升级到 Critical 要报
+        assert_eq!(m.observe(0.03, &th), Some(DiskSeverity::Critical));
+    }
+
+    #[test]
+    fn disk_rearms_only_above_hysteresis() {
+        let mut m = DiskMonitor::new();
+        let th = DiskThresholds::default();
+        assert_eq!(m.observe(0.14, &th), Some(DiskSeverity::Warn));
+        // 15% + 5pp = 20% 才重新武装；19% 仍在已报状态
+        assert_eq!(m.observe(0.19, &th), None);
+        assert!(m.observe(0.21, &th).is_none());
+        assert_eq!(m.firing(), None);
+        // 再次掉下去 → 重新报
+        assert_eq!(m.observe(0.14, &th), Some(DiskSeverity::Warn));
+    }
+
+    #[test]
+    fn disk_healthy_needs_no_report() {
+        let mut m = DiskMonitor::new();
+        assert_eq!(m.observe(0.60, &DiskThresholds::default()), None);
+        assert_eq!(m.firing(), None);
+    }
+
+    #[test]
+    fn disk_thresholds_clamp_keeps_critical_below_warn() {
+        let th = DiskThresholds {
+            warn_ratio: 0.03,
+            critical_ratio: 0.10,
+        }
+        .clamped();
+        assert!(
+            th.critical_ratio < th.warn_ratio,
+            "critical 必须严格小于 warn"
+        );
+        assert!(th.warn_ratio >= 0.02);
     }
 }

@@ -16,7 +16,7 @@ use std::process::Command;
 
 use super::host;
 use super::service::ProcIdentity;
-use super::{BindScope, Coverage, PortBinding, PortSnapshot, Proto};
+use super::{BindScope, Coverage, PortBinding, PortEntry, PortSnapshot, Proto};
 
 /// cwd 查询并发：单次 20 ms，通常 8–20 个监听进程，12 路可压到 2 轮以内
 const CDW_CONCURRENCY: usize = 12;
@@ -492,6 +492,44 @@ fn now_secs() -> i64 {
         .unwrap_or(0)
 }
 
+// ---------------------------------------------------------------- 冲突（W2/D-07）
+
+/// 当前时刻的端口冲突：同一端口有 **≥2 个不同 pid** 的持有者。
+///
+/// 与 `island::PortGuardMonitor` 的关系：那边判「**变化**」（从无冲突变有冲突），
+/// 这边给「**现状**」（此刻哪些端口是冲突态）。两者共用同一条判定口径
+/// `owner_count() > 1` —— 双栈同 pid 合并后只有 1 个 pid，不算冲突。
+/// 判据只允许存在这一处，island 与 CLI/MCP 都从这里取。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortConflict {
+    pub port: u16,
+    /// 不同持有进程数（去重后的 pid 数）
+    pub owners: usize,
+    /// 聚合暴露面（listeners 中最宽者）
+    pub exposure: BindScope,
+    pub listeners: Vec<PortBinding>,
+    /// 该端口的 ESTABLISHED 连接数；None = 本轮未统计
+    pub conns: Option<u32>,
+}
+
+/// 从快照里挑出冲突端口（TCP only：UDP 没有 LISTEN 语义，绑定抖动不值得报）。
+pub fn conflicts(entries: &[PortEntry]) -> Vec<PortConflict> {
+    let mut out: Vec<PortConflict> = entries
+        .iter()
+        .filter(|e| e.proto == Proto::Tcp && e.owner_count() > 1)
+        .map(|e| PortConflict {
+            port: e.port,
+            owners: e.owner_count(),
+            exposure: e.exposure,
+            listeners: e.listeners.clone(),
+            conns: e.conns,
+        })
+        .collect();
+    out.sort_by_key(|c| c.port);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -654,5 +692,84 @@ tcp4       0      0  192.168.0.115.57591    1.1.1.1.443            TIME_WAIT
         let k = parse_netstat("Proto Recv-Q\ntcp4 0 0\n");
         assert_eq!(k.listen_total, 0);
         assert_eq!(k.time_wait, 0);
+    }
+
+    // ---------------------------------------------------------- 冲突（W2/D-07）
+
+    fn binding(port: u16, pid: Option<i32>, addr: &str) -> PortBinding {
+        PortBinding {
+            port,
+            proto: Proto::Tcp,
+            scope: BindScope::Loopback,
+            addr: addr.into(),
+            v6: false,
+            pid,
+            comm: "node".into(),
+            start_time: 1,
+            project: None,
+            project_label: None,
+        }
+    }
+
+    fn entry(port: u16, proto: Proto, listeners: Vec<PortBinding>) -> PortEntry {
+        PortEntry {
+            port,
+            proto,
+            conns: Some(0),
+            exposure: BindScope::Loopback,
+            watched: true,
+            note: None,
+            service: None,
+            listeners,
+        }
+    }
+
+    #[test]
+    fn conflicts_need_two_distinct_pids() {
+        // 双栈同 pid：IPv4 + IPv6 两个 fd，但只有一个持有者 → 不是冲突
+        let dual = entry(
+            3000,
+            Proto::Tcp,
+            vec![binding(3000, Some(11), "*"), binding(3000, Some(11), "::")],
+        );
+        assert!(conflicts(&[dual]).is_empty(), "同 pid 多 fd 不算冲突");
+
+        // 两个不同 pid 同时监听 8080 → 冲突
+        let real = entry(
+            8080,
+            Proto::Tcp,
+            vec![
+                binding(8080, Some(21), "127.0.0.1"),
+                binding(8080, Some(22), "127.0.0.1"),
+            ],
+        );
+        let got = conflicts(std::slice::from_ref(&real));
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].port, 8080);
+        assert_eq!(got[0].owners, 2);
+    }
+
+    #[test]
+    fn conflicts_ignore_udp_and_sort_by_port() {
+        let udp = entry(
+            5353,
+            Proto::Udp,
+            vec![binding(5353, Some(1), "*"), binding(5353, Some(2), "*")],
+        );
+        let tcp9 = entry(
+            9001,
+            Proto::Tcp,
+            vec![binding(9001, Some(1), "*"), binding(9001, Some(2), "*")],
+        );
+        let tcp1 = entry(
+            9000,
+            Proto::Tcp,
+            vec![binding(9000, Some(3), "*"), binding(9000, Some(4), "*")],
+        );
+        let got = conflicts(&[udp, tcp9, tcp1]);
+        assert_eq!(
+            got.iter().map(|c| c.port).collect::<Vec<_>>(),
+            vec![9000, 9001]
+        );
     }
 }
