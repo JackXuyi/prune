@@ -36,6 +36,10 @@ const CONTENT_CORNER_RADIUS: f64 = 10.0;
 static LAST_CLOSED_MS: AtomicU64 = AtomicU64::new(0);
 static SLOT: Mutex<Slot> = Mutex::new(Slot::Uninit);
 
+/// 面板当前是否走 popover 路径（Ready = true）。`panel_fit_height` 命令据此
+/// 决定缩放 popover 还是缩放降级窗口——两条路径的几何句柄不同。
+static POPOVER_MODE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// MainThreadOnly 的 ObjC 句柄不能进 static（不 Send）。
 /// SAFETY: 本模块所有 ObjC 访问都经 `run_on_main_thread` 串行到主线程，
 /// 该包装只解除「存进 Mutex」的 Send 要求，不改变访问线程。
@@ -123,10 +127,12 @@ pub fn toggle(app: &AppHandle, panel: &WebviewWindow) {
             Ok(mut ui) => {
                 ui.toggle(app);
                 *slot = Slot::Ready(MainThreadBox(ui));
+                POPOVER_MODE.store(true, Ordering::Release);
             }
             Err(e) => {
                 eprintln!("[ns-popover] 初始化失败，回退旧窗口路径: {e}");
                 *slot = Slot::Failed;
+                POPOVER_MODE.store(false, Ordering::Release);
                 legacy_toggle(app, panel);
             }
         },
@@ -147,6 +153,23 @@ pub fn hide(panel: &WebviewWindow) {
         }
         // 从未初始化过 → 面板从未显示过
         Slot::Uninit => {}
+    }
+}
+
+/// 面板是否在 popover 路径上（供 `panel_fit_height` 分流）
+pub fn is_popover_mode() -> bool {
+    POPOVER_MODE.load(Ordering::Acquire)
+}
+
+/// 贴高（W2 菜单栏「本地服务」段引入动态高度）：前端量取内容自然高后上报，
+/// popover 内容尺寸随之缩放。WKWebView 带 width/height 可变 autoresizing
+/// mask（见 init 步骤 3），host 视图被 popover 按新 contentSize 重排时自动跟随。
+///
+/// 必须在主线程调用（经 commands 层 `run_on_main_thread` 串行进来）。
+pub fn fit_height(height: f64) {
+    let slot = SLOT.lock().unwrap_or_else(|e| e.into_inner());
+    if let Slot::Ready(ui) = &*slot {
+        ui.0.set_content_height(height);
     }
 }
 
@@ -221,6 +244,11 @@ impl PopoverUi {
         if self.popover.isShown() {
             self.popover.close();
         }
+    }
+
+    /// 贴高：只改 popover 的 contentSize，host 与 webview 靠 autoresizing 跟随
+    fn set_content_height(&self, height: f64) {
+        self.popover.setContentSize(NSSize::new(PANEL_W, height));
     }
 
     fn toggle(&mut self, app: &AppHandle) {

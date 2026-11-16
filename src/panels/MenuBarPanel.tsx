@@ -1,9 +1,9 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LeakBanner } from "../components/LeakCard";
 import { NetDirectionRow, StatsRow } from "../components/stats/StatsRow";
 import { formatBytes, formatRelative } from "../lib/format";
 import { useI18n } from "../i18n/store";
-import { fireAndForget, openMain } from "../lib/ipc";
+import { fireAndForget, openMain, panelFitHeight } from "../lib/ipc";
 import {
   cpuReadout,
   diskReadout,
@@ -23,10 +23,13 @@ import { Badge } from "../components/primitives";
 import { UpdateCard } from "../components/UpdateCard";
 
 /**
- * 菜单栏面板（380×432）：单页统计。
+ * 菜单栏面板（宽 380，高随内容）。
  *
- * 窗口高度贴合内容（426 + 6 余量，算式见 `tray.rs: PANEL_H`），不是固定 560：
- * 面板只有一屏、没有 tab 切换，多出来的高度只会是底部空白。
+ * 高度贴合内容：W2/D-07 加「本地服务」段后内容高不再是常量（该段按
+ * 冲突/关注存在与否渲染，更新卡也按需占版面），所以改为前端量取内容
+ * 自然高、经 `panel_fit_height` 上报缩放（popover contentSize / 降级窗口
+ * set_size）。内容区不滚动——菜单栏「瞄一眼」场景里滚动条是噪音，
+ * 空间不够就让窗口长高。初始 432（算式见 `tray.rs: PANEL_H`）。
  *
  * 原来的「应用」「概况」两个 tab 都已撤掉——应用级明细在主窗口「应用资源」，
  * 内存压力 / swap / 换出受害者在主窗口「内存」。面板是「瞄一眼」场景。
@@ -37,6 +40,8 @@ import { UpdateCard } from "../components/UpdateCard";
 export function MenuBarPanel() {
   const { t, locale } = useI18n();
   const [refreshNonce, setRefreshNonce] = useState(0);
+  /** 面板表面容器：内容自然高的测量源（offsetHeight + 外层 p-2 16px = 上报值） */
+  const surfaceRef = useRef<HTMLDivElement | null>(null);
   const snapshot = useMemStore((s) => s.snapshot);
   const loading = useMemStore((s) => s.loading);
   const refreshing = useMemStore((s) => s.refreshing);
@@ -53,9 +58,33 @@ export function MenuBarPanel() {
     setRefreshNonce((n) => n + 1);
   };
 
+  /**
+   * 贴高上报：表面容器是「自然高」（不撑满、不裁切），内容任何变化
+   * （骨架 → 读数、本地服务段出现/消失、更新卡占版面、语言切换）都会
+   * 改变 offsetHeight，ResizeObserver 每次变化上报一次。上报值 = 表面高
+   * + 外层 p-2 的上下 16px。钳位与抖动抑制在 Rust 侧再做，前端只保证
+   * 不重复发同一个值（观察器首帧也会触发一次，正好覆盖初始贴高）。
+   */
+  useEffect(() => {
+    const el = surfaceRef.current;
+    if (!el) return;
+    let last = -1;
+    const ro = new ResizeObserver(() => {
+      const h = el.offsetHeight + 16;
+      if (h === last) return;
+      last = h;
+      void fireAndForget(panelFitHeight(h), "panel_fit_height");
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+
   return (
     <div className="flex h-screen flex-col p-2">
-      <div className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-raised/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl">
+      <div
+        ref={surfaceRef}
+        className="flex flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-raised/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl"
+      >
         <header className="flex h-11 shrink-0 items-center gap-2 px-3.5">
           <ScissorsIcon size={14} className="text-accent" />
           <span className="text-[13px] font-semibold tracking-tight text-ink">Prune</span>
@@ -90,8 +119,9 @@ export function MenuBarPanel() {
           </IconButton>
         </header>
 
-        {/* pt-1：tab 行删除后补一点呼吸，否则首个读数行紧贴 header */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-3.5 pb-3 pt-1">
+        {/* pt-1：tab 行删除后补一点呼吸，否则首个读数行紧贴 header。
+            不滚动不撑满：内容自然高经 surfaceRef 上报贴高（见上方 effect） */}
+        <div className="px-3.5 pb-3 pt-1">
           {error ? (
             <div className="rounded-lg bg-danger/[0.08] p-3 text-[11px] leading-relaxed text-danger">
               {error}

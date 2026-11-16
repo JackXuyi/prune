@@ -414,6 +414,22 @@ pub fn prune_toml_template() -> String {
     prune_core::prune_toml::TEMPLATE.to_string()
 }
 
+/// 菜单栏面板贴高（W2/D-07「本地服务」段引入动态内容高）。
+///
+/// 前端用 ResizeObserver 量取面板内容自然高后上报；这里按当前路径分流：
+/// popover 路径（macOS 常规）改 `popover.contentSize`，降级窗口路径
+/// （popover 初始化失败 / Windows）`set_size`。钳位 240–760：下限防
+/// 内容异常时面板塌缩成一条，上限防失控撑屏。
+#[tauri::command]
+pub fn panel_fit_height(app: AppHandle, height: f64) {
+    let h = height.clamp(240.0, 760.0);
+    if crate::popover::is_popover_mode() {
+        let _ = app.run_on_main_thread(move || crate::popover::fit_height(h));
+    } else if let Some(panel) = app.get_webview_window(crate::tray::PANEL_LABEL) {
+        let _ = panel.set_size(tauri::LogicalSize::new(crate::tray::PANEL_W, h));
+    }
+}
+
 /// dry-run：只生成清单，不动任何文件。
 #[tauri::command]
 pub fn reclaim_preview(state: State<'_, Arc<DiskState>>, keys: Vec<String>) -> ReclaimPreview {

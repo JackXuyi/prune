@@ -95,6 +95,14 @@ export function killProcess(pid: number, force: boolean): Promise<void> {
   return invoke<void>("kill_process", { pid, force });
 }
 
+/**
+ * 菜单栏面板贴高：上报内容自然高（CSS px = 逻辑点），Rust 侧缩放
+ * popover contentSize（或降级窗口）。钳位 240–760 在 Rust 侧再做一次。
+ */
+export function panelFitHeight(height: number): Promise<void> {
+  return invoke<void>("panel_fit_height", { height });
+}
+
 /** 在 Finder 中打开目录；传文件路径时定位并选中它 */
 export function revealPath(path: string): Promise<void> {
   return invoke<void>("reveal_path", { path });

@@ -76,6 +76,11 @@ static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 /// p-2 16 + 边框 2 + header 44 + 内容区 335（pt-1 4 + 六行 48×6 +
 /// 入口 31 + pb-3 12）+ footer 29。面板只有一屏统计、没有 tab，多余高度
 /// 全是空白，所以贴合内容而不是固定 560。
+///
+/// W2/D-07 起内容高不再是常量（本地服务段按冲突/关注存在与否渲染，
+/// 更新卡也按需占版面）：432 降级为**初始高度**，实际高度由前端量取
+/// 内容自然高后经 `panel_fit_height` 命令上报缩放（popover 路径改
+/// contentSize，降级窗口路径 set_size）。滚动条不进菜单栏面板。
 #[cfg(target_os = "macos")]
 pub const PANEL_W: f64 = 380.0;
 #[cfg(target_os = "macos")]

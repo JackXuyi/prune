@@ -69,6 +69,7 @@ pub fn run() {
             commands::disk_scan,
             commands::project_trends,
             commands::prune_toml_template,
+            commands::panel_fit_height,
             commands::reclaim_preview,
             commands::reclaim_children,
             commands::reclaim_execute,
