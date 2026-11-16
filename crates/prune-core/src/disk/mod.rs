@@ -1304,7 +1304,61 @@ mod tests {
         let _ = std::fs::remove_dir_all(&home);
     }
 
+    /// A1 条目级扣减：排除一条死重条目后，三桶 / 组体积 / 合计怎么跟着变
+    ///
+    /// 平台无关的单元版：`arch` 由参数给出，归类完全确定。端到端那条
+    /// （`ignore_paths_exclude_deadweight_entries`）要靠真实扫描出 yarn 组，
+    /// 而 yarn 在白名单里是 `Os::MacOnly`——Linux CI 上压根没有这个组，
+    /// 所以账算逻辑必须单独在「任何宿主都能跑」的层面上验。
+    #[test]
+    fn apply_ignore_paths_prunes_deadweight_items_and_recounts() {
+        let root = Path::new("/tmp/a1/yarn");
+        let sizes = vec![
+            ("npm-@next-swc-linux-x64-1.0.0-a".to_string(), 400),
+            ("npm-@next-swc-darwin-arm64-1.0.0-b".to_string(), 1000),
+        ];
+        let dw = deadweight_stats(sizes, Arch::Arm64, false, root);
+        assert_eq!(
+            (dw.bytes, dw.native_bytes, dw.entry_count),
+            (400, 1000, 1),
+            "linux-x64 进死重，darwin-arm64 进原生桶"
+        );
+        let base_total = dw.bytes + dw.native_bytes + dw.other_bytes;
+        let mut groups = vec![CacheGroup {
+            key: "yarn".into(),
+            label: "Yarn 缓存".into(),
+            root: root.to_string_lossy().into_owned(),
+            level: Level::L2,
+            total_bytes: base_total,
+            entry_count: dw.entry_count,
+            cleanable: true,
+            details: Vec::new(),
+            deadweight: Some(dw),
+        }];
+
+        apply_ignore_paths(&mut groups, &[root.join("npm-@next-swc-linux-x64-1.0.0-a")]);
+        let g = &groups[0];
+        let dw = g.deadweight.as_ref().expect("A1 组不能因此消失");
+        assert!(dw.items.is_empty(), "被排除的条目不再进浪费统计");
+        assert_eq!((dw.bytes, dw.entry_count), (0, 0), "死重字节与条目数归零");
+        assert_eq!(dw.ratio, Some(0.0), "分母还在（原生桶 1000），比例如实归零");
+        assert_eq!(dw.native_bytes, 1000, "原生可用桶不受影响");
+        assert_eq!(g.total_bytes, 1000, "组体积按三桶重算，只剩原生");
+        assert_eq!(g.total_bytes, base_total - 400, "扣减正好是被排除的条目");
+
+        // 路径不命中任何条目：什么都不该变（排除只做减法，不做副作用）
+        let before = g.total_bytes;
+        apply_ignore_paths(&mut groups, &[root.join("npm-nope-1.0.0-x")]);
+        assert_eq!(groups[0].total_bytes, before);
+        assert!(groups[0].deadweight.as_ref().unwrap().items.is_empty());
+    }
+
     /// ignore.paths 指向 A1 组内子路径：该条目从浪费统计里消失，其余条目不动
+    ///
+    /// **仅 macOS**：夹具用的是 `~/Library/Caches/Yarn/v6`，而 yarn 在白名单里
+    /// 是 `Os::MacOnly`（Windows 是另一条 rel，Linux 没有登记项）。账算逻辑的
+    /// 平台无关版本见 `apply_ignore_paths_prunes_deadweight_items_and_recounts`。
+    #[cfg(target_os = "macos")]
     #[test]
     fn ignore_paths_exclude_deadweight_entries() {
         let home = toml_fixture_home("toml-ignore");
@@ -1314,46 +1368,47 @@ mod tests {
             .iter()
             .find(|g| g.key == "yarn")
             .expect("夹具必须有 yarn 组");
-        let dw = yarn.deadweight.as_ref().expect("yarn 是 A1 组");
-        assert_eq!(
-            dw.items.len(),
-            1,
-            "只有别平台的死重进 items（本机原生的进 native 桶）"
+        let base_dw = yarn.deadweight.as_ref().expect("yarn 是 A1 组");
+        assert!(
+            !base_dw.items.is_empty(),
+            "夹具必须在本机产生至少一条别平台死重，否则测试空转"
         );
-        assert!(dw.native_bytes > 0, "darwin-arm64 目录必须落在原生桶里");
+        let victim = base_dw.items[0].clone();
         let base_total = yarn.total_bytes;
+        let base_deadweight = base.totals.deadweight;
 
-        // 项目 prune.toml：排除 linux 那个死重目录
+        // 项目 prune.toml：排除刚才那条死重目录（路径用 ~ 相对夹具 home）
         let proj = home.join("Desktop/app");
         std::fs::write(
             proj.join("prune.toml"),
-            "[ignore]\npaths = [\"~/Library/Caches/Yarn/v6/esbuild-linux-arm64\"]\n",
+            format!(
+                "[ignore]\npaths = [\"~/Library/Caches/Yarn/v6/{}\"]\n",
+                victim.name
+            ),
         )
         .unwrap();
         let with = scan(&home, None);
         let yarn = with.groups.iter().find(|g| g.key == "yarn").unwrap();
         let dw = yarn.deadweight.as_ref().unwrap();
         assert!(
-            dw.items.is_empty(),
-            "被排除的条目不再进浪费统计（剩下的 darwin 条目在 native 桶里）"
+            dw.items.iter().all(|i| i.name != victim.name),
+            "被排除的条目不再进浪费统计"
         );
-        assert!(
-            yarn.total_bytes < base_total,
-            "组体积同步扣减：{} < {base_total}",
-            yarn.total_bytes
+        assert_eq!(dw.entry_count, base_dw.entry_count - 1, "条目数只少一条");
+        assert_eq!(dw.bytes, base_dw.bytes - victim.bytes, "死重字节按条目扣减");
+        assert_eq!(
+            yarn.total_bytes,
+            base_total - victim.bytes,
+            "组体积同步扣减"
         );
         // 原生可用桶不受影响（被删的是死重）
-        let base_dw = base
-            .groups
-            .iter()
-            .find(|g| g.key == "yarn")
-            .unwrap()
-            .deadweight
-            .as_ref()
-            .unwrap();
         assert_eq!(dw.native_bytes, base_dw.native_bytes);
         // totals 与明细一致：不含被排除的死重
-        assert!(with.totals.deadweight < base.totals.deadweight);
+        assert_eq!(
+            with.totals.deadweight,
+            base_deadweight - victim.bytes,
+            "totals 与条目扣减一致"
+        );
         // 合法且在白名单内的排除路径不产生事件——有事件才是异常
         assert!(with.config_notes.is_none());
         let _ = std::fs::remove_dir_all(&home);
