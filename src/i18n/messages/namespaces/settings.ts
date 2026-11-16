@@ -90,6 +90,16 @@ const zh = {
     light: "浅色",
     dark: "深色",
   },
+
+  /** W2/D-09：prune.toml——只复制模板到剪贴板，Prune 永不写项目文件 */
+  pruneToml: {
+    title: "项目配置（prune.toml）",
+    desc:
+      "在项目根放一份 prune.toml：跳过项目、排除清理路径、调体检阈值、加关注端口。只能收窄范围，不能扩大；Prune 不写任何项目文件。",
+    copyTemplate: "复制模板",
+    copied: "模板已复制。自己保存为项目根下的 prune.toml（Prune 不代写）",
+    copyFailed: "复制失败：{err}",
+  },
   saveFailed: "保存失败：{err}",
 } as const;
 
@@ -178,6 +188,16 @@ const en: MessageTree<typeof zh> = {
     system: "System",
     light: "Light",
     dark: "Dark",
+  },
+
+  /** W2/D-09: prune.toml — copy the template to the clipboard only; Prune never writes project files */
+  pruneToml: {
+    title: "Project config (prune.toml)",
+    desc:
+      "Put a prune.toml at a project root to skip projects, exclude cleanup paths, tune thresholds, or add watch ports. It can only narrow the scope, never widen it; Prune never writes project files.",
+    copyTemplate: "Copy template",
+    copied: "Template copied. Save it as prune.toml at the project root yourself (Prune does not write it)",
+    copyFailed: "Copy failed: {err}",
   },
   saveFailed: "Save failed: {err}",
 };

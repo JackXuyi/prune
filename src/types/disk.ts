@@ -179,6 +179,54 @@ export interface DiskReport {
   volume?: VolumeInfo | null;
   /** F9 项目体检（旧报告缺省为空数组） */
   projects?: ProjectHealth[];
+  /**
+   * W2/D-09：prune.toml 配置事件（语法回落 / 值越界 / 白名单外路径 / 被忽略项目）。
+   * 缺省 / 空 = 没有事件——「没配置」与「配置生效中」是两种状态
+   */
+  configNotes?: ConfigNote[];
+}
+
+// ---------------------------------------------------------------- W2/D-09 prune.toml
+
+/** prune.toml 配置事件的种类（与 Rust ConfigNoteKind 同源，serde lowercase） */
+export type ConfigNoteKind = "syntax" | "value" | "path" | "ignored";
+
+export interface ConfigNote {
+  kind: ConfigNoteKind;
+  /** 配置文件绝对路径 */
+  file: string;
+  /** 语法 / 越界发生的行；文件级事件为 null */
+  line: number | null;
+  /** 补充事实：键名 / 被跳过的路径 / 被跳过的项目名 */
+  detail: string | null;
+}
+
+// ---------------------------------------------------------------- W2/D-08 项目趋势
+
+/** 账本里的一天（与 Rust ProjectPoint 同源，camelCase） */
+export interface ProjectPoint {
+  day: string;
+  depsBytes: number;
+  depsAgeDays: number;
+  /** null = 当天查不到活动标记 */
+  activityDays: number | null;
+  lockfiles: string[];
+  verdict: ProjectVerdict;
+}
+
+/** 一个项目的趋势（与 Rust ProjectTrend 同源）。纪律：缺失日不补 0 */
+export interface ProjectTrend {
+  root: string;
+  name: string;
+  /** 只含有记录的天，按 day 升序 */
+  points: ProjectPoint[];
+  first: ProjectPoint | null;
+  last: ProjectPoint | null;
+  /** last − first；样本 < 2 时为 null（不是 0） */
+  deltaBytes: number | null;
+  peakBytes: number | null;
+  /** 窗口内有记录的天数 */
+  samples: number;
 }
 
 export interface ScanProgress {

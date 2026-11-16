@@ -18,16 +18,21 @@ import {
   revealPath,
 } from "../lib/ipc";
 import { useDialogA11y } from "../lib/dialogA11y";
+import { projectTrends } from "../lib/ipc";
 import type {
   ArchiveEntry,
   ArchivePlan,
   ArchiveProgress,
   ArchiveStage,
+  ConfigNote,
   ProjectHealth,
+  ProjectTrend,
   ProjectVerdict,
   RestorePreview,
 } from "../types/disk";
+import { useDiskStore } from "../stores/diskStore";
 import { Badge, type Tone } from "./primitives";
+import { Sparkline } from "./Sparkline";
 
 /** 与 prune-core PROJECT_STALE_DAYS 对齐：依赖 60 天没重装即「久未重装」 */
 const STALE_DAYS = 60;
@@ -83,6 +88,57 @@ function activityLabel(days: number | null, t: I18n["t"]): string {
   return t("disk.project.activityYears", { n: (days / 365).toFixed(1) });
 }
 
+// ---------------------------------------------------------------- W2/D-08 趋势
+
+/** delta 的语义色：涨 = 警示（磁盘只会越涨越贵），缩 = 强调色（好消息），其余灰 */
+function deltaTone(tr: ProjectTrend): "warn" | "accent" | "faint" {
+  if (tr.deltaBytes == null || tr.deltaBytes === 0) return "faint";
+  return tr.deltaBytes > 0 ? "warn" : "accent";
+}
+
+/** 两个 YYYY-MM-DD 之间的天数（同日 = 0）。解析失败按 1 算，不显示 0 天 */
+function daySpan(from: string, to: string): number {
+  const a = Date.parse(from);
+  const b = Date.parse(to);
+  if (Number.isNaN(a) || Number.isNaN(b)) return 1;
+  return Math.max(1, Math.round((b - a) / 86_400_000));
+}
+
+/**
+ * 口径纪律（W2/D-08 §5.3，测试在 Rust 侧、文案义务在这边）：
+ * - `deltaBytes == null`（样本 < 2）→ 「数据不足（N 天）」，绝不显示 0；
+ * - 首末间隔写实际天数——窗口是 30 天但只有 3 个采样日时，标签写「3 天」，
+ *   不许写「30 天涨了 X」（那是在替缺失的日子作证）。
+ */
+function trendDeltaLabel(tr: ProjectTrend, t: I18n["t"]): string {
+  if (tr.deltaBytes == null || tr.first == null || tr.last == null) {
+    return t("disk.project.trend.insufficient", { n: tr.samples });
+  }
+  const days = daySpan(tr.first.day, tr.last.day);
+  const size = formatBytes(Math.abs(tr.deltaBytes));
+  if (tr.deltaBytes > 0) return t("disk.project.trend.deltaUp", { days, size });
+  if (tr.deltaBytes < 0) return t("disk.project.trend.deltaDown", { days, size });
+  return t("disk.project.trend.deltaFlat", { days });
+}
+
+/** W2/D-09 配置事件 → 本地化文案（Rust 侧只存结构化事实，句子在这边拼） */
+function configNoteText(n: ConfigNote, t: I18n["t"]): string {
+  const line = n.line != null ? String(n.line) : null;
+  switch (n.kind) {
+    case "syntax":
+      return line != null
+        ? t("disk.project.config.syntaxFallback", { file: n.file, line, detail: n.detail ?? "" })
+        : t("disk.project.config.syntaxFallbackNoLine", { file: n.file, detail: n.detail ?? "" });
+    case "value":
+      return t("disk.project.config.valueFallback", { file: n.file, line: line ?? "", detail: n.detail ?? "" });
+    case "path":
+      return t("disk.project.config.pathSkipped", { file: n.file, detail: n.detail ?? "" });
+    default:
+      // ignored 单独聚合计数，不逐条铺开
+      return "";
+  }
+}
+
 /** 归档确认对话框的三态（f14：三个动作都必须先预览再确认） */
 type DialogState =
   | { kind: "archive"; plan: ArchivePlan }
@@ -102,6 +158,10 @@ const BREAKER_BYTES = 20 * 1024 * 1024 * 1024;
 export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   const [toast, setToast] = useState<string | null>(null);
   const [entries, setEntries] = useState<ArchiveEntry[]>([]);
+  /** W2/D-08：root → 趋势（进入页面拉一次账本，只读不触发扫描） */
+  const [trends, setTrends] = useState<Map<string, ProjectTrend>>(new Map());
+  /** 趋势弹窗当前打开的项目 */
+  const [trendOpen, setTrendOpen] = useState<ProjectTrend | null>(null);
   /** 已归档的项目根：归档后按钮立即消失，不依赖下一轮扫描 */
   const [archivedRoots, setArchivedRoots] = useState<Set<string>>(new Set());
   const [dialog, setDialog] = useState<DialogState | null>(null);
@@ -118,6 +178,11 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
   const cancelRequested = useRef(false);
   const { t, locale } = useI18n();
   const dialogRef = useDialogA11y<HTMLDivElement>(dialog != null);
+  /** W2/D-08 趋势弹窗的 a11y（独立于归档弹窗：两个 dialog 不能共用焦点陷阱） */
+  const trendDialogRef = useDialogA11y<HTMLDivElement>(trendOpen != null);
+  /** W2/D-09：扫描报告里的 prune.toml 配置事件 */
+  const configNotes: ConfigNote[] = useDiskStore((s) => s.report)?.configNotes ?? [];
+  const ignoredCount = configNotes.filter((n) => n.kind === "ignored").length;
 
   // 提示条 3 s 自走：Finder 打开失败是一次性事件，不该常驻在左下角
   useEffect(() => {
@@ -137,6 +202,24 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
       .catch(() => setEntries([]));
   }, []);
 
+  // W2/D-08：30 天趋势。拉不到（库刚建 / 扫描没跑过）就静默保持空——
+  // 没有趋势行就没有 delta 标签，绝不显示 0 变化
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    projectTrends(30)
+      .then((list) => {
+        if (!alive) return;
+        setTrends(new Map(list.map((tr) => [tr.root, tr])));
+      })
+      .catch(() => {
+        if (alive) setTrends(new Map());
+      });
+    return () => {
+      alive = false;
+    };
+  }, []);
+
   // 归档进度：后端按 200 ms 节流推事件（十几万条目逐条发会把渲染线程打满）
   useEffect(() => {
     if (!isTauri()) return;
@@ -154,6 +237,16 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [dialog, busy]);
+
+  // 趋势弹窗的 Escape 通道（独立弹窗独立监听，避免和归档弹窗互相干扰）
+  useEffect(() => {
+    if (!trendOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setTrendOpen(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [trendOpen]);
 
   if (projects.length === 0) return null;
 
@@ -333,6 +426,7 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
         {shown.map((p) => {
           const meta = VERDICT_META[p.verdict];
           const archived = archivedRoots.has(p.root);
+          const trend = trends.get(p.root);
           return (
             <li key={p.root} className="flex items-center gap-1">
               <button
@@ -364,10 +458,36 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
                 <Badge tone={meta.tone} title={t(meta.tipKey)}>
                   {t(meta.labelKey)}
                 </Badge>
-                <span className="w-16 shrink-0 text-right font-mono text-[11.5px] tabular-nums text-ink">
-                  {formatBytes(p.depsBytes)}
+                <span className="w-20 shrink-0 text-right">
+                  <span className="block font-mono text-[11.5px] tabular-nums text-ink">
+                    {formatBytes(p.depsBytes)}
+                  </span>
+                  {/* W2/D-08：delta 标签。null = 样本不足 → 「数据不足」，不显示 0 */}
+                  {trend ? (
+                    <span
+                      className={`mt-0.5 block text-[9px] leading-tight ${
+                        deltaTone(trend) === "warn"
+                          ? "text-warn"
+                          : deltaTone(trend) === "accent"
+                            ? "text-accent"
+                            : "text-ink-faint"
+                      }`}
+                    >
+                      {trendDeltaLabel(trend, t)}
+                    </span>
+                  ) : null}
                 </span>
               </button>
+              {trend ? (
+                <button
+                  type="button"
+                  onClick={() => setTrendOpen(trend)}
+                  title={t("disk.project.trend.openTip")}
+                  className="shrink-0 rounded-ctl border border-hairline-soft bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
+                >
+                  {t("disk.project.trend.openTip")}
+                </button>
+              ) : null}
               {p.verdict !== "healthy" && !archived ? (
                 <button
                   type="button"
@@ -433,9 +553,85 @@ export function ProjectHealthCard({ projects }: { projects: ProjectHealth[] }) {
         )}
       </div>
 
+      {/* W2/D-09：prune.toml 配置事件。被忽略的项目不在列表里（不进账本），
+          所以这里只报「跳过了几个 + 哪些配置没生效」——沉默的忽略不是透明 */}
+      {ignoredCount > 0 || configNotes.length > 0 ? (
+        <div className="mt-2 rounded-md bg-chip/70 px-2 py-1.5">
+          {ignoredCount > 0 ? (
+            <p className="text-[10.5px] text-ink-dim">
+              {t("disk.project.config.ignored", { n: ignoredCount })}
+            </p>
+          ) : null}
+          {configNotes
+            .filter((n) => n.kind !== "ignored")
+            .slice(0, 4)
+            .map((n, i) => (
+              <p
+                key={`${n.file}-${n.line ?? "f"}-${i}`}
+                className="mt-0.5 truncate text-[9.5px] text-ink-faint"
+                title={configNoteText(n, t)}
+              >
+                {configNoteText(n, t)}
+              </p>
+            ))}
+        </div>
+      ) : null}
+
       <p className="mt-1.5 text-[10px] leading-relaxed text-ink-faint">
         {t("disk.project.footnote")}
       </p>
+
+      {/* W2/D-08 趋势弹窗：火花线 + 采样点 + 口径说明（复用归档弹窗的版式） */}
+      {trendOpen ? (
+        <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">
+          <div
+            className="prune-fade-in absolute inset-0 bg-black/45 backdrop-blur-[2px]"
+            onClick={() => setTrendOpen(null)}
+          />
+          <div
+            ref={trendDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-label={t("disk.project.trend.modalTitle", { name: trendOpen.name })}
+            className="relative w-full max-w-sm rounded-xl border border-hairline bg-surface-overlay p-4 shadow-2xl"
+          >
+            <p className="text-[12.5px] font-medium text-ink">
+              {t("disk.project.trend.modalTitle", { name: trendOpen.name })}
+            </p>
+            <p className="mt-1 text-[11px] text-ink-dim">
+              {trendDeltaLabel(trendOpen, t)}
+              {trendOpen.peakBytes != null
+                ? ` · ${t("disk.project.trend.peak", { size: formatBytes(trendOpen.peakBytes) })}`
+                : ""}
+            </p>
+            <div className="mt-2.5">
+              <Sparkline
+                values={trendOpen.points.map((pt) => pt.depsBytes)}
+                tone="accent"
+                height={56}
+                baselineZero
+              />
+            </div>
+            <div className="mt-1.5 flex items-baseline justify-between text-[10px] text-ink-faint">
+              <span>{trendOpen.first?.day ?? "—"}</span>
+              <span>{t("disk.project.trend.points", { n: trendOpen.samples })}</span>
+              <span>{trendOpen.last?.day ?? "—"}</span>
+            </div>
+            <p className="mt-2 text-[10px] leading-relaxed text-ink-faint">
+              {t("disk.project.trend.windowNote")}
+            </p>
+            <div className="mt-3 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setTrendOpen(null)}
+                className="rounded-ctl bg-ink px-2.5 py-1 text-[11px] text-surface transition-opacity hover:opacity-85"
+              >
+                {t("common.action.close")}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {dialog ? (
         <div className="fixed inset-0 z-[90] flex items-center justify-center p-6">

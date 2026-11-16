@@ -108,6 +108,11 @@ export interface PortSnapshot {
   timeWaitPorts: number[];
   /** pid → 连接计数。「没有记录 = 0 条」，不是「不知道」 */
   connsByPid: Record<string, ConnStats>;
+  /**
+   * 项目 `prune.toml` 声明的关注端口并集（W2/D-09；旧快照缺省为空）。
+   * UI 用它显示「配置了关注但当前空闲」的端口——空闲是状态变化，不是没有
+   */
+  configuredWatchPorts?: number[];
   at: number;
   scanMs: number;
 }
@@ -683,4 +688,38 @@ export function summarizeSites(probes: SiteProbe[]): SiteSummary {
   };
   for (const p of probes) s[p.verdict] += 1;
   return s;
+}
+
+// ---------------------------------------------------------------- 冲突（W2/D-07）
+
+/**
+ * 当前冲突端口列表。与 `prune_core::net::ports::conflicts` 同一口径：
+ * **TCP** 且同端口有 **≥2 个不同 pid**（双栈同 pid 多 fd 不算）。
+ * 总览卡 / 菜单栏 / 端口页三处都从同一份快照派生，不各算一遍。
+ */
+export interface PortConflict {
+  port: number;
+  /** 去重后的持有 pid 数 */
+  owners: number;
+  /** 持有者（按 pid 升序） */
+  holders: PortBinding[];
+}
+
+export function portConflicts(entries: PortEntry[]): PortConflict[] {
+  const out: PortConflict[] = [];
+  for (const e of entries) {
+    if (e.proto !== "tcp") continue;
+    const owners: PortBinding[] = [];
+    const seen = new Set<number>();
+    for (const b of e.listeners) {
+      if (b.pid == null || seen.has(b.pid)) continue;
+      seen.add(b.pid);
+      owners.push(b);
+    }
+    if (owners.length > 1) {
+      owners.sort((a, b) => (a.pid ?? 0) - (b.pid ?? 0));
+      out.push({ port: e.port, owners: owners.length, holders: owners });
+    }
+  }
+  return out.sort((a, b) => a.port - b.port);
 }

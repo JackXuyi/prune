@@ -60,6 +60,18 @@ const zh = {
   },
   cpuTrend: { label: "近 10 min · 10 s 一个点", aria: "CPU 近 10 分钟走势" },
   portsDotsAria: "监听端口点阵：共 {n} 个",
+  /** W2/D-07：本地服务卡（关注层 + 冲突；点击行 → 端口页定位） */
+  localService: {
+    title: "本地服务",
+    summary: "关注层 {watched} 个 · 冲突 {conflicts} 个",
+    rowAria: "端口 {port} · {comm}",
+    conflictMark: "冲突",
+    more: "其余 {n} 个",
+    collecting: "正在采集…",
+    unreadable: "端口读数不可用：{note}",
+    empty: "关注层当前没有监听端口",
+  },
+
   scorecard: {
     title: "剪除成绩单",
     hint: "只记录你亲手剪掉的 · 本地留存两年",
@@ -161,6 +173,18 @@ const en: MessageTree<typeof zh> = {
   },
   cpuTrend: { label: "Last 10 min · one point per 10 s", aria: "CPU trend, last 10 minutes" },
   portsDotsAria: "Listening port matrix: {n} total",
+  /** W2/D-07: local services card (watched layer + conflicts; click a row to focus the Ports page) */
+  localService: {
+    title: "Local services",
+    summary: "{watched} watched · {conflicts} conflicts",
+    rowAria: "Port {port} · {comm}",
+    conflictMark: "conflict",
+    more: "{n} more",
+    collecting: "Collecting…",
+    unreadable: "Port readout unavailable: {note}",
+    empty: "Nothing listening in the watched layer",
+  },
+
   scorecard: {
     title: "Reclaim scorecard",
     hint: "Only what you reclaimed yourself · kept locally for two years",

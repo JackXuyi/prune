@@ -17,7 +17,8 @@ import { AboutSection } from "./AboutSection";
 import { LanguageSection } from "./LanguageSection";
 import { Badge } from "../components/primitives";
 import { useI18n } from "../i18n/store";
-import { isTauri } from "../lib/ipc";
+import { isTauri, pruneTomlTemplate } from "../lib/ipc";
+import { writeClipboard } from "../lib/clipboard";
 import { getTheme, setTheme, subscribeTheme, type ThemeMode } from "../lib/theme";
 import { usePortStore } from "../stores/portStore";
 
@@ -137,6 +138,10 @@ export function SettingsBoard() {
             <ThemeSegmented />
           </div>
         </section>
+
+        {/* W2/D-09：prune.toml——只复制模板到剪贴板。Prune 永不写项目文件
+            （「工具悄悄改我仓库」是信任红线），用户自己落盘 */}
+        <PruneTomlSection />
 
         <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
           <div className="flex items-start justify-between gap-4">
@@ -474,5 +479,60 @@ function ThemeSegmented() {
         );
       })}
     </div>
+  );
+}
+
+/**
+ * W2/D-09 prune.toml 设置段：说明 + 「复制模板」。
+ *
+ * 纪律（方案 §6.4）：Prune 永不写项目文件——模板进剪贴板，由用户自己落盘。
+ * 这样既不会弄脏 `git status`，也不存在「工具悄悄改我仓库」的信任问题。
+ * 模板文本由核心命令下发（`pruneTomlTemplate()`），前端不存副本，
+ * 避免两处漂移；注释是单语中文，与 CLI 文案同一约定。
+ */
+
+function PruneTomlSection() {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+
+  const copy = async () => {
+    let template: string;
+    try {
+      template = await pruneTomlTemplate();
+    } catch {
+      setErr(t("settings.pruneToml.copyFailed", { err: "template" }));
+      return;
+    }
+    const ok = await writeClipboard(template);
+    if (ok) {
+      setCopied(true);
+      setErr(null);
+      window.setTimeout(() => setCopied(false), 4000);
+    } else {
+      setErr(t("settings.pruneToml.copyFailed", { err: "clipboard" }));
+    }
+  };
+
+  return (
+    <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <span className="text-[13px] font-medium">{t("settings.pruneToml.title")}</span>
+          <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">{t("settings.pruneToml.desc")}</p>
+          {copied ? (
+            <p className="mt-1 text-[10px] text-accent">{t("settings.pruneToml.copied")}</p>
+          ) : null}
+          {err ? <p className="mt-1 text-[10px] text-danger">{err}</p> : null}
+        </div>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="shrink-0 rounded-ctl bg-chip px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
+        >
+          {t("settings.pruneToml.copyTemplate")}
+        </button>
+      </div>
+    </section>
   );
 }

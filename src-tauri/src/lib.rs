@@ -67,6 +67,8 @@ pub fn run() {
             commands::disk_report,
             commands::disk_volume,
             commands::disk_scan,
+            commands::project_trends,
+            commands::prune_toml_template,
             commands::reclaim_preview,
             commands::reclaim_children,
             commands::reclaim_execute,

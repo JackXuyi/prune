@@ -227,11 +227,11 @@ export function Island() {
   const h = expanded ? EXPANDED_H : COLLAPSED_H;
 
   const onOpen = () => {
-    // 端口 / 新面孔事件直达 ports tab：端口细节与局域网设备区（LanBoard）都在那里
-    fireAndForget(
-      openMain(undefined, data?.kind === "port" || data?.kind === "lan" ? "ports" : "stats"),
-      "open_main",
-    );
+    // 端口 / 新面孔事件直达 ports tab：端口细节与局域网设备区（LanBoard）都在那里。
+    // W2/D-07：端口事件带上端口号深链——到达即定位到该行，不用再搜一遍
+    const tab: "ports" | "stats" = data?.kind === "port" || data?.kind === "lan" ? "ports" : "stats";
+    const focus = data?.kind === "port" ? String(data.port) : undefined;
+    fireAndForget(openMain(undefined, tab, undefined, focus), "open_main");
     hide();
   };
 

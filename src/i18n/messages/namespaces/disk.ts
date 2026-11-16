@@ -207,6 +207,27 @@ const zh = {
       healthy: "健康",
       healthyTip: "依赖半年内重装过、体积正常",
     },
+    /** W2/D-08：30 天趋势。口径纪律：样本 < 2 说「数据不足」，首末 < 7 天写「N 天」不写「30 天」 */
+    trend: {
+      openTip: "查看趋势",
+      modalTitle: "{name} · 依赖趋势",
+      deltaUp: "{days} 天 +{size}",
+      deltaDown: "{days} 天 −{size}",
+      deltaFlat: "{days} 天持平",
+      insufficient: "数据不足（{n} 天）",
+      points: "{n} 个采样日",
+      peak: "峰值 {size}",
+      windowNote:
+        "账本只记依赖目录体积；缺失的日子不补 0——points 里没有那天，就是那天没扫过。",
+    },
+    /** W2/D-09：prune.toml 配置事件（扫描报告的 configNotes） */
+    config: {
+      ignored: "已按项目配置跳过 {n} 个（ignore.projects）",
+      syntaxFallback: "{file} 第 {line} 行 {detail}——整份回落默认",
+      syntaxFallbackNoLine: "{file} {detail}——整份回落默认",
+      valueFallback: "{file} 第 {line} 行：{detail}",
+      pathSkipped: "{file}：{detail}",
+    },
   },
   /** M30 项目休眠归档（f14）：只归档依赖目录，用户代码不动 */
   archive: {
@@ -531,6 +552,27 @@ const en: MessageTree<typeof zh> = {
       staleTip: "Dependencies not reinstalled in 60+ days, but the project is still active",
       healthy: "Healthy",
       healthyTip: "Reinstalled within six months, normal size",
+    },
+    /** W2/D-08: 30-day trend. Discipline: <2 samples says "not enough data"; <7 days between endpoints is "N days", never "30 days" */
+    trend: {
+      openTip: "View trend",
+      modalTitle: "{name} · dependency trend",
+      deltaUp: "{days}d +{size}",
+      deltaDown: "{days}d −{size}",
+      deltaFlat: "{days}d flat",
+      insufficient: "Not enough data ({n}d)",
+      points: "{n} sampled days",
+      peak: "peak {size}",
+      windowNote:
+        "The ledger records dependency directory size only; missing days are not filled with 0 — a day absent from points is a day that was never scanned.",
+    },
+    /** W2/D-09: prune.toml config events (scan report configNotes) */
+    config: {
+      ignored: "{n} skipped by project config (ignore.projects)",
+      syntaxFallback: "{file} line {line}: {detail} — whole file fell back to defaults",
+      syntaxFallbackNoLine: "{file}: {detail} — whole file fell back to defaults",
+      valueFallback: "{file} line {line}: {detail}",
+      pathSkipped: "{file}: {detail}",
     },
   },
   /** M30 project hibernation archive (f14): dependency dirs only, user code untouched */

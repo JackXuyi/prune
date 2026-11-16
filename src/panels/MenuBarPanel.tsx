@@ -16,6 +16,8 @@ import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
 import { usePortStore } from "../stores/portStore";
+import { portConflicts } from "../types/net";
+import type { PortSnapshot } from "../types/net";
 import { ChevronRightIcon, ExpandIcon, GearIcon, RefreshIcon, ScissorsIcon } from "../components/icons";
 import { Badge } from "../components/primitives";
 import { UpdateCard } from "../components/UpdateCard";
@@ -258,7 +260,88 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
         <StatsRow title={t("nav.ports")} readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
       </div>
 
+      {/* W2/D-07 本地服务段（§4.2 ②）：只在存在冲突或关注端口被占时出现——
+          菜单栏是稀缺空间，常驻空栏会被读成噪音。读数与主窗口同一份快照派生 */}
+      <LocalServiceRows ports={ports} />
+
     </section>
+  );
+}
+
+/**
+ * W2/D-07 菜单栏「本地服务」三条（§4.2 ②）：冲突行置顶，其余取关注层前几行。
+ * 点任意行 → open_main 带 focus 深链，主窗口端口 tab 直接定位到该行。
+ */
+function LocalServiceRows({ ports }: { ports: PortSnapshot | null }) {
+  const { t } = useI18n();
+  if (!ports || ports.coverage.note) return null; // 采集失败不占版面（口径说明在端口页）
+
+  const conflicts = portConflicts(ports.entries);
+  const watched = ports.entries.filter((e) => e.watched);
+  if (conflicts.length === 0 && watched.length === 0) return null;
+
+  const conflictPorts = new Set(conflicts.map((c) => c.port));
+  const ordered = [...watched].sort((a, b) => {
+    const ca = conflictPorts.has(a.port) ? 0 : 1;
+    const cb = conflictPorts.has(b.port) ? 0 : 1;
+    return ca - cb || a.port - b.port;
+  });
+  const shown = ordered.slice(0, 3);
+  const open = (port: number) =>
+    fireAndForget(openMain(undefined, "ports", undefined, String(port)), "open_main");
+
+  return (
+    <div className="mt-1 rounded-lg border border-hairline-soft bg-chip/60 px-2 py-1.5">
+      <div className="flex items-baseline justify-between px-1">
+        <span className="text-[10px] font-medium tracking-wide text-ink-dim">
+          {t("panel.ports.title")}
+        </span>
+        {conflicts.length > 0 ? (
+          <span className="rounded-full bg-danger/12 px-1.5 py-px text-[9px] font-medium text-danger">
+            {t("panel.ports.conflictBadge")} {conflicts.length}
+          </span>
+        ) : null}
+      </div>
+      <ul className="mt-0.5">
+        {shown.map((e) => {
+          const isConflict = conflictPorts.has(e.port);
+          const owners = new Set(e.listeners.map((b) => b.pid).filter((p) => p != null)).size;
+          const comm = e.listeners.find((b) => b.pid != null)?.comm ?? "—";
+          return (
+            <li key={`${e.port}-${e.proto}`}>
+              <button
+                type="button"
+                onClick={() => open(e.port)}
+                className="flex w-full items-center gap-1.5 rounded-md px-1 py-1 text-left transition-colors hover:bg-chip-hover"
+              >
+                <span
+                  className={`shrink-0 font-mono text-[11px] tabular-nums ${
+                    isConflict ? "text-danger" : "text-ink"
+                  }`}
+                >
+                  :{e.port}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[10px] text-ink-dim">
+                  {isConflict
+                    ? t("panel.ports.conflict", { port: e.port, comm, n: owners })
+                    : t("panel.ports.row", { port: e.port, comm })}
+                </span>
+                {e.listeners[0]?.projectLabel ? (
+                  <span className="max-w-[110px] shrink-0 truncate text-[9.5px] text-ink-faint">
+                    {e.listeners[0].projectLabel}
+                  </span>
+                ) : null}
+              </button>
+            </li>
+          );
+        })}
+        {ordered.length > shown.length ? (
+          <li className="px-1 pt-0.5 text-[9.5px] text-ink-faint">
+            {t("panel.ports.more", { n: ordered.length - shown.length })}
+          </li>
+        ) : null}
+      </ul>
+    </div>
   );
 }
 

@@ -40,6 +40,14 @@ const zh = {
     title: "应用资源：按应用看进程 / CPU / 内存 / 磁盘 / 端口 / 网速",
     label: "应用 {n}",
   },
+  /** W2/D-07：本地服务段——只在有冲突或关注端口被占时出现，菜单栏空间稀缺 */
+  ports: {
+    title: "本地服务",
+    conflict: ":{port} {comm} ×{n}",
+    row: ":{port} {comm}",
+    conflictBadge: "冲突",
+    more: "其余 {n} 个",
+  },
   skeleton: {
     sampling: "正在采样…",
     none: "无数据",
@@ -75,6 +83,14 @@ const en: MessageTree<typeof zh> = {
   apps: {
     title: "App resources: processes / CPU / memory / disk / ports / speed per app",
     label: "Apps {n}",
+  },
+  /** W2/D-07: local services section — only when a conflict exists or watched ports are occupied */
+  ports: {
+    title: "Local services",
+    conflict: ":{port} {comm} ×{n}",
+    row: ":{port} {comm}",
+    conflictBadge: "conflict",
+    more: "{n} more",
   },
   skeleton: {
     sampling: "Sampling…",

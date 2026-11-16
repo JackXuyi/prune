@@ -35,6 +35,9 @@ const zh = {
   noMatchNote: "试试端口号、进程名或项目名的一部分，或清除搜索条件。",
   clearSearch: "清除搜索",
   rowLocate: "定位",
+  /** W2/D-09：prune.toml 配置了关注但本轮空闲的端口——空闲是状态变化，不是没有 */
+  configIdle: "项目配置的关注端口当前空闲：{ports}（prune.toml 还在，服务没起）",
+  configIdleAria: "{n} 个配置关注端口空闲",
 
   board: {
     title: "端口仪表盘",
@@ -124,6 +127,9 @@ const en: MessageTree<typeof zh> = {
   noMatchNote: "Try part of a port number, process name or project, or clear the search.",
   clearSearch: "Clear search",
   rowLocate: "Locate",
+  /** W2/D-09: ports declared in prune.toml but idle this round — idle is a state change, not an absence */
+  configIdle: "Configured watch ports currently idle: {ports} (prune.toml present, server not running)",
+  configIdleAria: "{n} configured watch ports idle",
 
   board: {
     title: "Port dashboard",

@@ -73,9 +73,17 @@ pub async fn mem_refresh(app: AppHandle) -> Result<(), String> {
 }
 
 /// 面板点击 → 打开主窗口并选中目标（可选指定 tab，或直接弹设置）。
+/// `focus` 是 W2/D-07 加的可选深链参数（如端口号）：主窗口收到 `ui://focus`
+/// 后预填对应页的定位（端口 tab 的搜索框）。缺省 = 旧行为，向后兼容。
 /// 窗口显示逻辑统一走 tray::show_main（Accessory 下 show 不切 Space，需定位 + MoveToActiveSpace）。
 #[tauri::command]
-pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>, settings: Option<bool>) {
+pub fn open_main(
+    app: AppHandle,
+    pid: Option<i32>,
+    tab: Option<String>,
+    settings: Option<bool>,
+    focus: Option<String>,
+) {
     if let Some(panel) = app.get_webview_window("panel") {
         let _ = panel.hide();
     }
@@ -90,6 +98,9 @@ pub fn open_main(app: AppHandle, pid: Option<i32>, tab: Option<String>, settings
     }
     if let Some(tab) = tab {
         let _ = app.emit("ui://tab", tab);
+    }
+    if let Some(focus) = focus {
+        let _ = app.emit("ui://focus", focus);
     }
 }
 
@@ -348,8 +359,7 @@ pub fn disk_volume() -> Option<VolumeInfo> {
     prune_core::disk::volume_info(&prune_core::paths::home_dir_or_root())
 }
 
-/// 成绩单落库口径（M21）：只认「执行前还在磁盘上、执行后没进失败名单」的条目。
-///
+/// 成绩单落库口径（M21）：只认「执行前还在磁盘上、执行后没进失败名单」的条目。///
 /// 之所以要 `preexisting`：`reclaim::execute` 对报告过期（上轮已清理 / 用户手动删）
 /// 的条目记 `skipped` 而不是 `failed`，它们**没被移进废纸篓**。只排除 `failed`
 /// 会把它们算成「剪掉了」，成绩单的累计数字就虚高了。
@@ -370,6 +380,38 @@ fn cut_entries<'a>(
 #[tauri::command]
 pub async fn disk_scan(app: AppHandle) -> Result<(), String> {
     scan::scan_now(&app, true).await
+}
+
+/// W2/D-08：项目依赖趋势（`project_day` 账本读回）。
+///
+/// 只读已有账本，不触发扫描——账本是「历史记录」，不是「现场重算」。
+/// `days` 钳位 1–400（与账本保留期一致）；窗口内没有记录返回空数组，
+/// 前端据此显示「数据不足」而不是 0。库打不开返回 Err（不是空数组冒充正常）。
+#[tauri::command]
+pub fn project_trends(
+    store: State<'_, Option<Arc<Store>>>,
+    days: u32,
+) -> Result<Vec<prune_core::disk::project::ProjectTrend>, String> {
+    let Some(store) = store.as_ref() else {
+        return Err("序列库不可用（打开失败或平台不支持）：趋势数据不可读".into());
+    };
+    let days = days.clamp(1, 400);
+    let now = prune_core::swap::now_secs() as i64;
+    let from = prune_core::localtime::day_string(now - (days as i64) * 86_400);
+    let rows = store
+        .project_day_recent(&from)
+        .map_err(|e| format!("读账本失败: {e}"))?;
+    Ok(prune_core::disk::project::build_trends(&rows))
+}
+
+/// W2/D-12：`prune.toml` 模板（设置页「复制模板」用）。
+///
+/// 模板唯一真源在 prune-core（`prune_toml::TEMPLATE`，有测试保证可被
+/// 干净解析）。前端不放模板文本——i18n 门禁要求 GUI 文案双语，而模板
+/// 注释是单语中文，属 CLI 同侧约定，从核心下发避免两份漂移。
+#[tauri::command]
+pub fn prune_toml_template() -> String {
+    prune_core::prune_toml::TEMPLATE.to_string()
 }
 
 /// dry-run：只生成清单，不动任何文件。

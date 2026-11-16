@@ -82,6 +82,15 @@ export function PortBoard({
   const visible = searching ? filtered : watched;
   const invisible = snapshot ? invisibleCount(snapshot.coverage) : 0;
 
+  // W2/D-09（§4.3）：用户在 prune.toml 里配置的关注端口，空闲也要显示——
+  // 用户主动关注的要能看到状态变化（服务没起），而不是静默消失
+  const configuredIdle = useMemo(() => {
+    const configured = snapshot?.configuredWatchPorts ?? [];
+    if (configured.length === 0) return [];
+    const busy = new Set(entries.map((e) => e.port));
+    return configured.filter((p) => !busy.has(p));
+  }, [snapshot, entries]);
+
   // 分组占比（§7.6）：三段互斥——「对外暴露」可能同时命中关注层，先扣掉再算其他，
   // 否则三段之和会大于端口总数、条形比例虚增。口径与总览端口卡一致。
   const allEntries = snapshot?.entries ?? [];
@@ -135,6 +144,16 @@ export function PortBoard({
           })}{" "}
           <code className="font-mono text-[10.5px]">sudo lsof -nP -iTCP -sTCP:LISTEN</code>
           {t("ports.invisibleTail")}
+        </p>
+      ) : null}
+      {configuredIdle.length > 0 ? (
+        <p
+          className="mt-3 rounded-lg bg-accent/[0.07] px-3 py-2 text-[11px] leading-relaxed text-ink-dim"
+          aria-label={t("ports.configIdleAria", { n: configuredIdle.length })}
+        >
+          {t("ports.configIdle", {
+            ports: configuredIdle.map((p) => `:${p}`).join(" "),
+          })}
         </p>
       ) : null}
 

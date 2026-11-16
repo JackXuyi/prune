@@ -12,6 +12,7 @@ import type {
   RestorePreview,
   RestoreReport,
   VolumeInfo,
+  ProjectTrend,
 } from "../types/disk";
 import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
@@ -78,8 +79,15 @@ export function openMain(
   pid?: number,
   tab?: "stats" | "resources" | "memory" | "disk" | "ports" | "net",
   settings?: boolean,
+  /** W2/D-07 深链：到达后预填对应页的定位（端口 tab 的搜索框） */
+  focus?: string,
 ): Promise<void> {
-  return invoke<void>("open_main", { pid: pid ?? null, tab: tab ?? null, settings: settings ?? null });
+  return invoke<void>("open_main", {
+    pid: pid ?? null,
+    tab: tab ?? null,
+    settings: settings ?? null,
+    focus: focus ?? null,
+  });
 }
 
 /** 结束进程：默认 SIGTERM（可优雅退出），force=true 时 SIGKILL */
@@ -101,6 +109,22 @@ export function diskReport(): Promise<DiskReport | null> {
 /** 触发一轮扫描（单飞：已有扫描在跑时直接返回） */
 export function diskScan(): Promise<void> {
   return invoke<void>("disk_scan");
+}
+
+/**
+ * W2/D-08：项目依赖趋势（`project_day` 账本读回，只读不触发扫描）。
+ * days 钳位 1–400；窗口内没记录返回空数组——「数据不足」不是 0。
+ */
+export function projectTrends(days = 30): Promise<ProjectTrend[]> {
+  return invoke<ProjectTrend[]>("project_trends", { days: Math.min(Math.max(days, 1), 400) });
+}
+
+/**
+ * W2/D-09：`prune.toml` 模板（设置页「复制模板」用）。
+ * 文本在核心侧下发（唯一真源，有解析测试兜底）；前端不存模板。
+ */
+export function pruneTomlTemplate(): Promise<string> {
+  return invoke<string>("prune_toml_template");
 }
 
 /**

@@ -19,6 +19,8 @@ import { Btn, Meter, ProposalTag, ScopeBadge } from "./primitives";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemStore } from "../stores/memStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
+import { portConflicts } from "../types/net";
+import type { PortEntry, PortSnapshot } from "../types/net";
 import { usePortStore } from "../stores/portStore";
 import { formatBytes, formatPercent } from "../lib/format";
 import { cutReport, isTauri, type CutReport } from "../lib/ipc";
@@ -50,10 +52,13 @@ export type DrillTab = "stats" | "resources" | "memory" | "disk" | "ports" | "ne
 export function StatsBoard({
   onDrill,
   refreshNonce,
+  onFocusPort,
 }: {
   onDrill: (tab: DrillTab) => void;
   /** 头部「刷新」按钮的递增信号：变了就重取卷容量（内存/端口由各自 store 刷新） */
   refreshNonce: number;
+  /** W2/D-07：本地服务卡点行 → 预填端口页定位再跳转 */
+  onFocusPort?: (port: string) => void;
 }) {
   const { t, locale } = useI18n();
   const snapshot = useMemStore((s) => s.snapshot);
@@ -345,6 +350,10 @@ export function StatsBoard({
         />
       </div>
 
+      {/* W2/D-07 本地服务卡：关注层 + 冲突的常驻读数。复用 30 s 轮的同一份快照，
+          零新增采样；冲突判定与 island 同口径（TCP 且 ≥2 个不同 pid） */}
+      <LocalServiceCard ports={ports} onOpenPort={(port) => { onFocusPort?.(port); onDrill("ports"); }} />
+
       {/* 剪除成绩单（M21）：只统计你亲手剪掉的，本地 SQLite append-only。
           左：累计 + 换算；右：Top3。横排是为了在 640 高的窗口里和上面几段一起首屏读完。 */}
       {cut ? (
@@ -459,4 +468,121 @@ function LegendRow({
       </span>
     </span>
   );
+}
+
+/**
+ * W2/D-07 本地服务卡：关注层监听与冲突的常驻读数（§4.2 ①）。
+ *
+ * 边界（§4.3）：
+ * - 快照为空（首次启动未采）→ 骨架 + 「正在采集」，不留空栏；
+ * - 采集失败 / 无 lsof → 显示 coverage.note，绝不显示 0；
+ * - 关注层为空 → 「当前没有监听」——扫描过了才是这个结论。
+ */
+function LocalServiceCard({
+  ports,
+  onOpenPort,
+}: {
+  ports: PortSnapshot | null;
+  onOpenPort: (port: string) => void;
+}) {
+  const { t } = useI18n();
+
+  if (!ports) {
+    return (
+      <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2.5">
+        <span className="text-[11px] font-medium tracking-wide text-ink-dim">
+          {t("stats.localService.title")}
+        </span>
+        <p className="mt-1 text-[10.5px] text-ink-faint">{t("stats.localService.collecting")}</p>
+      </div>
+    );
+  }
+
+  const watched = ports.entries.filter((e) => e.watched);
+  const conflicts = portConflicts(ports.entries);
+  const conflictPorts = new Set(conflicts.map((c) => c.port));
+  // 冲突行置顶，其余按端口号排；最多 4 行，多的收进「其余 N 个」
+  const rows: PortEntry[] = [...watched].sort((a, b) => {
+    const ca = conflictPorts.has(a.port) ? 0 : 1;
+    const cb = conflictPorts.has(b.port) ? 0 : 1;
+    return ca - cb || a.port - b.port;
+  });
+  const shown = rows.slice(0, 4);
+
+  return (
+    <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2.5">
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-[11px] font-medium tracking-wide text-ink-dim">
+          {t("stats.localService.title")}
+        </span>
+        <span className="font-mono text-[10.5px] tabular-nums text-ink-dim">
+          {t("stats.localService.summary", {
+            watched: watched.length,
+            conflicts: conflicts.length,
+          })}
+        </span>
+      </div>
+
+      {ports.coverage.note ? (
+        <p className="mt-1 text-[10.5px] leading-relaxed text-warn">
+          {t("stats.localService.unreadable", { note: ports.coverage.note })}
+        </p>
+      ) : shown.length === 0 ? (
+        <p className="mt-1 text-[10.5px] text-ink-faint">{t("stats.localService.empty")}</p>
+      ) : (
+        <ul className="mt-1 space-y-0.5">
+          {shown.map((e) => (
+            <li key={`${e.port}-${e.proto}`}>
+              <button
+                type="button"
+                onClick={() => onOpenPort(String(e.port))}
+                title={t("stats.localService.rowAria", {
+                  port: e.port,
+                  comm: primaryComm(e),
+                })}
+                className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-chip-hover"
+              >
+                <span
+                  className={`shrink-0 font-mono text-[11px] tabular-nums ${
+                    conflictPorts.has(e.port) ? "text-danger" : "text-ink"
+                  }`}
+                >
+                  :{e.port}
+                </span>
+                <span className="min-w-0 flex-1 truncate text-[10.5px] text-ink-dim">
+                  {primaryComm(e)}
+                  {e.listeners[0]?.projectLabel
+                    ? ` · ${e.listeners[0].projectLabel}`
+                    : ""}
+                </span>
+                {conflictPorts.has(e.port) ? (
+                  <span className="shrink-0 rounded-full bg-danger/12 px-1.5 py-px text-[9px] font-medium text-danger">
+                    {t("stats.localService.conflictMark")}
+                  </span>
+                ) : null}
+              </button>
+            </li>
+          ))}
+          {rows.length > shown.length ? (
+            <li>
+              <button
+                type="button"
+                onClick={() => onOpenPort("")}
+                className="px-1 pt-0.5 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
+              >
+                {t("stats.localService.more", { n: rows.length - shown.length })}
+              </button>
+            </li>
+          ) : null}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** 主展示进程名（primaryOf 的轻量版：卡里只要一个名字） */
+function primaryComm(e: PortEntry): string {
+  const b =
+    e.listeners.find((x) => x.pid != null) ?? e.listeners[0];
+  return b?.comm || "—";
 }

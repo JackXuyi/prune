@@ -189,6 +189,22 @@ export function MainWindow() {
   }, []);
 
   /**
+   * W2/D-07 深链：`open_main` 的 focus 参数（如端口号）→ 端口 tab 预填定位。
+   * 与 ui://tab 分开：focus 是「页内定位」，tab 是「页面 id」，语义不同不混一条通道。
+   * 当前只有端口 tab 消费它（island 冲突点击 / 菜单栏「本地服务」行）；
+   * 其它页忽略——预填一个没人读的搜索词比错位更糟。
+   */
+  useEffect(() => {
+    if (!isTauri()) return;
+    const un = listen<string>("ui://focus", (e) => {
+      setPortFocus(e.payload);
+    });
+    return () => {
+      void un.then((fn) => fn());
+    };
+  }, [setPortFocus]);
+
+  /**
    * 端口 tab 的可见性门控（方案 §5.2）：只要用户不在这个 tab 上，
    * 定时器就完全不扫——常驻开销 0 是验收项。
    */
@@ -443,7 +459,11 @@ export function MainWindow() {
         ) : null}
 
         {tab === "stats" ? (
-          <StatsBoard onDrill={(t) => go(t, "stats")} refreshNonce={statsNonce} />
+          <StatsBoard
+            onDrill={(t) => go(t, "stats")}
+            refreshNonce={statsNonce}
+            onFocusPort={(port) => setPortFocus(port)}
+          />
         ) : tab === "resources" ? (
           appDetail ? (
             <AppDetail
