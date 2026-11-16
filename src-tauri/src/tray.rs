@@ -74,7 +74,8 @@ static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 /// 两轮反馈底部遮挡后抬到 560：即使贴高上报链路失效（如旧二进制没重启），
 /// 面板也不会裁掉底部端口占用。动态贴高仍然生效（panel_fit_height），560
 /// 只是 popover init 的下限与 tauri.conf 窗口的初始值。
-#[cfg(target_os = "macos")]
+/// 面板宽（与 tauri.conf.json 一致）。不加 cfg 门：`panel_fit_height` 是
+/// 跨平台命令，Windows 降级路径也要按这个宽调高
 pub const PANEL_W: f64 = 380.0;
 #[cfg(target_os = "macos")]
 pub const PANEL_H: f64 = 560.0;

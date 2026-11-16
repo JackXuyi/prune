@@ -7,10 +7,16 @@
 //! 仅 macOS 提供系统级等价物，Windows 上 capability 为 false、前端整卡隐藏
 //! （不显示「不可用」占位，沿 W2 的拍板）。
 
-use std::io::{Read, Write};
+/// `Read` / `Instant` 只有 macOS 的 `networkQuality` 路径用：跨平台 check
+/// （Windows / Linux）会报 unused import，所以按平台收窄
+#[cfg(target_os = "macos")]
+use std::io::Read;
+use std::io::Write;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use std::time::Instant;
 
 use prune_core::i18n::err::err_text;
 use prune_core::i18n::fill;

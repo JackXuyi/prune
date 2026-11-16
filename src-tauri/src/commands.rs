@@ -359,7 +359,8 @@ pub fn disk_volume() -> Option<VolumeInfo> {
     prune_core::disk::volume_info(&prune_core::paths::home_dir_or_root())
 }
 
-/// 成绩单落库口径（M21）：只认「执行前还在磁盘上、执行后没进失败名单」的条目。///
+/// 成绩单落库口径（M21）：只认「执行前还在磁盘上、执行后没进失败名单」的条目。
+///
 /// 之所以要 `preexisting`：`reclaim::execute` 对报告过期（上轮已清理 / 用户手动删）
 /// 的条目记 `skipped` 而不是 `failed`，它们**没被移进废纸篓**。只排除 `failed`
 /// 会把它们算成「剪掉了」，成绩单的累计数字就虚高了。
@@ -420,16 +421,29 @@ pub fn prune_toml_template() -> String {
 /// popover 路径（macOS 常规）改 `popover.contentSize`，降级窗口路径
 /// （popover 初始化失败 / Windows）`set_size`。钳位 240–760：下限防
 /// 内容异常时面板塌缩成一条，上限防失控撑屏。
+///
+/// `popover` 模块整体 `#[cfg(target_os = "macos")]`，Windows 上这两个符号
+/// 根本不存在——所以走 popover 的那段必须用 cfg 块包起来，不能只在分支里
+/// 写 `if false`（编译期就要消失）。
 #[tauri::command]
 pub fn panel_fit_height(app: AppHandle, height: f64) {
     // 呼吸余量：内容自然高之上再加 PANEL_FIT_EXTRA_PX，测量误差不至于变成遮挡
     let h = (height + crate::tray::PANEL_FIT_EXTRA_PX).clamp(240.0, 760.0);
-    // 无论哪条路径，先记录最近上报值：popover init 时 webview 还在隐藏窗口上，
-    // 此前（启动期）的上报都走了 legacy set_size——init 必须能捡回这个值
-    crate::popover::remember_fit(h);
-    if crate::popover::is_popover_mode() {
-        let _ = app.run_on_main_thread(move || crate::popover::fit_height(h));
-    } else if let Some(panel) = app.get_webview_window(crate::tray::PANEL_LABEL) {
+
+    #[cfg(target_os = "macos")]
+    {
+        // 无论哪条路径，先记录最近上报值：popover init 时 webview 还在隐藏窗口上，
+        // 此前（启动期）的上报都走了 legacy set_size——init 必须能捡回这个值
+        crate::popover::remember_fit(h);
+        if crate::popover::is_popover_mode() {
+            let _ = app.run_on_main_thread(move || crate::popover::fit_height(h));
+            return;
+        }
+    }
+
+    // 降级路径（Windows 常态 / macOS popover 初始化失败）：改面板窗口逻辑尺寸。
+    // 宽度用 PANEL_W（与 tauri.conf.json 同源），这里只负责高度
+    if let Some(panel) = app.get_webview_window(crate::tray::PANEL_LABEL) {
         let _ = panel.set_size(tauri::LogicalSize::new(crate::tray::PANEL_W, h));
     }
 }

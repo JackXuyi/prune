@@ -529,3 +529,11 @@ prune mcp install [--client claude|cursor|vscode|all] [--write] [--json] [--forc
 ### 12.4 门禁结果
 
 cargo test --workspace 全绿（core 485 / cli 50 / app 49）；clippy -D warnings 0；fmt 无 diff；tsc / check:i18n / check:docs（A–E 全部）/ build 全绿；门禁 D/E 各做了负向验证（`doctorx` 章节与退出码 3→7 均被拦下）。
+
+### 12.5 发版插曲：0.13.0 的 Windows 编译失败 → 0.13.1
+
+- **现象**：`v0.13.0` 的 Release workflow 里 macOS 两腿成功、Windows 腿红（4 个 E0433/E0425），`release-notes` 因此跳过 → Release 停留在草稿、未对外发布。
+- **根因**：Wave 2 的 `panel_fit_height` 在**命令体**里直接写了 `crate::popover::remember_fit` / `is_popover_mode` / `fit_height` 与 `crate::tray::PANEL_H`，而 `popover` 模块与 `PANEL_H` 都是 `#[cfg(target_os = "macos")]`。本地 macOS 编译看不见，Windows 上这些符号根本不存在。
+- **修法**：popover 分支整段包 `#[cfg(target_os = "macos")] { … return; }`（编译期消失，不是运行期 `if false`——后者仍然要求符号存在）；降级路径统一 `panel.set_size(PANEL_W, h)`；`PANEL_W` 去掉 cfg 门（跨平台都要用），`PANEL_H` 保持 mac 专属。顺带修 `net_diag` 的 `Read` / `Instant`——只在 mac 的 `networkQuality` 路径用，按平台收窄 import。
+- **教训**：新增「跨平台命令 + 平台专属实现」时，`cfg` 必须落在**语句块**上，且 `cargo check --target x86_64-pc-windows-msvc` 在 mac 上跑不通（ring 的 C 部分缺 MSVC 头），只能靠 CI 的 Windows 腿兜底——本地门禁全绿不等于三平台可编。
+
