@@ -29,7 +29,8 @@ import { UpdateCard } from "../components/UpdateCard";
  * 冲突/关注存在与否渲染，更新卡也按需占版面），所以改为前端量取内容
  * 自然高、经 `panel_fit_height` 上报缩放（popover contentSize / 降级窗口
  * set_size）。内容区不滚动——菜单栏「瞄一眼」场景里滚动条是噪音，
- * 空间不够就让窗口长高。初始 432（算式见 `tray.rs: PANEL_H`）。
+ * 空间不够就让窗口长高。初始 560（真机反馈遮挡后抬高的兜底，
+ * 算式与余量见 `tray.rs: PANEL_H` / `PANEL_FIT_EXTRA_PX`）。
  *
  * 原来的「应用」「概况」两个 tab 都已撤掉——应用级明细在主窗口「应用资源」，
  * 内存压力 / swap / 换出受害者在主窗口「内存」。面板是「瞄一眼」场景。
