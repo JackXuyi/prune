@@ -2671,7 +2671,7 @@ dependencies = [
 
 [[package]]
 name = "prune-app"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "objc2",
  "objc2-app-kit",
@@ -2690,16 +2690,17 @@ dependencies = [
 
 [[package]]
 name = "prune-cli"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "libc",
  "prune-core",
+ "serde",
  "serde_json",
 ]
 
 [[package]]
 name = "prune-core"
-version = "0.11.0"
+version = "0.13.0"
 dependencies = [
  "flate2",
  "libc",
