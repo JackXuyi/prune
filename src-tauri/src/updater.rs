@@ -264,6 +264,13 @@ pub async fn check_and_prompt(app: &AppHandle) {
     }
 }
 
+/// 设置页「检查更新」入口：与托盘完全复用同一套「检查 + 原生弹窗」逻辑。
+/// 暴露成 command 供前端调用；弹窗由 `check_and_prompt` 负责，这里只转发。
+#[tauri::command]
+pub async fn check_update_dialog(app: AppHandle) {
+    check_and_prompt(&app).await;
+}
+
 /// 启动静默检查：延迟 5 s（避开启动期采样高峰），失败不打扰用户。
 ///
 /// ┌─ ⚠️ D2 口径文件（roadmap 2027h1 §5.1，勿动）────────────────────────┐

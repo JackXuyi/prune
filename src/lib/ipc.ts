@@ -338,6 +338,11 @@ export function updatePending(): Promise<UpdateStatus> {
   return invoke<UpdateStatus>("update_pending");
 }
 
+/** 检查更新并弹原生对话框（与托盘「检查更新」完全同一逻辑，供设置页调用） */
+export function updateCheckDialog(): Promise<void> {
+  return invoke<void>("check_update_dialog");
+}
+
 /** 下载并安装待更新，完成后应用自动重启 */
 export function updateInstall(): Promise<void> {
   return invoke<void>("update_install");

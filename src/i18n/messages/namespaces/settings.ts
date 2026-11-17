@@ -82,6 +82,8 @@ const zh = {
   loading: "读取设置…",
   about: {
     title: "关于",
+    checkUpdate: "检查更新",
+    checking: "检查中…",
   },
   theme: {
     title: "外观",
@@ -181,6 +183,8 @@ const en: MessageTree<typeof zh> = {
   loading: "Loading settings…",
   about: {
     title: "About",
+    checkUpdate: "Check for updates",
+    checking: "Checking…",
   },
   theme: {
     title: "Appearance",

@@ -58,6 +58,7 @@ pub fn run() {
             updater::update_check,
             updater::update_pending,
             updater::update_install,
+            updater::check_update_dialog,
             i18n::locale_get,
             i18n::locale_set,
             commands::mem_snapshot,

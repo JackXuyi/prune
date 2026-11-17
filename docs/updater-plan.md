@@ -1,6 +1,6 @@
 # GitHub 源自动升级（Tauri v2 Updater）
 
-> 目标：Prune 客户端以 GitHub Release 为源自动升级——启动静默检查 + 托盘「检查更新」+ 面板更新卡片，三入口共用一套 Rust 逻辑。
+> 目标：Prune 客户端以 GitHub Release 为源自动升级——启动静默检查 + 托盘「检查更新」+ 设置页「检查更新」+ 面板更新卡片，四入口共用一套 Rust 逻辑。
 
 ## 一、整体链路
 
@@ -17,7 +17,7 @@ push tag v* → GitHub Actions 三平台出包（Draft）
 | 构建升级产物 + latest.json | 现有 `release.yml` 的 tauri-action（已加 `includeUpdaterJson: true`） |
 | 签名升级产物 | minisign 密钥对（私钥走 GitHub Secrets，公钥内置客户端） |
 | 检查 / 下载 / 安装 | `src-tauri/src/updater.rs`（`tauri-plugin-updater` 2.14.x） |
-| UI | 托盘菜单项 + `src/components/UpdateCard.tsx`（面板 footer 上方） |
+| UI | 托盘菜单项 + 设置页「关于」卡片（`AboutSection.tsx`）+ `src/components/UpdateCard.tsx`（面板 footer 上方） |
 
 ## 二、关键设计决策
 
@@ -54,9 +54,10 @@ cat ~/.tauri/prune-updater.key
 
 | 文件 | 内容 |
 |---|---|
-| `src-tauri/src/updater.rs` | 检查 / 待装状态 / 下载安装三个命令 + 启动静默检查 + 事件契约 + `check_and_prompt` 托盘弹窗 |
-| `src-tauri/src/lib.rs` | 注册 updater + dialog 插件 + `UpdateState` + 启动检查 spawn |
+| `src-tauri/src/updater.rs` | 检查 / 待装状态 / 下载安装三个命令 + 启动静默检查 + 事件契约 + `check_and_prompt` 原生弹窗 + `check_update_dialog` 设置页 command |
+| `src-tauri/src/lib.rs` | 注册 updater + dialog 插件 + `UpdateState` + 启动检查 spawn + `check_update_dialog` |
 | `src-tauri/src/tray.rs` | 右键菜单「检查更新」项（异步派发，不阻塞菜单线程）→ 调 `check_and_prompt` |
+| `src/components/AboutSection.tsx` | 设置页「关于」卡片的「检查更新」按钮 → `updateCheckDialog()` → 同一 `check_and_prompt` 弹窗 |
 | `src-tauri/tauri.conf.json` | `bundle.createUpdaterArtifacts: true` + `plugins.updater`（endpoint + pubkey） |
 | `src/components/UpdateCard.tsx` | 面板更新卡片：待更新 / 下载进度 / 重启提示 / 「已是最新」轻提示 |
 | `src/lib/ipc.ts` | `update_check` / `update_pending` / `update_install` 封装 |
