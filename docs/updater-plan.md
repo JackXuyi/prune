@@ -61,7 +61,7 @@ cat ~/.tauri/prune-updater.key
 | `src-tauri/src/lib.rs` | 注册 updater + dialog 插件 + `UpdateState` / `UpdateDialogState` + 启动检查 spawn + `update` 窗口的 Space / 关闭行为 |
 | `src-tauri/src/tray.rs` | 右键菜单「检查更新」项（异步派发，不阻塞菜单线程）→ 调 `check_and_prompt` |
 | `src/components/AboutSection.tsx` | 设置页「关于」卡片的「检查更新」按钮 → `updateCheckDialog()` → 同一 `check_and_prompt` |
-| `src-tauri/tauri.conf.json` | `bundle.createUpdaterArtifacts: true` + `plugins.updater`（endpoint + pubkey）+ `app.windows` 声明 `update` 窗口（固定 800×500 / 不可调整 / 无边框 / 透明 / 置顶 / center） |
+| `src-tauri/tauri.conf.json` | `bundle.createUpdaterArtifacts: true` + `plugins.updater`（endpoint + pubkey）+ `app.windows` 声明 `update` 窗口（固定 800×600 / 不可调整 / 无边框 / 透明 / 置顶 / center） |
 | `src-tauri/capabilities/default.json` | `windows` 加 `update` label（否则新 webview 拿不到 `core:default`，invoke/listen 被拒） |
 | `src-tauri/capabilities/update.json` | update 窗口额外授 `core:window:allow-hide`——前端 `getCurrentWindow().hide()` 关窗必需；`core:default` 只含查询类窗口权限，缺它时 hide 被静默拒绝（点了 X / 稍后没反应） |
 | `src/App.tsx` | 按窗口 label 分发，`update` → `<UpdateWindow>`（跳过 mem/disk init） |
@@ -78,7 +78,7 @@ cat ~/.tauri/prune-updater.key
 | 已是最新版本 | 本地 `CHANGELOG.md` 当前版本段（`include_str!` 编译期嵌入），转成 markdown（`###` 小标题升为 `##`、`-` bullet 原样保留加粗/代码/链接） | 插件在「已是最新」时 `check()` 返回 `None`，把元数据全丢弃，弹窗拿不到任何 notes；本地 CHANGELOG 是唯一可靠来源，零网络、零新依赖，也不碰 D2 启动指标 |
 | 发现新版本 | `update.body`（来自 latest.json 的 `notes` 字段） | 插件只在发现新版时返回 `Update`（含 body）。该字段历史上是静态下载表模板，`release-notes` job 现已在发布时把它改写为 CHANGELOG 本版段，弹窗/卡片才看得到真正的变更说明 |
 
-说明以 markdown 原文交给 `update` 窗口渲染（不再截断成单行）；窗口固定 800×500，内容区超出滚动，长 changelog 完整呈现。
+说明以 markdown 原文交给 `update` 窗口渲染（不再截断成单行）；窗口固定 800×600，内容区超出滚动，长 changelog 完整呈现。
 
 事件契约（Rust → 前端，`app.emit` 广播全部窗口）：
 
@@ -90,7 +90,7 @@ cat ~/.tauri/prune-updater.key
 | `update://installed` | — | 安装完成，即将重启 |
 | `update://dialog` | — | 检查结果已写入 `UpdateDialogState`，通知 `update` 窗口来 pull（仅手动检查；点击时也会发一次，让窗口 pull 到 checking 态） |
 
-`update` 窗口另有一个 command：`update_dialog_data`（pull 最近一次结果）。关闭窗口直接用 Tauri 内置 `getCurrentWindow().hide()`——不依赖自定义 command 注册，避免 dev 只热重载前端时旧二进制报 `Command update_dialog_close not found`。窗口尺寸在 `tauri.conf.json` 固定为 **800×500 且不可调整**：顶栏与底栏固定，主体内容区 `overflow-y-auto`，短内容居中留白、超长 changelog 在窗口内滚动。
+`update` 窗口另有一个 command：`update_dialog_data`（pull 最近一次结果）。关闭窗口直接用 Tauri 内置 `getCurrentWindow().hide()`——不依赖自定义 command 注册，避免 dev 只热重载前端时旧二进制报 `Command update_dialog_close not found`。窗口尺寸在 `tauri.conf.json` 固定为 **800×600 且不可调整**：顶栏与底栏固定，主体内容区 `overflow-y-auto`，短内容居中留白、超长 changelog 在窗口内滚动。
 
 **「点了就弹」**：`check_and_prompt` 同步写入 `UpdateDialogPayload::Checking` 并 show 窗口（前端立即显示「正在检查更新…」转圈），检查在后台 spawn；结果回来后覆盖 state 并再发 `update://dialog`，窗口 pull 到结果态刷新。所以慢网络不会让点击「没反应」。payload 共四态：`checking` / `available` / `upToDate` / `error`（serde tag=status、content=data；`checking` 无 data）。窗口是 hide/show 复用、组件不卸载，关闭时前端把 payload 复位到 checking，避免下次显示闪旧结果。
 
