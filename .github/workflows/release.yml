@@ -447,7 +447,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Patch release body (download table + CHANGELOG section)
+      - name: Patch release body + updater manifest notes
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
@@ -470,7 +470,7 @@ jobs:
               const n = rest.indexOf('\n## ', 1);
               section = (n === -1 ? rest : rest.slice(0, n)).trim();
             } else {
-              console.log(`::warning::CHANGELOG 里没有 ${tag} 段，Release 正文只保留下载表`);
+              console.log(`::warning::CHANGELOG 里没有 ${tag} 段，Release 正文只保留下载表，updater notes 沿用原值`);
             }
             const table = [
               '下载对应平台安装包：',
@@ -505,6 +505,41 @@ jobs:
             });
             if (!patch.ok) throw new Error(`PATCH release failed: ${patch.status} ${await patch.text()}`);
             console.log(`✓ GitHub Release #${meta.id} 已同步正文并发布：下载表 + CHANGELOG${section ? ` ${tag} 段` : '（无本版段）'}`);
+
+            // updater 清单（latest.json）的 notes：tauri-action 生成时写死为 releaseBody
+            // 静态下载表模板，不是真正的更新说明。这里把 notes 改写成同一份 CHANGELOG
+            // 本版段，让「发现新版本」弹窗 / 面板卡片看到的是本版变更而非下载表。
+            // 只动 notes 字段——platforms 里的下载 URL 与 .sig 签名逐字保留，
+            // 客户端只校验安装包签名（校验对象是下载字节，不是清单本身），改 notes 不影响升级链路。
+            if (!section) {
+              console.log('⏭ CHANGELOG 无本版段，跳过 latest.json notes 改写');
+              return;
+            }
+            const assetsRes = await fetch(`https://api.github.com/repos/${repo}/releases/${meta.id}/assets?per_page=100`, { headers });
+            if (!assetsRes.ok) throw new Error(`GET assets failed: ${assetsRes.status} ${await assetsRes.text()}`);
+            const assets = await assetsRes.json();
+            const manifest = assets.find((a) => a.name === 'latest.json');
+            if (!manifest) throw new Error(`Release #${meta.id} 里没有 latest.json 资产（tauri-action includeUpdaterJson 是否生效？）`);
+            // 下载资产内容：API 端点 + octet-stream 拿原始字节，不是浏览器下载页
+            const dl = await fetch(manifest.url, { headers: { ...headers, Accept: 'application/octet-stream' } });
+            if (!dl.ok) throw new Error(`下载 latest.json 失败: ${dl.status} ${await dl.text()}`);
+            const json = await dl.json();
+            json.notes = section;
+            const manifestBody = JSON.stringify(json, null, 2);
+
+            // GitHub asset 不支持原地改内容，只能 DELETE + POST 上传同名文件。
+            // 顺序：先删后传；删成功但传失败会留下缺失清单的窗口——此时升级检查会拿到
+            // 404（客户端当「已是最新」静默处理，不阻塞任何人），重跑本 job 即可恢复。
+            const del = await fetch(manifest.url, { method: 'DELETE', headers });
+            if (!del.ok) throw new Error(`删除旧 latest.json 失败: ${del.status} ${await del.text()}`);
+            const uploadUrl = `https://uploads.github.com/repos/${repo}/releases/${meta.id}/assets?name=latest.json`;
+            const up = await fetch(uploadUrl, {
+              method: 'POST',
+              headers: { ...headers, 'Content-Type': 'application/octet-stream' },
+              body: manifestBody,
+            });
+            if (!up.ok) throw new Error(`上传 latest.json 失败: ${up.status} ${await up.text()}`);
+            console.log(`✓ latest.json 的 notes 已改写为 ${tag} 的 CHANGELOG 段（platforms 签名未动）`);
           })().catch((e) => { console.error(e); process.exit(1); });
           NODE_SCRIPT
 
