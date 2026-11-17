@@ -132,3 +132,7 @@ src-tauri/gen/schemas/
 
 # 发版令牌（Gitee 私人令牌，不要提交）
 .env.release
+
+# report-sample 产物（本地生成，不入库）
+output
+

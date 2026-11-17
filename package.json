@@ -11,7 +11,8 @@
     "release": "node scripts/release.mjs",
     "tauri": "tauri",
     "check:i18n": "node scripts/check-i18n.mjs",
-    "check:docs": "node scripts/check-docs-honesty.mjs"
+    "check:docs": "node scripts/check-docs-honesty.mjs",
+    "report:sample": "node scripts/report-sample/main.mjs"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
