@@ -57,7 +57,7 @@ export function TagDot({ tag }: { tag: NonNullable<Readout["tag"]> }) {
 }
 
 /**
- * 统计卡（主窗口 960）。`min-h-[140px]` 是算出来的：三行卡 + 标题块 + 页脚
+ * 统计卡（主窗口 1000）。`min-h-[140px]` 是算出来的：三行卡 + 标题块 + 页脚
  * 合计 574 px，刚好放进 592 px 内容区（算式见方案 §5.1）。
  */
 export function StatsCard({

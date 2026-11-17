@@ -355,7 +355,7 @@ export function StatsBoard({
       <LocalServiceCard ports={ports} onOpenPort={(port) => { onFocusPort?.(port); onDrill("ports"); }} />
 
       {/* 剪除成绩单（M21）：只统计你亲手剪掉的，本地 SQLite append-only。
-          左：累计 + 换算；右：Top3。横排是为了在 640 高的窗口里和上面几段一起首屏读完。 */}
+          左：累计 + 换算；右：Top3。横排是为了在 700 高的窗口里和上面几段一起首屏读完。 */}
       {cut ? (
         <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2.5">
           <div className="flex items-start gap-5">

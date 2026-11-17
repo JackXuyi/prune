@@ -1089,7 +1089,7 @@ fn position_main(app: &AppHandle, main: &WebviewWindow) {
 
     let (mw, mh) = match main.outer_size() {
         Ok(s) => (s.width as f64, s.height as f64),
-        Err(_) => (960.0 * scale, 640.0 * scale),
+        Err(_) => (1000.0 * scale, 700.0 * scale),
     };
 
     let (mx, my) = {

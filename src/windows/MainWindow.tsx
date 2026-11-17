@@ -94,7 +94,7 @@ function sourceLabel(s: WorkspaceSource, t: I18n["t"]): string {
       : t("memory.source.inherited");
 }
 
-/** 主窗口（960×640）：总览 / 应用 / 内存 / 存储 / 网络 / 端口 + 设置齿轮 */
+/** 主窗口（1000×700）：总览 / 应用 / 内存 / 存储 / 网络 / 端口 + 设置齿轮 */
 export function MainWindow() {
   const i18n = useI18n();
   const { t } = i18n;
