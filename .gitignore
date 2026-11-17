@@ -136,3 +136,6 @@ src-tauri/gen/schemas/
 # report-sample 产物（本地生成，不入库）
 output
 
+# D-02：prepare-cli-resource.mjs 生成的 CLI 拷贝（构建时由 target/ 复制而来）
+src-tauri/resources/bin/
+

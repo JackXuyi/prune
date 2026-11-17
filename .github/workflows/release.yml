@@ -308,6 +308,10 @@ jobs:
           # `pnpm tauri signer generate` 生成，公钥内置在 tauri.conf.json。
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # D-02：显式告知 prepare-cli-resource.mjs 该腿的目标架构。不能只依赖
+          # Tauri 注入的 TAURI_ENV_TARGET_TRIPLE——cross 编译（arm64 host 出 x64 包）
+          # 时若它缺位，脚本会退回 rustc host，把 arm64 二进制塞进 x64 的 dmg。
+          CLI_TARGET_TRIPLE: ${{ matrix.target }}
           # 签名/公证变量由上面的 "Resolve macOS signing mode" 动态注入：
           #   三件套齐全 → 正式签名（含可选公证）
           #   缺任意一项 → 只有 APPLE_SIGNING_IDENTITY=-（ad-hoc）
@@ -323,6 +327,7 @@ jobs:
             |---|---|
             | macOS Apple Silicon | `Prune_*_aarch64.dmg` |
             | macOS Intel | `Prune_*_x64.dmg` |
+            | macOS CLI (universal) | `Prune_CLI_*_universal_macos.tar.gz` |
             | Windows x64 | `Prune_*_x64-setup.exe`（推荐） / `Prune_*_x64_en-US.msi` |
 
             已装旧版本可通过托盘菜单「检查更新」或应用内自动升级直接更新到本版本。
@@ -335,6 +340,99 @@ jobs:
           includeUpdaterJson: true
           args: ${{ matrix.args }}
 
+      # D-02（docs/d02-homebrew-plan.md §3.2）：把 CLI 二进制（beforeBuildCommand
+      # 由 prepare-cli-resource.mjs 编出，与 GUI 同 target）传给 cli-universal job
+      # 做 lipo 合并。formula 需要单 URL 的 universal tar.gz。
+      - name: Upload CLI binary artifact (for universal asset)
+        if: matrix.platform == 'macos-latest'
+        uses: actions/upload-artifact@v4
+        with:
+          name: cli-${{ matrix.target }}
+          path: target/${{ matrix.target }}/release/prune
+          if-no-files-found: error
+
+  # ---------------------------------------------------------------------------
+  # D-02：CLI universal 产物（docs/d02-homebrew-plan.md §3.2）。
+  # 两条 macOS 腿的 CLI 二进制 lipo 成 universal 单文件 → tar.gz → 传到
+  # （仍是 draft 的）Release。必须在 release-notes 发布前完成——draft 对
+  # /releases/tags/{tag} 一律 404，所以沿用 list 端点按 tag_name 找的路径，
+  # 同时先删同名旧 asset 保证同 tag 幂等重跑。
+  # ---------------------------------------------------------------------------
+  cli-universal:
+    name: CLI universal binary asset
+    needs: bundle
+    runs-on: macos-latest
+    steps:
+      - name: Download per-arch CLI binaries
+        uses: actions/download-artifact@v4
+        with:
+          pattern: cli-*
+          merge-multiple: false
+          path: cli-arch
+
+      - name: Merge universal CLI & pack
+        env:
+          REF_NAME: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # 资产名不能带 v 前缀：dmg 是 Prune_0.13.1_aarch64.dmg，brew-tap.mjs 渲染的
+          # formula URL 也用 #{version}（0.13.1）——带 v 会让 formula 的 URL 404。
+          VERSION="${REF_NAME#v}"
+          ASSET_NAME="Prune_CLI_${VERSION}_universal_macos.tar.gz"
+
+          lipo -create \
+            "cli-arch/cli-aarch64-apple-darwin/prune" \
+            "cli-arch/cli-x86_64-apple-darwin/prune" \
+            -output prune
+          chmod +x prune
+          file prune
+          echo "archs: $(lipo -archs prune)"
+
+          # tar 根目录直接放 prune：formula 的 install 是 bin.install "prune"，
+          # 多包一层目录会让它在新版本上直接报找不到文件。
+          tar czf "$ASSET_NAME" prune
+          echo "ASSET_NAME=$ASSET_NAME" >> "$GITHUB_ENV"
+          shasum -a 256 "$ASSET_NAME"
+
+      - name: Upload to (draft) release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          export RELEASE_TAG="${{ github.ref_name }}"
+          node <<'NODE_SCRIPT'
+          const fs = require('fs');
+          const headers = { Authorization: `token ${process.env.GH_TOKEN}` };
+          const repo = process.env.GH_REPO;
+          const tag = process.env.RELEASE_TAG;
+          const assetName = process.env.ASSET_NAME;
+          (async () => {
+            // 草稿对 /releases/tags/{tag} 返回 404，列表端点在 contents:write 下包含草稿
+            const listRes = await fetch(`https://api.github.com/repos/${repo}/releases?per_page=100`, { headers });
+            if (!listRes.ok) throw new Error(`GET releases failed: ${listRes.status} ${await listRes.text()}`);
+            const releases = await listRes.json();
+            const meta = releases.find((r) => r.tag_name === tag);
+            if (!meta) throw new Error(`找不到 ${tag} 的 Release：bundle 三腿是否都成功？`);
+            // 幂等：删除同名旧 asset 再传
+            for (const a of meta.assets ?? []) {
+              if (a.name === assetName) {
+                const del = await fetch(`https://api.github.com/repos/${repo}/releases/assets/${a.id}`, { method: 'DELETE', headers });
+                if (!del.ok && del.status !== 204) throw new Error(`删除旧 asset 失败: ${del.status}`);
+                console.log(`已删除旧 asset：${assetName}`);
+              }
+            }
+            const body = fs.readFileSync(assetName);
+            const up = await fetch(`${meta.upload_url.replace(/\{\?.*$/, '')}?name=${assetName}`, {
+              method: 'POST',
+              headers: { ...headers, 'Content-Type': 'application/octet-stream', 'Content-Length': body.length },
+              body: body,
+            });
+            if (!up.ok) throw new Error(`上传 asset 失败: ${up.status} ${await up.text()}`);
+            console.log(`✓ CLI universal asset 已上传：${assetName}`);
+          })().catch((e) => { console.error(e); process.exit(1); });
+          NODE_SCRIPT
+
   # ---------------------------------------------------------------------------
   # 双源发布归真（M1/R15）：GitHub 与 Gitee 的 Release 正文讲同一个故事。
   # tauri-action 的 releaseBody 是静态模板，拿不到每版的变更内容；此 job 在
@@ -344,7 +442,7 @@ jobs:
   # ---------------------------------------------------------------------------
   release-notes:
     name: Sync release notes with CHANGELOG
-    needs: bundle
+    needs: [bundle, cli-universal]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -381,6 +479,7 @@ jobs:
               '|---|---|',
               '| macOS Apple Silicon | `Prune_*_aarch64.dmg` |',
               '| macOS Intel | `Prune_*_x64.dmg` |',
+              '| macOS CLI (universal) | `Prune_CLI_*_universal_macos.tar.gz` |',
               '| Windows x64 | `Prune_*_x64-setup.exe`（推荐） / `Prune_*_x64_en-US.msi` |',
               '',
               '已装旧版本可通过托盘菜单「检查更新」或应用内自动升级直接更新到本版本。',
@@ -408,3 +507,25 @@ jobs:
             console.log(`✓ GitHub Release #${meta.id} 已同步正文并发布：下载表 + CHANGELOG${section ? ` ${tag} 段` : '（无本版段）'}`);
           })().catch((e) => { console.error(e); process.exit(1); });
           NODE_SCRIPT
+
+  # ---------------------------------------------------------------------------
+  # D-02：发版后自动更新 Homebrew tap（docs/d02-homebrew-plan.md §3.3）。
+  # 渲染 cask + formula（sha256 从已发布的资产实算）并推送 JackXuyi/homebrew-prune。
+  # 仅 tag 触发（workflow_dispatch 是对现有版本的幂等重跑，不该动 tap）；
+  # tap 仓库或 HOMEBREW_TAP_TOKEN 缺失时显式失败——静默跳过会让 tap 停在旧版。
+  # 幂等：渲染内容与 tap 现状一致时不产生新 commit。
+  # ---------------------------------------------------------------------------
+  homebrew-tap:
+    name: Update homebrew tap
+    needs: release-notes
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Render cask & formula, push to tap
+        env:
+          PRUNE_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: node scripts/brew-tap.mjs

@@ -44,12 +44,24 @@ Tauri 2 · Rust · React 19 · no account · no telemetry · no elevated permiss
 
 ## Install
 
+**macOS — Homebrew (recommended, macOS 13+)**
+
+```bash
+brew install --cask jackxuyi/prune/prune     # menu-bar app + CLI, one command
+brew install jackxuyi/prune/prune-cli        # CLI only
+```
+
+The cask ships the CLI inside the app bundle and links it to `$(brew --prefix)/bin/prune` — after install, `prune scan` / `prune doctor` work directly. The app updates itself in place; `brew upgrade --cask prune` upgrades the cask copy. `brew uninstall --cask prune` removes the app and the CLI link; add `--zap` to also delete app data (`~/Library/Application Support/com.xuyi.prune` and friends — the list is explicit, no wildcards).
+
+**Direct download (macOS / Windows)**
+
 Download the latest build from [Releases](https://github.com/JackXuyi/prune/releases/latest):
 
 | Platform | File |
 | --- | --- |
 | macOS Apple Silicon (M1 and later) | `Prune_*_aarch64.dmg` |
 | macOS Intel | `Prune_*_x64.dmg` |
+| macOS CLI only (universal) | `Prune_CLI_*_universal_macos.tar.gz` |
 | Windows 10+ x64 (beta) | `Prune_*_x64-setup.exe` (recommended) or `Prune_*_x64_en-US.msi` |
 
 **macOS, three steps**
@@ -63,7 +75,7 @@ Download the latest build from [Releases](https://github.com/JackXuyi/prune/rele
 
 **Linux**: no GUI build is published. `cargo build --release -p prune-cli` gives you the CLI/MCP binary — see [Platform support](#platform-support) for what it can and cannot read there.
 
-**Why this is needed**: the build is ad-hoc signed — no paid Apple Developer account, no notarization — so Gatekeeper does not recognize it. That is the entire reason for the prompt. The bundles are complete, and in-app updates do not use this path (the updater verifies its own signatures), so upgrading from the tray menu will not show this again. This is not a disclaimer: it is the fact, and the choice is yours.
+**Why the "Open Anyway" step is needed (direct download only)**: the build is ad-hoc signed — no paid Apple Developer account, no notarization — so Gatekeeper does not recognize it. That is the entire reason for the prompt. The bundles are complete, and in-app updates do not use this path (the updater verifies its own signatures), so upgrading from the tray menu will not show this again. Homebrew installs do not hit this prompt: cask downloads don't carry the quarantine flag. This is not a disclaimer: it is the fact, and the choice is yours.
 
 
 ## Build from source
