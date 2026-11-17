@@ -13,6 +13,7 @@ use std::sync::Arc;
 use tauri::Manager;
 
 mod commands;
+mod dock;
 mod i18n;
 mod lan;
 mod net_diag;
@@ -129,9 +130,13 @@ pub fn run() {
             island::island_status
         ])
         .setup(|app| {
-            // 资源守门员形态：常驻菜单栏，不占 Dock
+            // 资源守门员形态：常驻菜单栏，不占 Dock（主窗口打开期间会临时
+            // 显示 Dock 图标，见 dock.rs / docs/dock-icon-plan.md）
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+            // dev 裸二进制没有 bundle 图标，Dock 只会显示通用 exec 图标；
+            // 启动时显式把打包 PNG 设给 NSApp（release 下无害）
+            dock::set_app_icon(app.handle());
 
             // 语言必须在建托盘之前解析好：托盘菜单文案活在 Rust 进程里，
             // 建完再改就得重建整份菜单（见 tray::rebuild_menu）
@@ -265,13 +270,16 @@ pub fn run() {
             }
 
             // 常驻守门员形态：主窗口点红叉只隐藏不销毁，否则 open_main 会因
-            // 窗口已销毁而永久失效（Accessory 模式没有 Dock 图标可再打开）
+            // 窗口已销毁而永久失效（TrayIcon 的 "打开主窗口" 是唯一重启入口）。
+            // 隐藏后同步收回 Dock 图标，回到纯菜单栏常驻形态
             if let Some(main) = app.get_webview_window("main") {
                 let main_handle = main.clone();
+                let app_handle = app.handle().clone();
                 main.on_window_event(move |event| {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = main_handle.hide();
+                        dock::ensure_dock_hidden(&app_handle);
                     }
                 });
             }
@@ -309,6 +317,21 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 if let Some(state) = handle.try_state::<Arc<net_sampler::TotalNetState>>() {
                     state.flush_on_exit();
+                }
+            }
+
+            // Dock 图标跟随主窗口（docs/dock-icon-plan.md）：主窗口显示期间
+            // 用户可能点 Dock 图标。主窗口不可见时按「重新打开」处理；
+            // 可见时什么都不做（macOS 默认行为已会把 App 拉到前台，重复调
+            // show_main 会把窗口重新居中，打扰用户）
+            #[cfg(target_os = "macos")]
+            if let tauri::RunEvent::Reopen { .. } = event {
+                let visible = handle
+                    .get_webview_window("main")
+                    .and_then(|w| w.is_visible().ok())
+                    .unwrap_or(false);
+                if !visible {
+                    tray::show_main(handle);
                 }
             }
         });

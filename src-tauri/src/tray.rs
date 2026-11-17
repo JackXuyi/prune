@@ -1048,6 +1048,10 @@ pub fn show_main(app: &AppHandle) {
         eprintln!("[m0-tray] ❌ 找不到 main 窗口");
         return;
     };
+    // Dock 图标跟随主窗口（docs/dock-icon-plan.md）：必须先切前台形态再
+    // show + focus——顺序反了窗口已显示但 App 仍是 Accessory，set_focus
+    // 抢不到前台焦点，窗口浮在当前 App 后面
+    crate::dock::ensure_dock_visible(app);
     position_main(app, &main);
     let _ = main.show();
     let _ = main.set_focus();

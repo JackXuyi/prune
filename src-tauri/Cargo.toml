@@ -28,7 +28,7 @@ sysinfo = "0.39.6"
 # objc2-app-kit 0.3.2 —— 不引入新的编译产物，只追加 feature。
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
-objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSThread"] }
+objc2-foundation = { version = "0.3", features = ["NSGeometry", "NSThread", "NSData"] }
 objc2-app-kit = { version = "0.3", features = [
     "NSPopover",
     "NSViewController",
@@ -39,6 +39,7 @@ objc2-app-kit = { version = "0.3", features = [
     "NSGraphics",
     "NSColor",
     "NSEvent",
+    "NSImage",
     "NSUserInterfaceValidation",
 ] }
 # CALayer 圆角裁剪（objc2-app-kit 已带入依赖树）
