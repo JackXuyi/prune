@@ -150,17 +150,18 @@ export function UpdateWindow() {
           </button>
         </div>
 
-        {/* 主体：图标 + 标题 + 版本 + 说明；窗口固定 800×500，超出时此处滚动，顶栏/底栏不动 */}
-        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-3 pt-6">
+        {/* 主体：图标 + 标题 + 版本 + 说明；窗口固定 800×500，超出时此处滚动，顶栏/底栏不动。
+            已是最新态整体紧凑（图标圈缩小、间距压缩）——该态日志最长，优先给说明留空间 */}
+        <div className="min-h-0 flex-1 overflow-y-auto px-6 pb-2 pt-4">
           <div
-            className={`mx-auto flex h-12 w-12 items-center justify-center rounded-full ${
+            className={`mx-auto flex items-center justify-center rounded-full ${
               isChecking
-                ? "bg-info/15 text-info"
+                ? "h-12 w-12 bg-info/15 text-info"
                 : isError
-                  ? "bg-danger/15 text-danger"
+                  ? "h-12 w-12 bg-danger/15 text-danger"
                   : isAvailable
-                    ? "bg-accent/15 text-accent"
-                    : "bg-info/15 text-info"
+                    ? "h-12 w-12 bg-accent/15 text-accent"
+                    : "h-9 w-9 bg-info/15 text-info"
             }`}
           >
             {isChecking ? (
@@ -170,11 +171,15 @@ export function UpdateWindow() {
             ) : isAvailable ? (
               <DownloadIcon size={24} />
             ) : (
-              <CheckIcon size={24} />
+              <CheckIcon size={18} />
             )}
           </div>
 
-          <h1 className="mt-4 text-center text-[17px] font-semibold tracking-tight text-ink">
+          <h1
+            className={`text-center text-[17px] font-semibold tracking-tight text-ink ${
+              upToDate ? "mt-2.5" : "mt-4"
+            }`}
+          >
             {title}
           </h1>
 
@@ -201,8 +206,8 @@ export function UpdateWindow() {
           {/* 分割线 + 说明标题 */}
           {!isError && notesMd ? (
             <>
-              <div className="my-4 border-t border-hairline-soft" />
-              <div className="mb-2 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
+              <div className="my-3 border-t border-hairline-soft" />
+              <div className="mb-1.5 text-[11px] font-medium uppercase tracking-wide text-ink-faint">
                 {t("update.releaseNotes")}
               </div>
               <Markdown source={notesMd} />
@@ -247,7 +252,7 @@ export function UpdateWindow() {
         </div>
 
         {/* 底部按钮 */}
-        <div className="flex items-center justify-end gap-2 border-t border-hairline-soft px-5 py-3.5">
+        <div className="flex items-center justify-end gap-2 border-t border-hairline-soft px-5 py-3">
           {done || installing ? null : isChecking ? (
             // 检查中：只允许关闭；不留「立即更新」避免误点无结果的按钮
             <button

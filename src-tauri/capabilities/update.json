@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "update-window",
+  "description": "update 窗口额外能力：允许前端直接 hide() 关窗（关窗不依赖自定义 command，避免旧二进制报 Command not found）",
+  "windows": ["update"],
+  "permissions": ["core:window:allow-hide"]
+}

@@ -63,8 +63,9 @@ cat ~/.tauri/prune-updater.key
 | `src/components/AboutSection.tsx` | 设置页「关于」卡片的「检查更新」按钮 → `updateCheckDialog()` → 同一 `check_and_prompt` |
 | `src-tauri/tauri.conf.json` | `bundle.createUpdaterArtifacts: true` + `plugins.updater`（endpoint + pubkey）+ `app.windows` 声明 `update` 窗口（固定 800×500 / 不可调整 / 无边框 / 透明 / 置顶 / center） |
 | `src-tauri/capabilities/default.json` | `windows` 加 `update` label（否则新 webview 拿不到 `core:default`，invoke/listen 被拒） |
+| `src-tauri/capabilities/update.json` | update 窗口额外授 `core:window:allow-hide`——前端 `getCurrentWindow().hide()` 关窗必需；`core:default` 只含查询类窗口权限，缺它时 hide 被静默拒绝（点了 X / 稍后没反应） |
 | `src/App.tsx` | 按窗口 label 分发，`update` → `<UpdateWindow>`（跳过 mem/disk init） |
-| `src/windows/UpdateWindow.tsx` | 检查更新弹窗：四态（检查中 / 新版 / 最新 / 出错）+ 下载进度 + markdown 说明；mount pull + `update://dialog` 事件刷新；固定窗口内顶栏/底栏不动、主体内容超长滚动 |
+| `src/windows/UpdateWindow.tsx` | 检查更新弹窗：四态（检查中 / 新版 / 最新 / 出错）+ 下载进度 + markdown 说明；mount pull + `update://dialog` 事件刷新；固定窗口内顶栏/底栏不动、主体内容超长滚动；「已是最新」态紧凑（图标圈 36px、间距压缩）优先保证日志不滚动 |
 | `src/components/Markdown.tsx` | 零依赖轻量 markdown 渲染器（React 元素组装，无 `dangerouslySetInnerHTML`，链接只放行 http(s)） |
 | `src/components/UpdateCard.tsx` | 面板更新卡片：待更新 / 下载进度 / 重启提示 / 「已是最新」轻提示 |
 | `src/lib/ipc.ts` | `update_check` / `update_pending` / `update_install` / `updateCheckDialog` / `updateDialogData` 封装（关窗走 Tauri 内置 `getCurrentWindow().hide()`，不占 IPC） |
