@@ -65,6 +65,25 @@ export function DownloadIcon(props: IconProps) {
   );
 }
 
+/** Lucide check：更新弹窗「已是最新」 */
+export function CheckIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M20 6 9 17l-5-5" />
+    </Svg>
+  );
+}
+
+/** Lucide x：更新弹窗「关闭 / 失败」 */
+export function CloseIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M18 6 6 18" />
+      <path d="m6 6 12 12" />
+    </Svg>
+  );
+}
+
 export function ChevronRightIcon(props: IconProps) {
   return (
     <Svg {...props}>

@@ -7,6 +7,10 @@
 //! - 托盘「检查更新」与面板入口复用同一套 `check_and_notify`，结果通过
 //!   事件广播给所有窗口；面板隐藏时事件照收，重开面板时还有
 //!   `update_pending` 兜底查询，状态不丢。
+//! - 手动检查的「点了必有回应」由独立 `update` WebView 窗口承载（原生
+//!   dialog 是纯文本，渲染不了 markdown）：Rust 把结果写进 `UpdateDialogState`
+//!   后 show 窗口，窗口 mount 后经 `update_dialog_data` 拉取，配合 `update://dialog`
+//!   事件刷新——不依赖事件重放，规避「窗口还没 listen 事件就发」的竞态。
 //! - 启动静默检查：只在新版本可用时发事件打扰，已是最新则完全沉默。
 //! - 重启交给插件 `install()`（macOS/Linux 自动重启，Windows 跑完 NSIS
 //!   安装器后自启），Rust 侧不做手动 restart，避免与插件语义打架。
@@ -23,9 +27,7 @@ use std::sync::{Arc, Mutex};
 
 use prune_core::i18n::err::err_text;
 use prune_core::i18n::fill;
-use prune_core::locale::Locale;
 use tauri::{AppHandle, Emitter, Manager};
-use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
 /// 待安装的更新（非 Clone，一次 take；升级成功后应用即重启）
@@ -43,85 +45,122 @@ impl Default for UpdateState {
     }
 }
 
+/// 「检查更新」弹窗窗口拉取的结构化结果（serde 默认字段即 kebab-case 的
+/// Rust 字段名，这里显式 rename 成 camelCase 对齐前端 TS 类型）。
+///
+/// `notes_md` 是 markdown 原文：发现新版时来自 latest.json 的 `notes`（CI 已
+/// 改写为 CHANGELOG 本版段），已是最新时来自本地 CHANGELOG 摘要。前端用
+/// 轻量 markdown 渲染器渲染——这正是换掉纯文本原生 dialog 的意义。
+#[derive(Clone, serde::Serialize)]
+#[serde(
+    rename_all = "camelCase",        // 变体名 → status 值（upToDate / available ...）
+    rename_all_fields = "camelCase", // struct variant 的字段 → data 内的 key
+    tag = "status",
+    content = "data"
+)]
+pub enum UpdateDialogPayload {
+    /// 正在检查（窗口刚打开、网络检查进行中；点击后立即显示，不等结果）
+    Checking,
+    /// 发现新版本
+    Available {
+        version: String,
+        current_version: String,
+        notes_md: Option<String>,
+        date: Option<String>,
+    },
+    /// 已是最新（附当前版本说明）
+    UpToDate {
+        current_version: String,
+        notes_md: Option<String>,
+    },
+    /// 检查失败
+    Error { message: String },
+}
+
+impl Default for UpdateDialogPayload {
+    /// 窗口刚 mount、检查还没回来时的初始态：显示「正在检查」，而不是一个空错误框。
+    fn default() -> Self {
+        Self::Checking
+    }
+}
+
+/// 最近一次手动检查的结果，供 `update` 窗口 mount 后主动拉取（curl 式 pull，
+/// 不依赖事件重放）。窗口 show 之前写入，因此前端 mount 时一定能读到。
+pub struct UpdateDialogState(Mutex<UpdateDialogPayload>);
+
+impl UpdateDialogState {
+    pub fn new() -> Self {
+        Self(Mutex::new(UpdateDialogPayload::default()))
+    }
+
+    pub fn set(&self, payload: UpdateDialogPayload) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = payload;
+    }
+
+    pub fn get(&self) -> UpdateDialogPayload {
+        self.0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+    }
+}
+
+impl Default for UpdateDialogState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub const EVENT_AVAILABLE: &str = "update://available";
 pub const EVENT_CHECK_RESULT: &str = "update://check-result";
 pub const EVENT_PROGRESS: &str = "update://progress";
 pub const EVENT_INSTALLED: &str = "update://installed";
+/// 通知 `update` 窗口「有新结果了，来拉一次」（窗口 mount 后已 listen）。
+pub const EVENT_DIALOG: &str = "update://dialog";
 
-/// 托盘「检查更新」原生弹窗文案（WorkBuddy 式：点了就弹结果）。
+/// CHANGELOG.md 编译期嵌入：作为「已是最新版本」弹窗的更新说明数据源。
 ///
-/// 与前端 `update` namespace 分开维护：弹窗在 Rust 侧直接弹，不经过 WebView，
-/// 前端文案树够不着这里。字段用结构体保证漏翻译编译期报错。
-pub struct UpdatePromptText {
-    /// 发现新版本：正文（{version} 新版本号，{current} 当前版本，{notes} 更新说明）
-    pub available_body: &'static str,
-    /// 发现新版本：标题
-    pub available_title: &'static str,
-    /// 「立即更新」按钮（点了直接下载安装）
-    pub install: &'static str,
-    /// 「稍后」按钮（关闭弹窗，更新仍留在面板卡片里）
-    pub later: &'static str,
-    /// 已是最新版本：正文（{current} 当前版本）
-    pub up_to_date_body: &'static str,
-    /// 已是最新版本：标题
-    pub up_to_date_title: &'static str,
-    /// 单个「好」按钮
-    pub ok: &'static str,
-    /// 检查失败：标题
-    pub error_title: &'static str,
-    /// 检查失败：正文（{err} 原始错误，本地化前后缀）
-    pub error_body: &'static str,
-    /// 更新说明过长时的截断提示
-    pub notes_more: &'static str,
+/// 为什么不用 `update.body`：插件在发现新版时才有 notes，且那来自 latest.json 的
+/// `notes` 字段（历史上是静态下载表模板，见 docs/updater-plan.md）；「已是最新」
+/// 时 `check()` 直接返回 `None`，元数据全被丢弃。本地 CHANGELOG 是当前版本说明
+/// 唯一可靠、零网络、零新依赖的来源。编译期嵌入也避开了运行时 resource_dir 在
+/// dev 模式下读不到的问题。
+const CHANGELOG: &str = include_str!("../../CHANGELOG.md");
+
+/// 提取 CHANGELOG 中指定版本的段落（从 `## {version}` 到下一个 `## `）。
+fn changelog_section<'a>(changelog: &'a str, version: &str) -> Option<&'a str> {
+    let marker = format!("## {version}");
+    let start = changelog.find(&marker)?;
+    let rest = &changelog[start + marker.len()..];
+    let end = rest.find("\n## ").unwrap_or(rest.len());
+    Some(rest[..end].trim())
 }
 
-const PROMPT_ZH: UpdatePromptText = UpdatePromptText {
-    available_body: "发现新版本 v{version}（当前 v{current}）。\n\n{notes}",
-    available_title: "发现新版本",
-    install: "立即更新",
-    later: "稍后",
-    up_to_date_body: "已是最新版本（v{current}），无需更新。",
-    up_to_date_title: "检查更新",
-    ok: "好",
-    error_title: "检查更新失败",
-    error_body: "检查更新失败：{err}",
-    notes_more: "…（更多说明见 Release 页面）",
-};
-
-const PROMPT_EN: UpdatePromptText = UpdatePromptText {
-    available_body: "Version {version} is available (current v{current}).\n\n{notes}",
-    available_title: "Update Available",
-    install: "Install now",
-    later: "Later",
-    up_to_date_body: "You're up to date (v{current}). No update needed.",
-    up_to_date_title: "Check for Updates",
-    ok: "OK",
-    error_title: "Update Check Failed",
-    error_body: "Update check failed: {err}",
-    notes_more: "… (see the Release page for more)",
-};
-
-fn prompt_text(locale: Locale) -> &'static UpdatePromptText {
-    match locale {
-        Locale::Zh => &PROMPT_ZH,
-        Locale::En => &PROMPT_EN,
-    }
-}
-
-/// 截断更新说明：release notes 可能很长（多段 changelog），原生弹窗塞不下。
-/// 按 char 边界截断，避免把多字节中文切断；超限追加本地化的省略提示。
-fn truncate_notes(notes: &str, max_chars: usize, more: &str) -> String {
-    let trimmed = notes.trim();
-    let mut out = String::new();
-    for (i, ch) in trimmed.chars().enumerate() {
-        if i >= max_chars {
-            out.push('\n');
-            out.push_str(more);
-            break;
+/// 把 CHANGELOG 本版段转成 markdown 说明（交给前端渲染，保留完整层次）：
+/// - `###` 小标题 → markdown 二级标题（`##`，在弹窗里比正文醒目一档）
+/// - `-` bullet → 原样保留（含 `**加粗**` / `` `代码` `` / 链接），不再剥离标记
+/// - 无冒号截断、无字符截断：窗口可滚动，长条目允许完整换行显示
+///
+/// 唯一的收窄是「只取本版段」：不把下一版本的内容带进来。返回 None 表示
+/// CHANGELOG 里没有该版本段（调用方据此回退到无说明的文案）。
+fn current_version_notes(changelog: &str, version: &str) -> Option<String> {
+    let section = changelog_section(changelog, version)?;
+    let mut lines: Vec<String> = Vec::new();
+    for raw in section.lines() {
+        let line = raw.trim_end();
+        let trimmed = line.trim();
+        if let Some(title) = trimmed.strip_prefix("### ") {
+            // 小标题升一档：本版段在弹窗里自成一体，主题用 H2 更清晰
+            lines.push(format!("## {title}"));
+        } else if trimmed.starts_with("- ") {
+            lines.push(trimmed.to_string());
         }
-        out.push(ch);
     }
-    out
+    if lines.is_empty() {
+        None
+    } else {
+        Some(lines.join("\n\n"))
+    }
 }
 
 /// 从 Update 组装前端负载（payload 不直接序列化 Update：其字段类型随
@@ -182,93 +221,99 @@ pub async fn check_and_notify(app: &AppHandle, manual: bool) -> Result<serde_jso
     }
 }
 
-/// 托盘「检查更新」入口：检查后弹原生对话框反馈结果（WorkBuddy 式交互）。
+/// 托盘 / 设置页「检查更新」入口：点击即 show `update` 窗口，检查在后台跑。
 ///
-/// 为什么单独做这一步：托盘点击时面板窗口多半是隐藏的，而 `check_and_notify`
-/// 的结果只通过事件发给前端卡片——用户点了菜单却看不到任何反馈。这里在 Rust
-/// 侧直接弹系统原生对话框，保证「点了必有回应」；同时 `check_and_notify` 的
-/// 事件照常发出，面板开着时卡片也同步更新，两套反馈互不干扰。
+/// 为什么换成 WebView 窗口而非原生 dialog：dialog 是纯文本，更新说明里的
+/// markdown（标题层级、加粗、行内代码、链接）全部退化成难看的字符；用户要
+/// 真正的 markdown 渲染 + 好看的样式。窗口在 tauri.conf.json 声明为
+/// `visible:false`，随 App 启动创建，前端 mount 后一直 listen `update://dialog`。
 ///
-/// 三种结果：
-/// - 发现新版本：弹「立即更新 / 稍后」。点「立即更新」直接下载安装并重启；
-///   点「稍后」关闭弹窗，待更新仍留在 `UpdateState` + 面板卡片里。
-/// - 已是最新：弹单行「好」提示。
-/// - 出错：弹错误提示（不暴露过多细节，message 用本地化错误串）。
-pub async fn check_and_prompt(app: &AppHandle) {
-    let locale = crate::i18n::current(app);
-    let text = prompt_text(locale);
+/// 「点了就弹」的数据流（不等网络，先给反馈）：
+/// 1. **同步**：写入 `Checking` 态 → show 窗口 → emit `EVENT_DIALOG`。前端
+///    立即渲染「正在检查更新…」转圈，用户不必干等慢网络。
+/// 2. **后台**：spawn 检查（结果已写入 `UpdateState` / 已广播既有事件），
+///    组装 `UpdateDialogPayload` 写回 `UpdateDialogState`。
+/// 3. 再次 emit `EVENT_DIALOG`，窗口重新 pull 并按结果渲染：发现新版 →
+///    立即更新 / 稍后；已是最新 → 好；出错 → 好。
+///
+/// 窗口 mount 时会主动 pull 一次兜底，规避「窗口还没 listen 事件就发」的
+/// 竞态；检查至少几百 ms，足以让窗口完成 mount + listen。
+///
+/// 三种结果都由前端窗口承载文案（i18n `update` namespace），Rust 只给结构化
+/// 数据 + markdown 原文，不再维护一份 Rust 侧的文案树。
+pub fn check_and_prompt(app: &AppHandle) {
+    // 1. 立即反馈：checking 态 + show 窗口（全同步，不碰网络）
+    if let Some(state) = app.try_state::<std::sync::Arc<UpdateDialogState>>() {
+        state.set(UpdateDialogPayload::Checking);
+    }
+    show_update_window(app);
 
-    let result = check_and_notify(app, true).await;
+    // 2. 后台检查：结果出来后写回 state 并 emit 通知窗口刷新
+    let handle = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let result = check_and_notify(&handle, true).await;
 
-    // 弹窗回调在独立线程执行（见 tauri-plugin-dialog desktop::show_message_dialog），
-    // 不能在里面直接 await；构造好 builder 后交给 show 的闭包，闭包内再 spawn。
-    match result {
-        Ok(payload) if payload["status"] == "available" => {
-            let version = payload["version"].as_str().unwrap_or("");
-            let current = payload["currentVersion"].as_str().unwrap_or("");
-            let notes = payload["notes"].as_str().unwrap_or("");
-            let notes = if notes.trim().is_empty() {
-                String::new()
-            } else {
-                format!("\n{}", truncate_notes(notes, 400, text.notes_more))
-            };
-            let body = fill(
-                text.available_body,
-                &[
-                    ("version", version),
-                    ("current", current),
-                    ("notes", &notes),
-                ],
-            );
+        let payload = match result {
+            Ok(p) if p["status"] == "available" => {
+                let notes = p["notes"].as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
+                UpdateDialogPayload::Available {
+                    version: p["version"].as_str().unwrap_or("").to_string(),
+                    current_version: p["currentVersion"].as_str().unwrap_or("").to_string(),
+                    notes_md: notes,
+                    date: p["date"].as_str().map(str::to_string),
+                }
+            }
+            Ok(_) => {
+                // 已是最新：notes 只能本地取（插件 check() 返回 None 时元数据全丢）。
+                // 版本用编译期常量，避免运行时 package_info 取不到导致显示成空 "v"。
+                let current = env!("CARGO_PKG_VERSION").to_string();
+                UpdateDialogPayload::UpToDate {
+                    notes_md: current_version_notes(CHANGELOG, &current),
+                    current_version: current,
+                }
+            }
+            Err(e) => UpdateDialogPayload::Error { message: e },
+        };
 
-            let install_handle = app.clone();
-            app.dialog()
-                .message(body)
-                .title(text.available_title)
-                .kind(MessageDialogKind::Info)
-                .buttons(MessageDialogButtons::OkCancelCustom(
-                    text.install.to_string(),
-                    text.later.to_string(),
-                ))
-                .show(move |confirmed| {
-                    if confirmed {
-                        let handle = install_handle.clone();
-                        tauri::async_runtime::spawn(async move {
-                            if let Err(e) = update_install(handle).await {
-                                eprintln!("[updater] 弹窗「立即更新」安装失败: {e}");
-                            }
-                        });
-                    }
-                });
+        if let Some(state) = handle.try_state::<std::sync::Arc<UpdateDialogState>>() {
+            state.set(payload);
         }
-        Ok(_) => {
-            // up-to-date（executable version 从插件读，这里取包版本展示）
-            let current = app.package_info().version.to_string();
-            let body = fill(text.up_to_date_body, &[("current", &current)]);
-            app.dialog()
-                .message(body)
-                .title(text.up_to_date_title)
-                .kind(MessageDialogKind::Info)
-                .buttons(MessageDialogButtons::OkCustom(text.ok.to_string()))
-                .show(|_| {});
-        }
-        Err(e) => {
-            let body = fill(text.error_body, &[("err", &e)]);
-            app.dialog()
-                .message(body)
-                .title(text.error_title)
-                .kind(MessageDialogKind::Error)
-                .buttons(MessageDialogButtons::OkCustom(text.ok.to_string()))
-                .show(|_| {});
-        }
+        // 窗口此时已 mount 且在 listen，emit 触发它重新 pull 拿到结果
+        let _ = handle.emit(EVENT_DIALOG, ());
+    });
+}
+
+/// show 更新窗口 + 置前；失败只记日志（不影响检查本身的事件契约）。
+fn show_update_window(app: &AppHandle) {
+    let Some(win) = app.get_webview_window("update") else {
+        eprintln!("[updater] 未找到 update 窗口（tauri.conf.json 应声明 label=update）");
+        return;
+    };
+    if let Err(e) = win.show() {
+        eprintln!("[updater] show update 窗口失败: {e}");
+        return;
+    }
+    let _ = win.set_focus();
+    // 通知已 mount 的窗口拉取新结果；窗口若恰好没监听到，mount 时的主动 pull 兜底
+    let _ = app.emit(EVENT_DIALOG, ());
+}
+
+/// 更新窗口拉取最近一次检查结果（前端 mount 后调用）。
+#[tauri::command]
+pub fn update_dialog_data(app: AppHandle) -> UpdateDialogPayload {
+    match app.try_state::<std::sync::Arc<UpdateDialogState>>() {
+        Some(state) => state.get(),
+        None => UpdateDialogPayload::default(),
     }
 }
 
-/// 设置页「检查更新」入口：与托盘完全复用同一套「检查 + 原生弹窗」逻辑。
+/// 设置页「检查更新」入口：与托盘完全复用同一套「立即弹窗 + 后台检查」逻辑。
 /// 暴露成 command 供前端调用；弹窗由 `check_and_prompt` 负责，这里只转发。
+/// 注意：`check_and_prompt` 是同步的（内部 spawn 后台任务），command 立即返回，
+/// 前端 `await` 不会卡在网络检查上。
 #[tauri::command]
-pub async fn check_update_dialog(app: AppHandle) {
-    check_and_prompt(&app).await;
+pub fn check_update_dialog(app: AppHandle) {
+    check_and_prompt(&app);
 }
 
 /// 启动静默检查：延迟 5 s（避开启动期采样高峰），失败不打扰用户。
@@ -339,3 +384,65 @@ pub async fn update_install(app: AppHandle) -> Result<(), String> {
     eprintln!("[updater] 安装完成，重启应用");
     app.restart()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 用真实 CHANGELOG 当前版本段验证：段落提取到下一个 `## ` 为止，
+    /// 不把 0.13.0 的内容带进来。
+    #[test]
+    fn changelog_section_stops_at_next_version() {
+        let section = changelog_section(CHANGELOG, "0.13.1").expect("应有 0.13.1 段");
+        assert!(section.contains("修 0.13.0 的 Windows 构建失败"));
+        assert!(!section.contains("Wave 1"), "不应跨越到下一个版本段");
+        assert!(changelog_section(CHANGELOG, "0.13.0").is_some());
+        assert!(changelog_section(CHANGELOG, "9.9.9").is_none());
+    }
+
+    /// markdown 摘要：小标题升为 H2、bullet 原样保留（含加粗/反引号），
+    /// 不跨版本、不硬截断——交给前端 markdown 渲染器完整呈现。
+    #[test]
+    fn current_version_notes_is_markdown_and_bounded() {
+        let notes = current_version_notes(CHANGELOG, "0.13.1").expect("应有摘要");
+        // 小标题升为 H2
+        assert!(notes.contains("## 修 0.13.0 的 Windows 构建失败"));
+        // bullet 的 markdown 标记保留（不再剥离）
+        assert!(notes.contains("- **"));
+        assert!(notes.contains("`panel_fit_height`"));
+        // 不跨到下一版本段
+        assert!(!notes.contains("Wave 1"), "不应带下一版本内容");
+        // 只有本版段：1 个 H2 + 3 个 bullet
+        assert_eq!(notes.lines().filter(|l| l.starts_with("- ")).count(), 3);
+        assert_eq!(notes.lines().filter(|l| l.starts_with("## ")).count(), 1);
+    }
+
+    /// CHANGELOG 缺段时返回 None（前端据此显示「暂无说明」兜底）。
+    #[test]
+    fn current_version_notes_missing_returns_none() {
+        assert!(current_version_notes(CHANGELOG, "9.9.9").is_none());
+    }
+
+    /// checking 态（含 default）序列化为 {"status":"checking"}，前端据此渲染转圈。
+    #[test]
+    fn checking_payload_serializes_as_status_only() {
+        let v = serde_json::to_value(UpdateDialogPayload::Checking).expect("should serialize");
+        assert_eq!(v, serde_json::json!({ "status": "checking" }));
+        let v = serde_json::to_value(UpdateDialogPayload::default()).expect("should serialize");
+        assert_eq!(v, serde_json::json!({ "status": "checking" }));
+    }
+
+    /// 结果态仍按 tag/content 拆分，前端 discriminated union 依此收窄。
+    #[test]
+    fn result_payload_serializes_tag_and_data() {
+        let v = serde_json::to_value(UpdateDialogPayload::UpToDate {
+            current_version: "0.13.1".into(),
+            notes_md: Some("## hi".into()),
+        })
+        .expect("should serialize");
+        assert_eq!(v["status"], "upToDate");
+        assert_eq!(v["data"]["currentVersion"], "0.13.1");
+        assert_eq!(v["data"]["notesMd"], "## hi");
+    }
+}
+

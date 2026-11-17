@@ -301,13 +301,11 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             match id {
                 "open-main" => show_main(app),
                 MENU_CHECK_UPDATE => {
-                    // 异步检查，不阻塞菜单线程。结果弹原生对话框（WorkBuddy 式
-                    // 「点了就弹」），因为托盘点击时面板多半隐藏、光发事件看不见；
-                    // 事件仍照常广播给开着面板的卡片（见 updater::check_and_prompt）。
-                    let handle = app.clone();
-                    tauri::async_runtime::spawn(async move {
-                        crate::updater::check_and_prompt(&handle).await;
-                    });
+                    // 立即弹出 update 窗口显示「正在检查」，后台异步检查再刷新结果
+                    // （WorkBuddy 式「点了就弹」）。check_and_prompt 内部自己 spawn
+                    // 检查任务，这里直接同步调用即可，不阻塞菜单线程。事件仍照常
+                    // 广播给开着面板的卡片（见 updater::check_and_prompt）。
+                    crate::updater::check_and_prompt(app);
                 }
                 MENU_TOGGLE_CPU_ANIM => toggle_cpu_anim(app),
                 MENU_TOGGLE_MENU_NUMBERS => toggle_menu_numbers(app),

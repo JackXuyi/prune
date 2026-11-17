@@ -60,6 +60,7 @@ pub fn run() {
             updater::update_pending,
             updater::update_install,
             updater::check_update_dialog,
+            updater::update_dialog_data,
             i18n::locale_get,
             i18n::locale_set,
             commands::mem_snapshot,
@@ -185,6 +186,7 @@ pub fn run() {
             // 局域网设备（docs/m18-lan-devices-spec.md §10）：同上，外加 scanning 门
             app.manage(lan::LanState::new());
             app.manage(Arc::new(updater::UpdateState::new()));
+            app.manage(Arc::new(updater::UpdateDialogState::new()));
 
             // 启动静默检查更新（延迟 5 s，发现新版才广播事件，否则沉默）
             let update_handle = app.handle().clone();
@@ -270,6 +272,30 @@ pub fn run() {
                     if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                         api.prevent_close();
                         let _ = main_handle.hide();
+                    }
+                });
+            }
+
+            // 更新弹窗：与 main 同样处理 Accessory 模式的 Space 切换 + 关闭改隐藏
+            #[cfg(target_os = "macos")]
+            if let Some(update_win) = app.get_webview_window("update") {
+                if let Ok(ns_window) = update_win.ns_window() {
+                    if !ns_window.is_null() {
+                        use objc2::rc::Retained;
+                        use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+                        if let Some(win) = unsafe { Retained::retain(ns_window as *mut NSWindow) } {
+                            win.setCollectionBehavior(
+                                NSWindowCollectionBehavior::MoveToActiveSpace
+                                    | NSWindowCollectionBehavior::FullScreenAuxiliary,
+                            );
+                        }
+                    }
+                }
+                let h = update_win.clone();
+                update_win.on_window_event(move |event| {
+                    if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                        api.prevent_close();
+                        let _ = h.hide();
                     }
                 });
             }

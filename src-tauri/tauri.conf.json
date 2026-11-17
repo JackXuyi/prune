@@ -35,6 +35,24 @@
         "skipTaskbar": true,
         "alwaysOnTop": true,
         "hiddenTitle": true
+      },
+      {
+        "label": "update",
+        "title": "检查更新",
+        "url": "index.html",
+        "width": 800,
+        "height": 500,
+        "minWidth": 800,
+        "minHeight": 500,
+        "visible": false,
+        "center": true,
+        "decorations": false,
+        "transparent": true,
+        "shadow": false,
+        "resizable": false,
+        "skipTaskbar": true,
+        "alwaysOnTop": true,
+        "hiddenTitle": true
       }
     ],
     "security": {

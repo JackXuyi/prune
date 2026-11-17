@@ -363,9 +363,20 @@ export function updatePending(): Promise<UpdateStatus> {
   return invoke<UpdateStatus>("update_pending");
 }
 
-/** 检查更新并弹原生对话框（与托盘「检查更新」完全同一逻辑，供设置页调用） */
+/** 检查更新并弹结果窗口（与托盘「检查更新」完全同一逻辑，供设置页调用） */
 export function updateCheckDialog(): Promise<void> {
   return invoke<void>("check_update_dialog");
+}
+
+/** 更新窗口拉取最近一次检查结果（window mount 后主动 pull，规避事件重放竞态） */
+export type UpdateDialogPayload =
+  | { status: "checking" }
+  | { status: "available"; data: { version: string; currentVersion: string; notesMd: string | null; date: string | null } }
+  | { status: "upToDate"; data: { currentVersion: string; notesMd: string | null } }
+  | { status: "error"; data: { message: string } };
+
+export function updateDialogData(): Promise<UpdateDialogPayload> {
+  return invoke<UpdateDialogPayload>("update_dialog_data");
 }
 
 /** 下载并安装待更新，完成后应用自动重启 */

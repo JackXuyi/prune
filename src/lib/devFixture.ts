@@ -993,3 +993,21 @@ export function devSiteProbes(): SiteProbe[] {
     }),
   ];
 }
+
+/** 更新弹窗的浏览器 dev 假数据（?window=update 预览用；Tauri 下走真实 IPC）。 */
+export const DEV_UPDATE_DIALOG = {
+  status: "upToDate" as const,
+  data: {
+    currentVersion: "0.13.1",
+    notesMd: [
+      "## 修 0.13.0 的 Windows 构建失败（功能与 0.13.0 相同）",
+      "",
+      "- **`panel_fit_height` 在 Windows 上编不过**：popover 分支整段用 `#[cfg(target_os = \"macos\")]` 包起来",
+      "- **`net_diag` 两处 unused import**：按平台收窄，Windows / Linux 不再报 warning",
+      "- **更新弹窗支持 markdown**：标题、加粗、行内代码与链接正常渲染，详见 [方案](https://github.com/JackXuyi/prune)",
+    ].join("\n"),
+  },
+};
+
+/** 更新弹窗「检查中」态的浏览器预览假数据（?window=update&checking=1）。 */
+export const DEV_UPDATE_CHECKING = { status: "checking" as const };
