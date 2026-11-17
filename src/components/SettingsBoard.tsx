@@ -15,6 +15,7 @@ import { invoke } from "@tauri-apps/api/core";
 
 import { AboutSection } from "./AboutSection";
 import { LanguageSection } from "./LanguageSection";
+import { ReportSection } from "./ReportSection";
 import { Badge } from "../components/primitives";
 import { useI18n } from "../i18n/store";
 import { isTauri, pruneTomlTemplate } from "../lib/ipc";
@@ -348,6 +349,9 @@ export function SettingsBoard() {
             })}
           </p>
         </section>
+
+        {/* 体检报告（复用已装 CLI，docs/w1-report-sample-plan.md §10） */}
+        <ReportSection />
 
         {/* 关于（docs/version-info-plan.md）：应用名 + 版本号，沉底惯例 */}
         <AboutSection />

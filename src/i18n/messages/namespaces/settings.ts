@@ -85,6 +85,21 @@ const zh = {
     checkUpdate: "检查更新",
     checking: "检查中…",
   },
+  report: {
+    title: "体检报告",
+    desc:
+      "在本机跑五条只读命令（doctor / scan / mem / port / projects，约 1 分钟），出一份九段 Markdown 报告：每个数字带来源脚注，读不到的写明原因，不自动删除任何东西。",
+    detecting: "检测 prune CLI…",
+    notFound: "未检测到 prune CLI（需要 v0.13+）",
+    notFoundHint: "brew install prune 后重开设置页；或用仓库脚本 pnpm report:sample",
+    cliFound: "CLI {version}",
+    generate: "生成报告",
+    generating: "生成中…（约 1 分钟，磁盘面较慢）",
+    done: "已生成（{seconds}s），保存在应用数据目录 reports/ 下",
+    openFolder: "打开所在文件夹",
+    degradedWarn: "部分项读不到（原因已写进报告）：{items}",
+    failed: "生成失败：{err}",
+  },
   theme: {
     title: "外观",
     desc: "主题立即生效；「跟随系统」会随系统深浅色自动切换。",
@@ -185,6 +200,21 @@ const en: MessageTree<typeof zh> = {
     title: "About",
     checkUpdate: "Check for updates",
     checking: "Checking…",
+  },
+  report: {
+    title: "Health report",
+    desc:
+      "Runs five read-only commands locally (doctor / scan / mem / port / projects, ~1 min) and produces a nine-section Markdown report: every number footnoted to its source, unreadable items say why, nothing is deleted automatically.",
+    detecting: "Detecting prune CLI…",
+    notFound: "prune CLI not found (v0.13+ required)",
+    notFoundHint: "Run brew install prune and reopen Settings; or use the repo script pnpm report:sample",
+    cliFound: "CLI {version}",
+    generate: "Generate report",
+    generating: "Generating… (~1 min, disk is the slow part)",
+    done: "Generated in {seconds}s, saved under app data dir reports/",
+    openFolder: "Open folder",
+    degradedWarn: "Some domains were unreadable (reasons are in the report): {items}",
+    failed: "Generation failed: {err}",
   },
   theme: {
     title: "Appearance",

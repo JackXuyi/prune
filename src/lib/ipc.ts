@@ -108,6 +108,31 @@ export function revealPath(path: string): Promise<void> {
   return invoke<void>("reveal_path", { path });
 }
 
+// ---------------------------------------------------------------- 体检报告（复用已装 CLI）
+
+/** 本机探测到的 prune CLI；null = 未装或 < v0.13（无 doctor 子命令） */
+export interface ReportCliInfo {
+  path: string;
+  version: string;
+}
+
+export interface ReportOutcome {
+  path: string;
+  elapsedS: number;
+  /** 非 ✓ 的采集项说明（已渲染进报告的「采集状态」，这里给前端提示条） */
+  degraded: string[];
+  cliVersion: string;
+}
+
+export function reportCliDetect(): Promise<ReportCliInfo | null> {
+  return invoke<ReportCliInfo | null>("report_cli_detect");
+}
+
+/** 生成体检报告（MD）：五条只读 CLI 命令，约 30-60s；产物在 app_data_dir/reports/ */
+export function reportGenerate(): Promise<ReportOutcome> {
+  return invoke<ReportOutcome>("report_generate");
+}
+
 // ---------------------------------------------------------------- 磁盘（M1）
 
 export function diskReport(): Promise<DiskReport | null> {

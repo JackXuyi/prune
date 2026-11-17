@@ -208,3 +208,13 @@ W1 缓冲为 3.5 人日，超 0.5——"样例文案"0.5 天并入商务运营�
 - Chrome headless 失败时自动回退 MD/HTML（已实现，未在无 Chrome 机器上实测）。
 - `--no-redact` 版与脱敏版差异实际只有项目名与网关 IP（本机报告本就不渲染含用户名的路径）；外发仍以脱敏版为准。
 - raw/ 原始 JSON 未脱敏，只限本机；已在命令输出与 raw/README.txt 双重提示。
+
+## 11. 界面入口（2026-11-17 追加：复用已装 CLI）
+
+设置页新增「体检报告」卡片（`src/components/ReportSection.tsx`，位于「关于」上方），按 §5 方案讨论选定的轻量路径实现——**不搬 doctor 逻辑，D-14 产品化前的过渡形态**：
+
+- **Rust 侧**（`src-tauri/src/report.rs`）：`report_cli_detect`（探测 PATH + brew/cargo 固定路径，要求 ≥ v0.13）与 `report_generate`（spawn 五条 `--json` 只读命令 → 按脚本同一九段口径组装 MD → 写 `app_data_dir/reports/report-<ts>.md`）。采集沿用两波策略（doctor 独占跑），退出码判定沿用「先解析契约 JSON 再看退出码」。
+- **前端**：挂载时探测 CLI；有 → 显示版本 + 生成按钮（约 1 分钟，期间禁用）；无 → 显示 `brew install prune` / `pnpm report:sample` 两条替代路径。产物用现有 `reveal_path` 打开所在文件夹。
+- **口径与脚本的差异（有意为之）**：只出 MD（不出 HTML/PDF）；脱敏覆盖用户名 / 主目录 / 主机名 / 私网 IP（10.x 全掩、192.168 与 172.16-31 保留网络号）；八、九节口径文字与脚本逐字同源。
+- **回归**：`cargo test -p prune-app report::` 4 个用例——真实 fixture 全量组装（章节完整 + 脚注双向一致）、全降级场景（doctor 退出码 3 + 其余失败，九段结构与「读不到+原因」保留）、IP 掩码边界、版本解析（拒绝 < 0.13、跳过 "prune" 前缀词）。
+- 已知限制：GUI 从 Finder 启动 PATH 很瘦，探测依赖固定候选路径；本机 PATH 上的 `prune` 若仍是旧版（< 0.13）会正确显示「未检测到」。HTML/PDF 渲染与 D-14 产品化（组装逻辑搬进 Rust/前端）留待后续。

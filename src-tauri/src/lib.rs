@@ -19,6 +19,7 @@ mod net_diag;
 mod net_sampler;
 mod net_sites;
 mod port_sampler;
+mod report;
 mod sampler;
 mod scan;
 mod settings;
@@ -68,6 +69,8 @@ pub fn run() {
             commands::open_main,
             commands::kill_process,
             commands::reveal_path,
+            report::report_cli_detect,
+            report::report_generate,
             commands::disk_report,
             commands::disk_volume,
             commands::disk_scan,
