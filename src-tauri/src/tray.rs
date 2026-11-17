@@ -301,12 +301,12 @@ pub fn create(app: &AppHandle) -> tauri::Result<()> {
             match id {
                 "open-main" => show_main(app),
                 MENU_CHECK_UPDATE => {
-                    // 异步检查，不阻塞菜单线程；结果经事件广播（见 updater 模块注释）
+                    // 异步检查，不阻塞菜单线程。结果弹原生对话框（WorkBuddy 式
+                    // 「点了就弹」），因为托盘点击时面板多半隐藏、光发事件看不见；
+                    // 事件仍照常广播给开着面板的卡片（见 updater::check_and_prompt）。
                     let handle = app.clone();
                     tauri::async_runtime::spawn(async move {
-                        if let Err(e) = crate::updater::check_and_notify(&handle, true).await {
-                            eprintln!("[updater] 托盘手动检查失败: {e}");
-                        }
+                        crate::updater::check_and_prompt(&handle).await;
                     });
                 }
                 MENU_TOGGLE_CPU_ANIM => toggle_cpu_anim(app),

@@ -23,7 +23,9 @@ use std::sync::{Arc, Mutex};
 
 use prune_core::i18n::err::err_text;
 use prune_core::i18n::fill;
+use prune_core::locale::Locale;
 use tauri::{AppHandle, Emitter, Manager};
+use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 use tauri_plugin_updater::UpdaterExt;
 
 /// 待安装的更新（非 Clone，一次 take；升级成功后应用即重启）
@@ -45,6 +47,82 @@ pub const EVENT_AVAILABLE: &str = "update://available";
 pub const EVENT_CHECK_RESULT: &str = "update://check-result";
 pub const EVENT_PROGRESS: &str = "update://progress";
 pub const EVENT_INSTALLED: &str = "update://installed";
+
+/// 托盘「检查更新」原生弹窗文案（WorkBuddy 式：点了就弹结果）。
+///
+/// 与前端 `update` namespace 分开维护：弹窗在 Rust 侧直接弹，不经过 WebView，
+/// 前端文案树够不着这里。字段用结构体保证漏翻译编译期报错。
+pub struct UpdatePromptText {
+    /// 发现新版本：正文（{version} 新版本号，{current} 当前版本，{notes} 更新说明）
+    pub available_body: &'static str,
+    /// 发现新版本：标题
+    pub available_title: &'static str,
+    /// 「立即更新」按钮（点了直接下载安装）
+    pub install: &'static str,
+    /// 「稍后」按钮（关闭弹窗，更新仍留在面板卡片里）
+    pub later: &'static str,
+    /// 已是最新版本：正文（{current} 当前版本）
+    pub up_to_date_body: &'static str,
+    /// 已是最新版本：标题
+    pub up_to_date_title: &'static str,
+    /// 单个「好」按钮
+    pub ok: &'static str,
+    /// 检查失败：标题
+    pub error_title: &'static str,
+    /// 检查失败：正文（{err} 原始错误，本地化前后缀）
+    pub error_body: &'static str,
+    /// 更新说明过长时的截断提示
+    pub notes_more: &'static str,
+}
+
+const PROMPT_ZH: UpdatePromptText = UpdatePromptText {
+    available_body: "发现新版本 v{version}（当前 v{current}）。\n\n{notes}",
+    available_title: "发现新版本",
+    install: "立即更新",
+    later: "稍后",
+    up_to_date_body: "已是最新版本（v{current}），无需更新。",
+    up_to_date_title: "检查更新",
+    ok: "好",
+    error_title: "检查更新失败",
+    error_body: "检查更新失败：{err}",
+    notes_more: "…（更多说明见 Release 页面）",
+};
+
+const PROMPT_EN: UpdatePromptText = UpdatePromptText {
+    available_body: "Version {version} is available (current v{current}).\n\n{notes}",
+    available_title: "Update Available",
+    install: "Install now",
+    later: "Later",
+    up_to_date_body: "You're up to date (v{current}). No update needed.",
+    up_to_date_title: "Check for Updates",
+    ok: "OK",
+    error_title: "Update Check Failed",
+    error_body: "Update check failed: {err}",
+    notes_more: "… (see the Release page for more)",
+};
+
+fn prompt_text(locale: Locale) -> &'static UpdatePromptText {
+    match locale {
+        Locale::Zh => &PROMPT_ZH,
+        Locale::En => &PROMPT_EN,
+    }
+}
+
+/// 截断更新说明：release notes 可能很长（多段 changelog），原生弹窗塞不下。
+/// 按 char 边界截断，避免把多字节中文切断；超限追加本地化的省略提示。
+fn truncate_notes(notes: &str, max_chars: usize, more: &str) -> String {
+    let trimmed = notes.trim();
+    let mut out = String::new();
+    for (i, ch) in trimmed.chars().enumerate() {
+        if i >= max_chars {
+            out.push('\n');
+            out.push_str(more);
+            break;
+        }
+        out.push(ch);
+    }
+    out
+}
 
 /// 从 Update 组装前端负载（payload 不直接序列化 Update：其字段类型随
 /// 插件版本变化，手动取需要的字段更稳）
@@ -100,6 +178,88 @@ pub async fn check_and_notify(app: &AppHandle, manual: bool) -> Result<serde_jso
                 let _ = app.emit(EVENT_CHECK_RESULT, &payload);
             }
             Err(e.to_string())
+        }
+    }
+}
+
+/// 托盘「检查更新」入口：检查后弹原生对话框反馈结果（WorkBuddy 式交互）。
+///
+/// 为什么单独做这一步：托盘点击时面板窗口多半是隐藏的，而 `check_and_notify`
+/// 的结果只通过事件发给前端卡片——用户点了菜单却看不到任何反馈。这里在 Rust
+/// 侧直接弹系统原生对话框，保证「点了必有回应」；同时 `check_and_notify` 的
+/// 事件照常发出，面板开着时卡片也同步更新，两套反馈互不干扰。
+///
+/// 三种结果：
+/// - 发现新版本：弹「立即更新 / 稍后」。点「立即更新」直接下载安装并重启；
+///   点「稍后」关闭弹窗，待更新仍留在 `UpdateState` + 面板卡片里。
+/// - 已是最新：弹单行「好」提示。
+/// - 出错：弹错误提示（不暴露过多细节，message 用本地化错误串）。
+pub async fn check_and_prompt(app: &AppHandle) {
+    let locale = crate::i18n::current(app);
+    let text = prompt_text(locale);
+
+    let result = check_and_notify(app, true).await;
+
+    // 弹窗回调在独立线程执行（见 tauri-plugin-dialog desktop::show_message_dialog），
+    // 不能在里面直接 await；构造好 builder 后交给 show 的闭包，闭包内再 spawn。
+    match result {
+        Ok(payload) if payload["status"] == "available" => {
+            let version = payload["version"].as_str().unwrap_or("");
+            let current = payload["currentVersion"].as_str().unwrap_or("");
+            let notes = payload["notes"].as_str().unwrap_or("");
+            let notes = if notes.trim().is_empty() {
+                String::new()
+            } else {
+                format!("\n{}", truncate_notes(notes, 400, text.notes_more))
+            };
+            let body = fill(
+                text.available_body,
+                &[
+                    ("version", version),
+                    ("current", current),
+                    ("notes", &notes),
+                ],
+            );
+
+            let install_handle = app.clone();
+            app.dialog()
+                .message(body)
+                .title(text.available_title)
+                .kind(MessageDialogKind::Info)
+                .buttons(MessageDialogButtons::OkCancelCustom(
+                    text.install.to_string(),
+                    text.later.to_string(),
+                ))
+                .show(move |confirmed| {
+                    if confirmed {
+                        let handle = install_handle.clone();
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = update_install(handle).await {
+                                eprintln!("[updater] 弹窗「立即更新」安装失败: {e}");
+                            }
+                        });
+                    }
+                });
+        }
+        Ok(_) => {
+            // up-to-date（executable version 从插件读，这里取包版本展示）
+            let current = app.package_info().version.to_string();
+            let body = fill(text.up_to_date_body, &[("current", &current)]);
+            app.dialog()
+                .message(body)
+                .title(text.up_to_date_title)
+                .kind(MessageDialogKind::Info)
+                .buttons(MessageDialogButtons::OkCustom(text.ok.to_string()))
+                .show(|_| {});
+        }
+        Err(e) => {
+            let body = fill(text.error_body, &[("err", &e)]);
+            app.dialog()
+                .message(body)
+                .title(text.error_title)
+                .kind(MessageDialogKind::Error)
+                .buttons(MessageDialogButtons::OkCustom(text.ok.to_string()))
+                .show(|_| {});
         }
     }
 }

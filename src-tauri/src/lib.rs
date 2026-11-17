@@ -43,7 +43,10 @@ mod island_geo;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // updater：GitHub 源自动升级（docs/updater-plan.md），endpoint 在 tauri.conf.json
-    let builder = tauri::Builder::default().plugin(tauri_plugin_updater::Builder::new().build());
+    // dialog：托盘「检查更新」的原生结果弹窗（Rust 侧 DialogExt 调用，无需 JS 权限）
+    let builder = tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_dialog::init());
 
     // NSPanel 插件（M15）：必须注册，否则 PanelBuilder::build 里 `state()` 找不到
     // WebviewPanelManager，会在主线程 panic（且无法 unwind，直接 abort）

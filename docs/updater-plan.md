@@ -54,9 +54,9 @@ cat ~/.tauri/prune-updater.key
 
 | 文件 | 内容 |
 |---|---|
-| `src-tauri/src/updater.rs` | 检查 / 待装状态 / 下载安装三个命令 + 启动静默检查 + 事件契约 |
-| `src-tauri/src/lib.rs` | 注册插件 + `UpdateState` + 启动检查 spawn |
-| `src-tauri/src/tray.rs` | 右键菜单「检查更新」项（异步派发，不阻塞菜单线程） |
+| `src-tauri/src/updater.rs` | 检查 / 待装状态 / 下载安装三个命令 + 启动静默检查 + 事件契约 + `check_and_prompt` 托盘弹窗 |
+| `src-tauri/src/lib.rs` | 注册 updater + dialog 插件 + `UpdateState` + 启动检查 spawn |
+| `src-tauri/src/tray.rs` | 右键菜单「检查更新」项（异步派发，不阻塞菜单线程）→ 调 `check_and_prompt` |
 | `src-tauri/tauri.conf.json` | `bundle.createUpdaterArtifacts: true` + `plugins.updater`（endpoint + pubkey） |
 | `src/components/UpdateCard.tsx` | 面板更新卡片：待更新 / 下载进度 / 重启提示 / 「已是最新」轻提示 |
 | `src/lib/ipc.ts` | `update_check` / `update_pending` / `update_install` 封装 |
@@ -83,7 +83,7 @@ cat ~/.tauri/prune-updater.key
 
 ## 六、验证与发版纪律
 
-1. **本地跑通链路**：`pnpm tauri dev` → 托盘右键「检查更新」→ 应提示「已是最新」（latest.json 尚无内容时会报错，属预期——还没发过带升级产物的版本）。
+1. **本地跑通链路**：`pnpm tauri dev` → 托盘右键「检查更新」→ **弹出原生对话框**：已是最新弹「好」提示；发现新版弹「立即更新 / 稍后」（点更新走下载安装+重启）。之所以用原生弹窗而非面板卡片：托盘点击时面板窗口多半隐藏，只发事件用户看不见——弹窗保证「点了必有回应」，事件仍照发，面板开着时卡片同步更新。（latest.json 无内容时弹错误框，属预期——还没发过带升级产物的版本。）
 2. **真实升级验证**：装 v0.3.0 → `pnpm bump` 到 v0.3.1 → 推 tag → CI 出包 → Publish Release → 老版本点「检查更新」→ 卡片出现 → 立即更新 → 应用重启为新版本。
 3. 版本号纪律不变：`pnpm bump` 三处统一，tag 必须等于 `v<version>`。
 4. 本地 `pnpm release`（Gitee 链路）如需产出升级包：本机导出 `TAURI_SIGNING_PRIVATE_KEY=$(cat ~/.tauri/prune-updater.key)` 再构建；否则只影响升级产物，不影响基础安装包。
