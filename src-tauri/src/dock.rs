@@ -22,7 +22,7 @@ mod imp {
 
     use objc2::AnyThread;
     use objc2_app_kit::{NSApplication, NSImage};
-    use objc2_foundation::{NSData, MainThreadMarker};
+    use objc2_foundation::{MainThreadMarker, NSData};
     use tauri::AppHandle;
 
     /// 512² PNG，与 bundle.icon 的 icon.icns 同源（`tauri icon` 生成）。
@@ -62,7 +62,9 @@ mod imp {
     /// 主线程，这里多一层派发是防未来调用方线程变化。
     pub fn set_app_icon(app: &AppHandle) {
         let result = app.run_on_main_thread(|| unsafe {
-            let Some(mtm) = MainThreadMarker::new() else { return };
+            let Some(mtm) = MainThreadMarker::new() else {
+                return;
+            };
             let data = NSData::dataWithBytes_length(
                 APP_ICON_PNG.as_ptr().cast::<c_void>(),
                 APP_ICON_PNG.len(),

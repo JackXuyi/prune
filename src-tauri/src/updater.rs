@@ -98,10 +98,7 @@ impl UpdateDialogState {
     }
 
     pub fn get(&self) -> UpdateDialogPayload {
-        self.0
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clone()
     }
 }
 
@@ -255,7 +252,10 @@ pub fn check_and_prompt(app: &AppHandle) {
 
         let payload = match result {
             Ok(p) if p["status"] == "available" => {
-                let notes = p["notes"].as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
+                let notes = p["notes"]
+                    .as_str()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_string);
                 UpdateDialogPayload::Available {
                     version: p["version"].as_str().unwrap_or("").to_string(),
                     current_version: p["currentVersion"].as_str().unwrap_or("").to_string(),
@@ -445,4 +445,3 @@ mod tests {
         assert_eq!(v["data"]["notesMd"], "## hi");
     }
 }
-
