@@ -69,20 +69,15 @@ static MOOD: AtomicU8 = AtomicU8::new(0);
 static LAST_FRAME: AtomicUsize = AtomicUsize::new(FRAME_STATIC);
 /// 面板尺寸（与 tauri.conf.json 一致，popover 内容尺寸同源）
 ///
-/// 初始/兜底高度。W2/D-07 后内容自然高 ~530（六行 288 + CTA 31 + 本地服务段
-/// ~100 + header/footer/边距），432 是「本地服务段加入前」的存量值——真机
-/// 两轮反馈底部遮挡后抬到 560：即使贴高上报链路失效（如旧二进制没重启），
-/// 面板也不会裁掉底部端口占用。动态贴高仍然生效（panel_fit_height），560
-/// 只是 popover init 的下限与 tauri.conf 窗口的初始值。
 /// 面板宽（与 tauri.conf.json 一致）。不加 cfg 门：`panel_fit_height` 是
 /// 跨平台命令，Windows 降级路径也要按这个宽调高
 pub const PANEL_W: f64 = 380.0;
+/// 面板初始/兜底高度，**仅用于从未收到贴高上报时**（如旧二进制没重启）。
+/// 正常路径的 popover 高度完全由前端上报的内容自然高 + 16（p-2）决定，
+/// 贴合内容、不留空白。560 是本地服务段加入后的实测上限（内容 ~530），
+/// 只作异常兜底，不再是下限。
 #[cfg(target_os = "macos")]
 pub const PANEL_H: f64 = 560.0;
-/// 贴高上报的呼吸余量（px）：加在内容自然高之上。底部多余部分由 popover
-/// 底衬吸收（视觉上底边稍厚）；没有它，测量误差会直接变成遮挡。
-/// 不加 cfg 门——panel_fit_height 是跨平台命令，Windows 侧也要用。
-pub const PANEL_FIT_EXTRA_PX: f64 = 24.0;
 /// 面板与菜单栏图标的间距（逻辑像素）
 const MARGIN: f64 = 8.0;
 

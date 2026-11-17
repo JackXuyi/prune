@@ -417,18 +417,20 @@ pub fn prune_toml_template() -> String {
 
 /// 菜单栏面板贴高（W2/D-07「本地服务」段引入动态内容高）。
 ///
-/// 前端用 ResizeObserver 量取面板内容自然高后上报；这里按当前路径分流：
-/// popover 路径（macOS 常规）改 `popover.contentSize`，降级窗口路径
-/// （popover 初始化失败 / Windows）`set_size`。钳位 240–760：下限防
+/// 前端用 ResizeObserver 量取面板内容自然高（含 p-2 的 16px）后上报；这里按
+/// 当前路径分流：popover 路径（macOS 常规）改 `popover.contentSize`，降级窗口
+/// 路径（popover 初始化失败 / Windows）`set_size`。钳位 240–760：下限防
 /// 内容异常时面板塌缩成一条，上限防失控撑屏。
+///
+/// 不加余量：popover 必须贴合内容，底部多余高度会直接变成一条空白。
+/// 测量误差靠前端「表面自然高 + 16」的取法本身消除（不滚动不裁切）。
 ///
 /// `popover` 模块整体 `#[cfg(target_os = "macos")]`，Windows 上这两个符号
 /// 根本不存在——所以走 popover 的那段必须用 cfg 块包起来，不能只在分支里
 /// 写 `if false`（编译期就要消失）。
 #[tauri::command]
 pub fn panel_fit_height(app: AppHandle, height: f64) {
-    // 呼吸余量：内容自然高之上再加 PANEL_FIT_EXTRA_PX，测量误差不至于变成遮挡
-    let h = (height + crate::tray::PANEL_FIT_EXTRA_PX).clamp(240.0, 760.0);
+    let h = height.clamp(240.0, 760.0);
 
     #[cfg(target_os = "macos")]
     {
@@ -445,6 +447,22 @@ pub fn panel_fit_height(app: AppHandle, height: f64) {
     // 宽度用 PANEL_W（与 tauri.conf.json 同源），这里只负责高度
     if let Some(panel) = app.get_webview_window(crate::tray::PANEL_LABEL) {
         let _ = panel.set_size(tauri::LogicalSize::new(crate::tray::PANEL_W, h));
+    }
+}
+
+/// 主题同步：前端 `lib/theme.ts` 解析出 light/dark 后告知原生层。
+/// NSPopover 的箭头/半透明底衬不在 webview 里，只能由原生侧跟着主题刷色。
+/// 非 macOS 没有 popover，这条命令是 no-op（但仍可被调用，避免前端分平台）。
+#[tauri::command]
+pub fn panel_set_appearance(app: AppHandle, theme: String) {
+    #[cfg(target_os = "macos")]
+    {
+        crate::popover::remember_theme(&theme);
+        let _ = app.run_on_main_thread(crate::popover::apply_theme);
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        let _ = (app, theme);
     }
 }
 

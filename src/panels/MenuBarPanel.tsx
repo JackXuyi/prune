@@ -29,8 +29,8 @@ import { UpdateCard } from "../components/UpdateCard";
  * 冲突/关注存在与否渲染，更新卡也按需占版面），所以改为前端量取内容
  * 自然高、经 `panel_fit_height` 上报缩放（popover contentSize / 降级窗口
  * set_size）。内容区不滚动——菜单栏「瞄一眼」场景里滚动条是噪音，
- * 空间不够就让窗口长高。初始 560（真机反馈遮挡后抬高的兜底，
- * 算式与余量见 `tray.rs: PANEL_H` / `PANEL_FIT_EXTRA_PX`）。
+ * 空间不够就让窗口长高。表面容器按内容自然高测量，不加 padding、不加
+ * 余量：卡片与 popover 外框贴合（见 `tray.rs: PANEL_H` 注释）。
  *
  * 原来的「应用」「概况」两个 tab 都已撤掉——应用级明细在主窗口「应用资源」，
  * 内存压力 / swap / 换出受害者在主窗口「内存」。面板是「瞄一眼」场景。
@@ -41,7 +41,7 @@ import { UpdateCard } from "../components/UpdateCard";
 export function MenuBarPanel() {
   const { t, locale } = useI18n();
   const [refreshNonce, setRefreshNonce] = useState(0);
-  /** 面板表面容器：内容自然高的测量源（offsetHeight + 外层 p-2 16px = 上报值） */
+  /** 面板表面容器：内容自然高的测量源（offsetHeight 直接 = 上报值） */
   const surfaceRef = useRef<HTMLDivElement | null>(null);
   const snapshot = useMemStore((s) => s.snapshot);
   const loading = useMemStore((s) => s.loading);
@@ -62,16 +62,18 @@ export function MenuBarPanel() {
   /**
    * 贴高上报：表面容器是「自然高」（不撑满、不裁切），内容任何变化
    * （骨架 → 读数、本地服务段出现/消失、更新卡占版面、语言切换）都会
-   * 改变 offsetHeight，ResizeObserver 每次变化上报一次。上报值 = 表面高
-   * + 外层 p-2 的上下 16px。钳位与抖动抑制在 Rust 侧再做，前端只保证
-   * 不重复发同一个值（观察器首帧也会触发一次，正好覆盖初始贴高）。
+   * 改变 offsetHeight，ResizeObserver 每次变化上报一次。上报值 = 表面高，
+   * 外层不再有 p-2 padding —— 卡片与 popover 外框贴合，测量也不再加 16。
+   * 关键：容器不能用 h-screen 固定高，否则 flex-shrink 会把表面压到视口高
+   * 并裁掉底部（历史遮挡根因），测量值反而永远追不上内容自然高。
+   * 钳位与抖动抑制在 Rust 侧再做，前端只保证不重复发同一个值。
    */
   useEffect(() => {
     const el = surfaceRef.current;
     if (!el) return;
     let last = -1;
     const report = (force = false) => {
-      const h = el.offsetHeight + 16;
+      const h = el.offsetHeight;
       if (!force && h === last) return;
       last = h;
       void fireAndForget(panelFitHeight(h), "panel_fit_height");
@@ -80,7 +82,7 @@ export function MenuBarPanel() {
     ro.observe(el);
     // 视口变化兜底：popover init 会把 webview 重新嵌框（视口尺寸跳变），
     // 但表面「自然高」没变——RO 不触发，此前上报过的值必须强制重发一次，
-    // 否则面板停在初始 432，内容高超出部分被裁（真机遮挡的根因之一）。
+    // 否则面板停在初始兜底高，内容高超出部分被裁（真机遮挡的根因之一）。
     let raf = 0;
     const onViewportResize = () => {
       cancelAnimationFrame(raf);
@@ -95,10 +97,10 @@ export function MenuBarPanel() {
   }, []);
 
   return (
-    <div className="flex h-screen flex-col p-2">
+    <div>
       <div
         ref={surfaceRef}
-        className="flex flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-raised/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl"
+        className="flex shrink-0 flex-col overflow-hidden rounded-[14px] border border-hairline bg-surface-raised/95 shadow-[0_18px_50px_-12px_rgba(0,0,0,0.8)] backdrop-blur-2xl"
       >
         <header className="flex h-11 shrink-0 items-center gap-2 px-3.5">
           <ScissorsIcon size={14} className="text-accent" />

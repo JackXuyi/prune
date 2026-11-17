@@ -79,6 +79,7 @@ pub fn run() {
             commands::project_trends,
             commands::prune_toml_template,
             commands::panel_fit_height,
+            commands::panel_set_appearance,
             commands::reclaim_preview,
             commands::reclaim_children,
             commands::reclaim_execute,

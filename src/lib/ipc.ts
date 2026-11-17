@@ -103,6 +103,14 @@ export function panelFitHeight(height: number): Promise<void> {
   return invoke<void>("panel_fit_height", { height });
 }
 
+/**
+ * 主题同步到原生层：NSPopover 的箭头/底衬不在 webview 内，
+ * 只能由 macOS 侧按解析后的主题铺对应实色（见 popover.rs）。
+ */
+export function panelSetAppearance(theme: "light" | "dark"): Promise<void> {
+  return invoke<void>("panel_set_appearance", { theme });
+}
+
 /** 在 Finder 中打开目录；传文件路径时定位并选中它 */
 export function revealPath(path: string): Promise<void> {
   return invoke<void>("reveal_path", { path });

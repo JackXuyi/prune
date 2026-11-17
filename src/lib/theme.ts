@@ -1,9 +1,12 @@
 /**
- * 主题切换（UI v5 spec §5.3）—— 纯前端，不新增任何 Rust command。
+ * 主题切换。
  *
- * 为什么不放 store：主题是**同步、无异步副作用**的，用 zustand 反而要在
+ * 前端部分不放 store：主题是**同步、无异步副作用**的，用 zustand 反而要在
  * 首帧前多等一个订阅。这里直接在模块初始化时读 localStorage 并落到
  * `<html data-theme>`，index.css 的同名变量覆盖即刻生效。
+ *
+ * 唯一例外是 macOS 的 NSPopover：它的箭头与半透明底衬在 webview 之外，
+ * 必须经 `panel_set_appearance` 把解析后的主题告知原生层，才能铺同色实底。
  *
  * 三态语义：
  * - system：跟随系统，监听 matchMedia 变化实时切换
@@ -16,6 +19,8 @@
 
 export type ThemeMode = "system" | "light" | "dark";
 export type ResolvedTheme = "light" | "dark";
+
+import { fireAndForget, isTauri, panelSetAppearance } from "./ipc";
 
 const STORAGE_KEY = "prune.theme";
 const DEFAULT_MODE: ThemeMode = "dark";
@@ -60,6 +65,9 @@ export function getTheme(): ThemeMode {
 
 /** 落到 DOM。data-theme 同时给 index.css 与调试用 */
 function apply(resolved: ResolvedTheme): void {
+  // 原生 popover 底衬每次都同步：三个 webview 各自初始化时会重复调用，
+  // 但命令是幂等的，反向保证 Rust 侧状态不会与 DOM 漂移。
+  if (isTauri()) fireAndForget(panelSetAppearance(resolved), "panel_set_appearance");
   const root = document.documentElement;
   if (root.dataset.theme === resolved) return;
   root.dataset.theme = resolved;
