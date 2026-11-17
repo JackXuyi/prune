@@ -2,6 +2,38 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.14.0
+
+### 主窗口出现时显示 Dock 图标（[方案](./docs/dock-icon-plan.md)）
+
+- **守门员形态不变，Dock 图标跟随主窗口**：启动仍是 Accessory 常驻菜单栏；打开主窗口时切 Regular 显示 Dock 图标，点红叉隐藏窗口后收回 Accessory。切换收口在唯一打开函数 `tray::show_main` 与唯一关闭路径 `CloseRequested`，面板 / 灵动岛 / 托盘 / 菜单所有入口自动生效；`AtomicBool` 去重防止连点导致图标弹跳，`RunEvent::Reopen` 兜底 Dock 图标点击
+- **不用 tao 的 `set_dock_visibility`**：它底层走 `TransformProcessType`，快速切换会触发 macOS 残留多个 Dock 图标的系统级 bug（tao 源码注释承认并只能做 1 s 去抖规避），全程沿用启动代码同一机制 `set_activation_policy`
+- **dev 裸二进制图标补齐**：`tauri dev` 跑的非 bundle 二进制切 Regular 后只能显示通用 exec 图标，`dock::set_app_icon` 启动时把 `include_bytes!` 进二进制的 icon.png 设给 `NSApp.setApplicationIconImage`；release 下重复设置同款图标无害
+- **主窗口 960×640 → 1000×700**：`position_main` 定位兜底与三处引用注释同步
+
+### 菜单栏面板贴合内容 + 原生主题底衬同步
+
+- **贴高链路去掉呼吸余量**：前端只上报表面自然高（`offsetHeight`，外层 `p-2` 移除），Rust 侧不再叠 `PANEL_FIT_EXTRA_PX`，popover 初始高度 560 降级为「从未收到上报时」的异常兜底。历史底部遮挡的根因是测量容器被 `h-screen` 固定高 + flex-shrink 压缩——容器改为自然高布局
+- **主题底衬由原生层铺**：popover 的箭头 / 边框 / 半透明底衬在 webview 之外，前端解析出 light/dark 后经 `panel_set_appearance` 告知原生侧，由 `frameView` 下插的实色层与 `NSAppearance` 同步，浅色主题不再露出系统灰底；内容圆角与卡片对齐 14px。`cargo test popover::` 5 用例含底衬色与 CSS token 一致性断言
+
+### 检查更新：独立 WebView 窗口 + 四入口统一
+
+- **点「检查更新」立即弹窗**：固定 800×600（后调为 600 高）不可调整，先显示「正在检查更新…」，后台完成后刷新结果；更新说明用自研 Markdown 组件渲染（React 元素组合，无 `dangerouslySetInnerHTML`，仅放行 http(s) 链接）。托盘菜单 / 设置页「关于」卡片 / 启动静默检查 / 面板更新卡片四入口共用同一套 `check_and_prompt`
+- **修「弹窗关不掉」**：`update` 窗口缺 `core:window:allow-hide` 权限，前端 `getCurrentWindow().hide()` 被静默拒绝（`.catch` 吞错），点 X / 「稍后」都无反应——新建 `capabilities/update.json` 补权限；同时「已是最新」态紧凑化，800 宽下真实长 changelog 从滚动变完整展示
+- **`latest.json` 的 `notes` 改写为本版 CHANGELOG**：tauri-action 生成的更新清单 notes 写死为静态下载表，release-notes job 在发布前改写成同一份 CHANGELOG 本版段——「发现新版本」弹窗看到的是本版变更而非下载表；只动 notes，`platforms` 下载 URL 与 `.sig` 逐字保留
+
+### 设置页「体检报告」入口（[方案](./docs/w1-report-sample-plan.md)）
+
+- 探测本机 prune CLI（PATH + brew / cargo 固定候选，要求 ≥ v0.13），spawn 五条只读 `--json` 命令（轻量命令并行、doctor 独占跑避免与 scan 互相挤爆磁盘超时），按样例脚本同一九段口径组装 MD（脚注溯源 / 0≠读不到 / 脱敏）写入 `app_data_dir/reports/`；未装 CLI 时卡片给出 brew 与仓库脚本两条替代路径
+- 同口径的 `pnpm report:sample` 流水线：采集 → 组装（九段 + R1-R5 硬断言）→ 渲染 MD/HTML/PDF（Chrome headless，零新依赖）
+- `cargo test report::` 4 用例：真实 fixture 全量组装、脚注双向一致、全降级保九段结构与「读不到+原因」、IP 掩码边界
+
+### Homebrew 分发（[方案](./docs/d02-homebrew-plan.md)）
+
+- **一个 tap 仓库两种形态**：cask `prune`（GUI + CLI 一体，CLI 由 `binary` stanza 从 `Contents/Resources/bin` 链接）与 formula `prune-cli`（仅 CLI，universal tar.gz）。brew 成为主安装路径（cask 下载不带 quarantine，ad-hoc 签名也能直接开），Releases 直下改为兜底；README Install 段重排
+- **构建侧**：`prepare-cli-resource.mjs` 按 triple 编 CLI 并拷进 resources/bin，`tauri.macos.conf.json` 平台 overlay 串「编 CLI → 前端构建」，Windows / Linux 产物不变；release.yml 显式注入 `CLI_TARGET_TRIPLE`（不能只靠 `TAURI_ENV_TARGET_TRIPLE`，cross 编译缺位会把 arm64 塞进 x64 dmg），macOS 两腿 artifact 由 `cli-universal` job lipo 成 universal
+- 发版后 `homebrew-tap` job 渲染并推送 tap；`brew-tap.mjs` 的 sha256 优先取 GitHub API digest、缺失才落盘实算
+
 ## 0.13.1
 
 ### 修 0.13.0 的 Windows 构建失败（功能与 0.13.0 相同，0.13.0 未对外分发）

@@ -244,7 +244,9 @@ menu bar  ⚡ 54.9 GB reclaimable        pressure ● green
 └──────────────────────────────────────────┘
 ```
 
-The headline number is **reclaimable GB**, not a memory percentage: a percentage describes, gigabytes are actionable. The menu bar panel (380 × 432) renders the same readings as the main window from one shared formatting layer (`lib/statsReadout.ts`), so the two screens can never disagree.
+The headline number is **reclaimable GB**, not a memory percentage: a percentage describes, gigabytes are actionable. The menu bar panel (380 wide, height follows its content — no fixed frame with dead space) renders the same readings as the main window from one shared formatting layer (`lib/statsReadout.ts`), so the two screens can never disagree.
+
+Prune is a menu-bar app: it stays out of the Dock. The Dock icon appears only while the main window is open (1000 × 700), and disappears again when you close it — the menu bar remains the single always-on home.
 
 The tray icon is also a reading: the scissors' cutting speed (or the cat's jump rate) encodes CPU busy-ness, and the tooltip carries the exact value (`Prune · CPU 12%`).
 
