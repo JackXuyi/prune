@@ -1164,6 +1164,7 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
 /// - 「没查到」≠「端口空闲」：查不到时把内核口径与不可见条数一起说出来；
 /// - TIME_WAIT 不是占用：单独一行解释，且没有「结束」建议；
 /// - 双栈不重复：内核里 v4/v6 各一条 fd，这里只输出一行。
+///
 /// `prune why <port>`（F16）：白话解释。结论只产自 `net::why::why()` 纯函数，
 /// 本函数只负责排版与退出码——文案逻辑不许散落在 CLI 层。
 fn cmd_why(port: u16, json: bool) -> i32 {

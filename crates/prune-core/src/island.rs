@@ -1294,7 +1294,7 @@ mod tests {
         // conns = None（本轮未统计）：宁漏勿误，不参与判定
         let mut m = IdleServerMonitor::new();
         let e = project_entry(3000, None);
-        m.observe(0, &[e.clone()]);
+        m.observe(0, std::slice::from_ref(&e));
         assert!(m.observe(90 * MIN, &[e]).is_empty(), "conns 未知不得触发");
     }
 

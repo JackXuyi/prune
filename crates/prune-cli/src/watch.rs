@@ -421,6 +421,10 @@ pub fn run(opts: &Opts) -> i32 {
 #[cfg(test)]
 pub const ONCE_TOP_KEYS: &[&str] = &["schemaVersion", "ts", "mode", "cpu", "mem", "ports", "disk"];
 
+/// 跑一轮、输出、退出。生产入口走 `run_once_with`（cwd 端口在启动时解析
+/// 一次保证横幅与循环同源），本包装只被测试的快照对账消费——`#[cfg(test)]`
+/// 否则非测试构建报 dead_code（b37ed9b 引入，v0.15.0 CI clippy -D warnings 首次暴露）。
+#[cfg(test)]
 fn run_once(opts: &Opts, th: &Thresholds) -> i32 {
     run_once_with(opts, th, cwd_watch_ports())
 }
