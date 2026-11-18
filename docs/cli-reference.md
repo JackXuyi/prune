@@ -95,6 +95,10 @@ prune watch --fail-on warn           # 达 warn 退出码 10（CI 门禁用）
 `--once` JSON 顶层键：`schemaVersion`, `ts`, `mode`, `cpu`, `mem`, `ports`, `disk`（按 `--only` 按需出现）
 事件流（不带 `--once`）是 JSONL，每行自带 `schemaVersion`。
 
+- **关注端口来源两层**：在线项目（对绑定进程的 cwd 解析后读各项目 `prune.toml`）+ **CWD**（启动时从当前目录向上找最近一份带 `watch.ports` 的 `prune.toml`——补「项目还没起服务」的告警窗口）。就近的配置损坏不向上降级到父目录
+- 有 CWD 配置时：人读横幅显示来源；`--once` 的 `ports` 段多一个 `watchedExtra`（`ports` + `source`）。无配置时输出与无此机制的版本逐字节一致
+- **系统通知未实现（有意）**：watch 的出口纪律是 stdout/stderr，重定向由调用方决定——通知是不可被 CI 消费的第二个出口。要提醒就消费 JSONL
+
 ## prune port
 
 谁占着这个端口。口径纪律：「没查到」≠「端口空闲」——内核口径与不可见条数一起说；TIME_WAIT 不是占用。
@@ -134,6 +138,7 @@ prune doctor --timeout 10            # 单域超时上限（秒，封顶 30）
 ```
 
 - 判据全部复用既有口径：磁盘水位 15%/5%（与菜单栏 island 事件同一判据）、内存压力级别、swap >70%、端口冲突 `owner_count > 1`、网络 `NetDiag.status/verdict/captive`
+- **不读 `prune.toml`**：doctor 是机器级体检，阈值是机器级常量；项目级配置只影响扫描/账本/端口关注层，不影响 doctor 判定
 - 任一域读不到 → `severity: "unknown"` + 原因，**绝不显示 0**
 - `severity` 词表固定四个值：`ok` / `warn` / `bad` / `unknown`
 - 退出码：0（结论已出，含 warn/bad）；全部选中域不可读时按根因给 3 / 4

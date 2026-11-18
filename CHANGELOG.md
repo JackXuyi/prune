@@ -2,6 +2,14 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## Unreleased
+
+### `prune watch` 吃 CWD 项目的 `watch.ports`（[W2 收尾方案](./docs/wave2-cli-plan.md)）
+
+- **修一个真实告警缺口**：watch 的端口关注层此前只含在线项目（对绑定进程的 cwd 解析后读配置）；在还没起服务的项目里跑 watch，该项目的关注端口起服务那一刻不会告警——`PortGuardMonitor` 的 NewListen 只看条目的 watched 标志
+- 现在启动时从 CWD 向上找最近一份 `prune.toml` 取 `watch.ports` 并入关注层；人读横幅显示配置来源；`--json --once` 的 ports 段新增 `watchedExtra`（ports + source）。无配置目录下输出与 0.14.0 逐字节一致（顶层键集合不变，契约快照不受影响）
+- **就近纪律**：就近的配置损坏（语法错 / 超子集）不向上降级到父目录——「子目录坏了却用父目录的配置」的优先级无法向用户解释，与「损坏整份忽略」一致
+
 ## 0.14.0
 
 ### 主窗口出现时显示 Dock 图标（[方案](./docs/dock-icon-plan.md)）
@@ -33,6 +41,13 @@
 - **一个 tap 仓库两种形态**：cask `prune`（GUI + CLI 一体，CLI 由 `binary` stanza 从 `Contents/Resources/bin` 链接）与 formula `prune-cli`（仅 CLI，universal tar.gz）。brew 成为主安装路径（cask 下载不带 quarantine，ad-hoc 签名也能直接开），Releases 直下改为兜底；README Install 段重排
 - **构建侧**：`prepare-cli-resource.mjs` 按 triple 编 CLI 并拷进 resources/bin，`tauri.macos.conf.json` 平台 overlay 串「编 CLI → 前端构建」，Windows / Linux 产物不变；release.yml 显式注入 `CLI_TARGET_TRIPLE`（不能只靠 `TAURI_ENV_TARGET_TRIPLE`，cross 编译缺位会把 arm64 塞进 x64 dmg），macOS 两腿 artifact 由 `cli-universal` job lipo 成 universal
 - 发版后 `homebrew-tap` job 渲染并推送 tap；`brew-tap.mjs` 的 sha256 优先取 GitHub API digest、缺失才落盘实算
+
+### CLI：Wave 2 主体（端口前置 / 项目账本 / `prune.toml` / `prune watch` / MCP 12）
+
+- **`prune watch`（D-10）**：按需守护，四类频道 cpu / mem / port / disk（`--only` 选择），`--json` 出 JSONL、`--once` 单轮、`--fail-on-warn` 出现 warn 即退出码 10（CI 用）。判据复用 `prune_core::island` 里 GUI 用的同一批监视器——两处各写一份阈值逻辑半年后必然对不上，这是本模块最重要的纪律。三条边界写进行为本身：不装后台（无 launchd / 开机项 / 守护重启）、不写日志（stdout 就是出口，重定向由调用方决定）、只读（不删除、不 kill、不改配置）。端口首轮只建基线，之后只报变化：多持有者冲突与「关注端口被新占用」两类告警
+- **`prune.toml`（D-09）**：项目根配置，**只能收窄，不能扩大**。允许的键就五个：`ignore.projects` / `ignore.paths` / `thresholds.deps_warn_gb` / `thresholds.stale_days` / `watch.ports`——配置面本身走白名单纪律；试图扩大范围的键解析期直接拒绝，语法超出子集报「第 N 行不支持该语法」整份忽略，键越界单键回落 + note，损坏不静默。只读项目根那一份，子包不生效；Prune 永不写项目文件——模板由设置页复制到剪贴板，用户自己落盘。消费方：扫描白名单、依赖账本、端口关注层（配置的关注端口空闲也显示）
+- **MCP 8→12 工具（D-11）**：新增 `project_deps` / `build_artifacts` / `net_sites` / `swap_report`。只读断言不变——执行类动词按名显式拒绝（报「MCP 通道只读」而不是 unknown tool）。工具 schema 冻结进 `mcp-tools.v1.json` 快照 + 逐字段对账测试：改工具面必须同批更新快照，测试挡在门上
+- **`prune projects`（D-08）**：项目依赖账本按天趋势（默认 30 天，`--days` 可调），读 GUI / 扫描写入的同一张 `project_day` 表——账本是历史记录不是现场重算，CLI 不触发扫描。库不存在 / 无记录时输出原因说明，不伪造空账本
 
 ## 0.13.1
 

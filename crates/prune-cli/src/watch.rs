@@ -25,6 +25,40 @@ use prune_core::mem;
 use prune_core::net;
 use prune_core::swap;
 
+// ---------------------------------------------------------------- CWD 配置的关注端口（W2 收尾 DP-W2-1-B）
+
+/// watch 的关注端口补充来源：CWD 向上找最近一份 `prune.toml` 的 `watch.ports`。
+///
+/// 在线项目的配置已由 `net::ports::scan_cached` → `collect_watch_ports` 覆盖
+/// （对绑定进程的 cwd 解析后读配置）；这里补的是「CWD 项目还没起服务」的场景——
+/// `PortGuardMonitor` 的 NewListen 只看 `e.watched`，不并入的话 dev server
+/// 起来那一刻不会告警。找不到 / 空配置 / 就近损坏 → None，行为与 v0.14.0 一致。
+fn cwd_watch_ports() -> Option<(std::path::PathBuf, Vec<u16>)> {
+    let cwd = std::env::current_dir().ok()?;
+    let found = prune_core::prune_toml::find_watch_ports_upward(&cwd)?;
+    (!found.1.is_empty()).then_some(found)
+}
+
+/// 把调用方声明的关注端口并入端口条目的 `watched` 标志，返回实际改动的条目数。
+///
+/// 纯函数（可测）。只置位不撤销：采样路径已判定的 `watched`（特权端口 /
+/// 系统进程 / 在线项目配置）不重复计数。这就是与 GUI 同源的合并点——
+/// GUI 的 `scan_cached` 在 group 时合并，watch 在拿到快照后合并，判据同一份
+/// `is_watched_with` 语义，只是补的是「进程还没起」的时间窗。
+fn mark_extra_watched(entries: &mut [prune_core::net::PortEntry], extra: &[u16]) -> usize {
+    if extra.is_empty() {
+        return 0;
+    }
+    let mut n = 0;
+    for e in entries.iter_mut() {
+        if !e.watched && extra.contains(&e.port) {
+            e.watched = true;
+            n += 1;
+        }
+    }
+    n
+}
+
 /// 采样类别
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Kind {
@@ -156,8 +190,15 @@ fn emit(json_mode: bool, event: &Value) {
 /// 单个频道的一次采样结果：`None` = 该频道本轮读不到（不猜、不报 0）
 pub fn run(opts: &Opts) -> i32 {
     let th = Thresholds::load();
+    // CWD 配置的关注端口：启动时解析一次（配置文件在进程生命周期内不重读——
+    // watch 是观察者，配置热加载不是它的事）
+    let cwd_cfg = cwd_watch_ports();
     if opts.once {
-        return run_once(opts, &th);
+        return run_once_with(
+            opts,
+            &th,
+            cwd_cfg.as_ref().map(|(r, p)| (r.clone(), p.clone())),
+        );
     }
 
     if !opts.json {
@@ -174,6 +215,17 @@ pub fn run(opts: &Opts) -> i32 {
                     .join(",")
             }
         );
+        if let Some((root, ports)) = &cwd_cfg {
+            println!(
+                "关注端口（来自 {}）：{}",
+                root.join(prune_core::prune_toml::FILE_NAME).display(),
+                ports
+                    .iter()
+                    .map(|p| p.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+        }
         println!("端口与磁盘首次只建基线，不补报存量；之后只报变化。\n");
     }
 
@@ -183,6 +235,8 @@ pub fn run(opts: &Opts) -> i32 {
     let mut port_mon = PortGuardMonitor::new();
     let mut disk_mon = DiskMonitor::new();
     let mut first_round = true;
+    // 主循环每轮复用：只取端口列表（config_source 已在横幅输出过）
+    let cwd_ports = cwd_cfg.map(|(_, p)| p).unwrap_or_default();
 
     loop {
         let ms = now_ms();
@@ -265,7 +319,9 @@ pub fn run(opts: &Opts) -> i32 {
         }
 
         if opts.wants(Kind::Port) {
-            let snap = net::ports::scan(None);
+            let mut snap = net::ports::scan(None);
+            // CWD 项目的 watch.ports 并入关注层（在线项目已由采样路径覆盖）
+            mark_extra_watched(&mut snap.entries, &cwd_ports);
             if snap.coverage.listen_total > 0 || !snap.entries.is_empty() {
                 readable_any = true;
             }
@@ -366,6 +422,16 @@ pub fn run(opts: &Opts) -> i32 {
 pub const ONCE_TOP_KEYS: &[&str] = &["schemaVersion", "ts", "mode", "cpu", "mem", "ports", "disk"];
 
 fn run_once(opts: &Opts, th: &Thresholds) -> i32 {
+    run_once_with(opts, th, cwd_watch_ports())
+}
+
+/// `cwd_cfg` 由调用方传入（`run` 启动时解析一次，保证横幅与循环同源）。
+fn run_once_with(
+    opts: &Opts,
+    th: &Thresholds,
+    cwd_cfg: Option<(std::path::PathBuf, Vec<u16>)>,
+) -> i32 {
+    let cwd_ports = cwd_cfg.as_ref().map(|(_, p)| p.clone()).unwrap_or_default();
     let ts = (now_ms() / 1000) as i64;
     let mut doc = json!({ "schemaVersion": 1, "ts": ts, "mode": "once" });
     let mut worst = 0u8;
@@ -439,7 +505,9 @@ fn run_once(opts: &Opts, th: &Thresholds) -> i32 {
     }
 
     if opts.wants(Kind::Port) {
-        let snap = net::ports::scan(None);
+        let mut snap = net::ports::scan(None);
+        // CWD 项目的 watch.ports 并入关注层（在线项目已由采样路径覆盖）
+        mark_extra_watched(&mut snap.entries, &cwd_ports);
         if !snap.entries.is_empty() {
             readable_any = true;
         }
@@ -453,6 +521,14 @@ fn run_once(opts: &Opts, th: &Thresholds) -> i32 {
             "coverage": snap.coverage,
             "severity": if conflicts.is_empty() { "ok" } else { "warn" },
         });
+        // 有 CWD 配置时才加键：无配置时输出与 v0.14.0 逐字节一致（A4 回归保证）。
+        // 顶层键集合不变（ports 段内部字段），契约快照 cli-contract.v1.json 不受影响。
+        if let Some((root, ports)) = &cwd_cfg {
+            doc["ports"]["watchedExtra"] = json!({
+                "ports": ports,
+                "source": root.join(prune_core::prune_toml::FILE_NAME),
+            });
+        }
     }
 
     if opts.wants(Kind::Disk) {
@@ -648,5 +724,41 @@ mod tests {
         let o = opts(vec![Kind::Disk], true, false);
         let code = run_once(&o, &Thresholds::load());
         assert!(code == 0 || code == 4, "磁盘频道应可读（code={code}）");
+    }
+
+    // ---- mark_extra_watched（W2 收尾 DP-W2-1-B）----
+
+    /// 最小端口条目：observe / mark 都不依赖 listeners 内容
+    fn entry(port: u16, watched: bool) -> prune_core::net::PortEntry {
+        prune_core::net::PortEntry {
+            port,
+            proto: prune_core::net::Proto::Tcp,
+            listeners: vec![],
+            conns: None,
+            exposure: prune_core::net::BindScope::Loopback,
+            watched,
+            note: None,
+            service: None,
+        }
+    }
+
+    #[test]
+    fn mark_extra_watched_only_flips_matching_ports() {
+        let mut entries = vec![entry(3000, false), entry(8080, false), entry(5173, true)];
+        let n = mark_extra_watched(&mut entries, &[3000]);
+        assert_eq!(n, 1, "只置位命中的未关注条目");
+        assert!(entries[0].watched, "3000 应被置位");
+        assert!(!entries[1].watched, "8080 不在 extra 里，保持不动");
+        assert!(entries[2].watched, "5173 原本就 watched，不变");
+    }
+
+    #[test]
+    fn mark_extra_watched_empty_extra_is_noop() {
+        let mut entries = vec![entry(3000, false)];
+        assert_eq!(mark_extra_watched(&mut entries, &[]), 0);
+        assert!(
+            !entries[0].watched,
+            "空配置零改动——与 v0.14.0 行为一致（A4）"
+        );
     }
 }

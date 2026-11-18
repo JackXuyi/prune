@@ -796,6 +796,42 @@ where
     out
 }
 
+/// watch 机器级路径（W2 收尾 DP-W2-1-B）的补充入口：从 `start` 向上找最近一份带
+/// `watch.ports` 的 `prune.toml`，返回（所在目录，端口）。
+///
+/// watch 是机器级命令、没有项目缓存，**在线项目**的配置已由端口采样路径
+/// （`scan_cached` → `collect_watch_ports`）覆盖；这里补的是「CWD 项目还没起服务」
+/// 的场景——不并入的话 `PortGuardMonitor` 的 NewListen 依赖 `e.watched`，
+/// dev server 起来那一刻不会告警。
+///
+/// 向上纪律与「只读项目根那一份」同构：**就近原则**——
+/// - 沿途没有 `prune.toml` → 继续向上，根目录终止返回 None；
+/// - 就近命中但 `watch.ports` 为空 → 返回 None（调用方无需区分「无配置」与「空配置」）；
+/// - **就近命中但损坏（语法错 / 超子集）→ 停止向上返回 None**，绝不静默降级到父目录
+///   ——「子目录坏了却用父目录的配置」的优先级无法向用户解释，与「整份忽略」一致。
+pub fn find_watch_ports_upward(start: &Path) -> Option<(PathBuf, Vec<u16>)> {
+    let mut dir = start.to_path_buf();
+    loop {
+        match load_at(&dir.join(FILE_NAME)) {
+            // 没有配置文件 → 继续向上
+            Ok(None) => {}
+            // 命中：能解析出来就用它
+            Ok(Some(parsed)) => {
+                let ports = parsed.config.watch_ports;
+                if !ports.is_empty() {
+                    return Some((dir, ports));
+                }
+                return None;
+            }
+            // 就近的配置损坏：不向上降级，直接放弃（「整份忽略」的向上版）
+            Err(_) => return None,
+        }
+        if !dir.pop() {
+            return None;
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1091,5 +1127,50 @@ mod tests {
         cs.by_root.insert("/a".into(), a);
         cs.by_root.insert("/b".into(), b);
         assert_eq!(cs.watch_ports(), vec![3000, 5173, 8080]);
+    }
+
+    // ---- find_watch_ports_upward（W2 收尾 DP-W2-1-B）----
+
+    #[test]
+    fn find_upward_hits_nearest_config() {
+        let dir = std::env::temp_dir().join(format!("prune-find-up-{}", std::process::id()));
+        let sub = dir.join("a").join("b");
+        std::fs::create_dir_all(&sub).unwrap();
+        std::fs::write(dir.join(FILE_NAME), "[watch]\nports = [3000, 5173]\n").unwrap();
+        // 从两层子目录向上找，命中最近的（也是唯一）一份
+        let (root, ports) = find_watch_ports_upward(&sub).expect("应命中");
+        assert_eq!(root, dir);
+        assert_eq!(ports, vec![3000, 5173]);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_upward_returns_none_without_config() {
+        let dir = std::env::temp_dir().join(format!("prune-find-none-{}", std::process::id()));
+        let sub = dir.join("deep");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert!(find_watch_ports_upward(&sub).is_none(), "沿途无配置应 None");
+        // 空配置（没有 watch.ports 键）同样 None：调用方无需区分两种「没有」
+        std::fs::write(dir.join(FILE_NAME), "[ignore]\npaths = []\n").unwrap();
+        assert!(
+            find_watch_ports_upward(&sub).is_none(),
+            "watch.ports 为空应 None"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn find_upward_broken_nearest_does_not_fall_through() {
+        let dir = std::env::temp_dir().join(format!("prune-find-broken-{}", std::process::id()));
+        let sub = dir.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        // 子目录的配置损坏、父目录完好：就近原则 → 放弃，绝不用父目录的
+        std::fs::write(dir.join("sub").join(FILE_NAME), "[watch]\nports = [\n").unwrap();
+        std::fs::write(dir.join(FILE_NAME), "[watch]\nports = [3000]\n").unwrap();
+        assert!(
+            find_watch_ports_upward(&sub).is_none(),
+            "就近损坏不得静默降级到父目录"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
