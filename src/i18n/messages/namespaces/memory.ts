@@ -22,6 +22,14 @@ const zh = {
     refresh: "刷新",
     sampling: "采样中",
   },
+  /** F20 内存报告导出（读序列库历史，不触发扫描） */
+  exportCsv: {
+    action: "导出 CSV",
+    exporting: "导出中…",
+    hint: "导出最近 7 天每进程内存序列（含峰值/均值/空窗），供工单与 issue 附带",
+    done: "已导出：{path}",
+    failed: "导出失败",
+  },
   families: {
     title: "进程家族",
     count: "{n} 个 · 按总量降序",
@@ -175,6 +183,14 @@ const en: MessageTree<typeof zh> = {
     refreshing: "Refreshing",
     refresh: "Refresh",
     sampling: "Sampling",
+  },
+  /** F20 memory report export (reads series history, never triggers a scan) */
+  exportCsv: {
+    action: "Export CSV",
+    exporting: "Exporting…",
+    hint: "Export the per-process memory series (peaks / averages / gaps) for bug reports and issues",
+    done: "Exported: {path}",
+    failed: "Export failed",
   },
   families: {
     title: "Process families",

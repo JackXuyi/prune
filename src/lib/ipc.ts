@@ -13,6 +13,7 @@ import type {
   RestoreReport,
   VolumeInfo,
   ProjectTrend,
+  OpenFilesReport,
 } from "../types/disk";
 import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
@@ -300,6 +301,31 @@ export function portWhy(port: number): Promise<WhyVerdict> {
  */
 export function selfFootprint(): Promise<SelfFootprint> {
   return invoke<SelfFootprint>("self_footprint");
+}
+
+/**
+ * F23 Open Files 占用反查：这块盘/目录被谁开着文件。只读纪律——只查不解。
+ * Rust 侧 TTL 5 min 缓存（切 tab 不重跑）；大目录可能十余秒，前端给预期文案。
+ * 用户显式触发（磁盘 tab 占用反查卡）。
+ */
+export function openFilesScan(path: string): Promise<OpenFilesReport> {
+  return invoke<OpenFilesReport>("open_files_scan", { path });
+}
+
+/** F23：已挂载的卷列表（macOS /Volumes，过滤根盘）；空数组 = 退化为手输路径 */
+export function openFilesVolumes(): Promise<string[]> {
+  return invoke<string[]>("open_files_volumes");
+}
+
+/**
+ * F20 内存报告导出：Rust 侧聚合 + 原生 save 对话框 + 写盘。
+ * 返回 null = 用户取消保存（无事发生）；Err = 读序列失败 / 写盘失败（toast）。
+ * 打开内存页时点击触发，不轮询。
+ */
+export function memExportCsv(sinceHours?: number): Promise<string | null> {
+  return invoke<string | null>("mem_export_csv", {
+    sinceHours: sinceHours ?? null,
+  });
 }
 
 // ---------------------------------------------------------------- 应用磁盘（M8）

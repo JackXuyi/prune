@@ -19,7 +19,19 @@ const zh = {
   scanning: "正在扫描…",
   scanningWith: "正在扫描…（{done}/{total}）",
   progressLine: "扫描中 {done}/{total} · {phase} · 已统计 {bytes}",
-  volume: {
+  /** F23 占用反查：谁占着这块盘（只查不解） */
+  openFiles: {
+    title: "占用反查",
+    tag: "只查不解 · 零写入",
+    pickVolume: "选择要反查的卷",
+    action: "反查",
+    rescan: "再反查",
+    scanning: "反查中…",
+    slowHint: "大目录（如备份盘）可能需要十余秒，请稍候",
+    summary: "{path}：{n} 个占用者（{ms} ms · {when}）",
+    none: "没有可见的占用者（见下方说明）",
+    fileCount: "{n} 个文件",
+  },  volume: {
     aria: "卷已用 {pct}：{used} / {total}",
     title: "卷容量",
     used: "已用 {used} / {total}",
@@ -365,6 +377,19 @@ const en: MessageTree<typeof zh> = {
   scanning: "Scanning…",
   scanningWith: "Scanning… ({done}/{total})",
   progressLine: "Scanning {done}/{total} · {phase} · {bytes} counted so far",
+  /** F23 Open Files holders lookup (read-only, never resolves) */
+  openFiles: {
+    title: "Holders lookup",
+    tag: "read-only · zero writes",
+    pickVolume: "Pick a volume to inspect",
+    action: "Lookup",
+    rescan: "Lookup again",
+    scanning: "Looking up…",
+    slowHint: "Large volumes (e.g. backup disks) can take 10+ seconds",
+    summary: "{path}: {n} holders ({ms} ms · {when})",
+    none: "No visible holders (see note below)",
+    fileCount: "{n} files",
+  },
   volume: {
     aria: "Volume {pct} used: {used} / {total}",
     title: "Volume",

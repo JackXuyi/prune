@@ -337,10 +337,26 @@ function reachOutcomeLabel(
   }
 }
 
+/** F21 对端来源段 → 文案。MessageKey 严格类型，动态拼接过不了编译，switch 罗列 */
+function peerScopeLabel(
+  scope: "loopback" | "lan" | "public" | "unknown",
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  switch (scope) {
+    case "loopback":
+      return t("ports.inbound.scope.loopback");
+    case "lan":
+      return t("ports.inbound.scope.lan");
+    case "public":
+      return t("ports.inbound.scope.public");
+    case "unknown":
+      return t("ports.inbound.scope.unknown");
+  }
+}
+
 /** F16 结论类别 → 文字色调：系统服务 / 冲突是警告（别杀 / 别动，杀掉会复活），
  *  dev / known 是确认级结论，其余（free / timewait / unknown）中性 */
-function whyToneClass(kind: WhyKind): string {
-  switch (kind) {
+function whyToneClass(kind: WhyKind): string {  switch (kind) {
     case "systemservice":
     case "conflict":
       return "text-warn";
@@ -442,6 +458,27 @@ function PortRow({
   const whyError = usePortStore((s) => s.whyErrors[whyKey]) ?? "";
   const why = usePortStore((s) => s.why);
 
+  // F21 入站来源：计数是口径，明细 ≤5 条给人看。外部来源（lan/public）才展开
+  // 行下明细——loopback-only 只进 tooltip（自己 curl 自己不算新闻）
+  const inbound = entry.inbound ?? null;
+  const inboundTotal = inbound
+    ? inbound.loopback + inbound.lan + inbound.public + inbound.unknown
+    : 0;
+  const inboundMore = inbound ? Math.max(0, inboundTotal - inbound.detail.length) : 0;
+  const inboundExternal = inbound ? inbound.lan + inbound.public + inbound.unknown : 0;
+  const inboundLine = inbound
+    ? t("ports.inbound.line", {
+        total: inboundTotal,
+        loopback: inbound.loopback,
+        lan: inbound.lan,
+        public: inbound.public,
+        unknownSuffix:
+          inbound.unknown > 0
+            ? ` · ${peerScopeLabel("unknown", t)} ${inbound.unknown}`
+            : "",
+      })
+    : "";
+
   return (
     <li>
       <div
@@ -474,6 +511,22 @@ function PortRow({
             >
               {serviceLabel(serviceKind, locale)}
               {probeResult ? " ✓" : " ?"}
+            </Badge>
+          ) : null}
+          {/* F22 基线漂移：变宽是安全信号（warn），新监听是信息信号（accent）。
+              消失不进 UI（噪音远大于信息，f22 方案 §3） */}
+          {entry.drift ? (
+            <Badge
+              tone={entry.drift === "widened" ? "warn" : "accent"}
+              title={
+                entry.drift === "widened"
+                  ? t("ports.drift.widenedTitle")
+                  : t("ports.drift.newTitle")
+              }
+            >
+              {entry.drift === "widened"
+                ? t("ports.drift.widened")
+                : t("ports.drift.new")}
             </Badge>
           ) : null}
         </span>
@@ -545,8 +598,15 @@ function PortRow({
           )}
         </span>
 
-        <span className="flex items-center justify-end gap-1.5">
-          <span className="font-mono text-[11px] tabular-nums text-ink-dim">
+        <span
+          className="flex items-center justify-end gap-1.5"
+          title={inboundLine || undefined}
+        >
+          <span
+            className={`font-mono text-[11px] tabular-nums ${
+              inboundExternal > 0 ? "text-accent" : "text-ink-dim"
+            }`}
+          >
             {entry.conns == null ? "—" : entry.conns}
           </span>
           {primary?.pid != null ? (
@@ -629,6 +689,25 @@ function PortRow({
         <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-warn">
           {t("ports.why.failed")} · {whyError}
         </p>
+      ) : null}
+      {/* F21 入站来源明细：只在有外部来源（局域网/公网）时展开——
+          loopback-only 是「自己访问自己」，tooltip 够了 */}
+      {inbound && inboundExternal > 0 ? (
+        <div className="mb-1 ml-2 pl-2">
+          <p className="text-[10px] leading-snug text-accent">{inboundLine}</p>
+          <ul className="mt-0.5">
+            {inbound.detail.slice(0, 5).map((p) => (
+              <li key={p.addr} className="font-mono text-[9.5px] leading-snug text-ink-faint">
+                &lt;- {p.addr}（{peerScopeLabel(p.scope, t)}）
+              </li>
+            ))}
+            {inboundMore > 0 ? (
+              <li className="text-[9.5px] leading-snug text-ink-faint">
+                {t("ports.inbound.more", { n: inboundMore })}
+              </li>
+            ) : null}
+          </ul>
+        </div>
       ) : null}
       {/* 开发服务（有 cwd 归属）才给 loopback 地址：GUI 应用那行贴个 URL 只是噪音 */}
       {primary?.project && entry.proto === "tcp" ? (

@@ -118,6 +118,26 @@ const zh = {
     title: "这个端口是怎么回事（白话解释，零网络请求）",
   },
 
+  /** F21 入站来源：计数是口径，明细 ≤5 条给人看 */
+  inbound: {
+    line: "入站 {total} 条：本机 {loopback} · 局域网 {lan} · 公网 {public}{unknownSuffix}",
+    more: "… 还有 {n} 个对端",
+    scope: {
+      loopback: "本机",
+      lan: "局域网",
+      public: "公网",
+      unknown: "未知",
+    },
+  },
+
+  /** F22 基线漂移徽标：变宽是安全信号，新监听是信息信号 */
+  drift: {
+    new: "新",
+    widened: "面变宽",
+    newTitle: "基线里没有这个监听（24 小时后自动转为老住户）",
+    widenedTitle: "暴露面比基线时刻变宽（如仅本机 → 全部网卡）；持续显示直到 CLI 重建基线",
+  },
+
   subpage: {
     ports: "端口",
     lan: "局域网",
@@ -233,6 +253,26 @@ const en: MessageTree<typeof zh> = {
     again: "Explain again",
     failed: "Explain failed",
     title: "What is this port (plain-language verdict, zero network)",
+  },
+
+  /** F21 inbound peers: counts are the truth, detail capped at 5 */
+  inbound: {
+    line: "{total} inbound: loopback {loopback} · LAN {lan} · public {public}{unknownSuffix}",
+    more: "… {n} more peers",
+    scope: {
+      loopback: "loopback",
+      lan: "LAN",
+      public: "public",
+      unknown: "unknown",
+    },
+  },
+
+  /** F22 baseline drift badge: widened is a safety signal, new is informational */
+  drift: {
+    new: "New",
+    widened: "Widened",
+    newTitle: "Not in the baseline yet (auto-settles after 24 hours)",
+    widenedTitle: "Exposure widened since baseline (e.g. loopback → all interfaces); persists until CLI rebase",
   },
 
   subpage: {

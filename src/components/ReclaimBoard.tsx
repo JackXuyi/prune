@@ -12,6 +12,7 @@ import { BarList } from "./charts/BarList";
 import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
 import { ProjectHealthCard } from "./ProjectHealthCard";
+import { OpenFilesCard } from "./OpenFilesCard";
 import {
   cacheLabel,
   reclaimNoteText,
@@ -263,6 +264,8 @@ export function ReclaimBoard() {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-3">
+        {/* F23 占用反查卡：与分级清理链路正交——那是「可以删什么」，这是「谁占着」 */}
+        <OpenFilesCard />
         {/* 头部：可回收总额（顶栏承担页名，这里只放这一页的核心事实） */}
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">

@@ -9,6 +9,7 @@ import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
 import { RailNav } from "../components/RailNav";
 import { ReclaimBoard } from "../components/ReclaimBoard";
+import { MemExportButton } from "../components/MemExportButton";
 import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
 import { StackBar } from "../components/charts/StackBar";
@@ -517,8 +518,12 @@ export function MainWindow() {
                 <span className="text-[11px] font-medium tracking-wide text-ink-dim">
                   {t("memory.families.title")}
                 </span>
-                <span className="text-[10px] text-ink-faint">
-                  {t("memory.families.count", { n: families.length })}
+                <span className="flex items-center gap-2.5">
+                  {/* F20 内存报告导出：读序列库历史，不触发扫描 */}
+                  <MemExportButton />
+                  <span className="text-[10px] text-ink-faint">
+                    {t("memory.families.count", { n: families.length })}
+                  </span>
                 </span>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-1.5">

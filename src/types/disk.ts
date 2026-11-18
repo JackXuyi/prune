@@ -333,3 +333,27 @@ export function reclaimNoteText(
       return t("disk.preview.note.nothingToDo");
   }
 }
+
+// ---------------------------------------------------------------- Open Files（F23）
+
+/** F23 一个占用者（Rust `open_files::Holder`，camelCase） */
+export interface OpenFilesHolder {
+  pid: number;
+  comm: string;
+  /** 该进程在此路径下打开的普通文件数 */
+  files: number;
+  /** 代表文件（≤3 条，给人看） */
+  sampleFiles: string[];
+}
+
+/** F23 一次占用反查的完整产出（Rust `OpenFilesReport`，camelCase）。
+ *  coverageNote 永远有值——「没有可见的占用者」≠「没人占用」 */
+export interface OpenFilesReport {
+  /** 归一化后的查询路径（去尾斜杠） */
+  path: string;
+  /** 占用者列表（files 降序） */
+  holders: OpenFilesHolder[];
+  scannedMs: number;
+  /** 权限盲区说明 */
+  coverageNote: string | null;
+}

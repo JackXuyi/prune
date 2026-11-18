@@ -18,6 +18,7 @@ import type {
   NetTotalSample,
   PortBinding,
   PortEntry,
+  PortPeers,
   PortSnapshot,
   Proto,
   ServiceKind,
@@ -540,6 +541,8 @@ export function devPortSnapshot(): PortSnapshot {
       note?: string | null;
       watched?: boolean;
       service?: ServiceKind | null;
+      /** F21 入站来源摘要（dev 样例：3000 给一条带局域网来源的） */
+      inbound?: PortPeers | null;
     } = {},
   ): PortEntry => ({
     port,
@@ -554,6 +557,7 @@ export function devPortSnapshot(): PortSnapshot {
     watched: extra.watched ?? true,
     note: extra.note ?? null,
     service: extra.service ?? null,
+    inbound: extra.inbound ?? null,
   });
 
   const GIT = "/Users/dev/Desktop/git";
@@ -568,7 +572,22 @@ export function devPortSnapshot(): PortSnapshot {
     }),
     row(1430, [bind(1430, "127.0.0.1", 3310, "cargo", { project: ["prune", `${GIT}/prune`] })], { conns: 1 }),
     row(3118, [bind(3118, "*", 4187, "node", { project: ["meetily/frontend", `${GIT}/meetily/frontend`] })], { conns: 3 }),
-    row(3000, [bind(3000, "*", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { conns: 6, service: "devserver" }),
+    row(3000, [bind(3000, "*", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], {
+      conns: 6,
+      service: "devserver",
+      // F21 样例：本机 4 + 局域网 1（真机调试）+ 公网 1，行下明细可见
+      inbound: {
+        loopback: 4,
+        lan: 1,
+        public: 1,
+        unknown: 0,
+        detail: [
+          { addr: "127.0.0.1", scope: "loopback" },
+          { addr: "192.168.1.8", scope: "lan" },
+          { addr: "203.0.113.9", scope: "public" },
+        ],
+      },
+    }),
     row(4173, [bind(4173, "127.0.0.1", 5120, "node", { project: ["wcs-homepage", `${GIT}/wcs-homepage`] })], { service: "devserver" }),
     row(5173, [bind(5173, "127.0.0.1", 6021, "node", { project: ["admin-web", `${GIT}/oa/admin-web`] })], { conns: 2, service: "devserver" }),
     row(5432, [bind(5432, "127.0.0.1", 812, "postgres"), bind(5432, "::1", 812, "postgres", { v6: true })], { conns: 4, service: "database" }),

@@ -42,6 +42,33 @@ export interface PortEntry {
   note: string | null;
   /** 服务类型（L0 静态推断）；null = 推断不出，**不是「不是服务」** */
   service: ServiceKind | null;
+  /** F21 入站来源摘要；null = 本端口没有 ESTABLISHED 连接或本轮未统计 */
+  inbound?: PortPeers | null;
+  /** F22 基线漂移徽标；null = 无漂移 / 基线未建。判定在 Rust 侧算好随轮下发 */
+  drift?: DriftKind | null;
+}
+
+/** F22 基线漂移类别（Rust `baseline::DriftKind`，serde lowercase）。
+ *  信息量排序：widened（暴露面变宽）> new（新监听）> 消失（不进 UI） */
+export type DriftKind = "new" | "widened";
+
+/** F21 连接对端来源段（Rust `PeerScope`，serde lowercase）。只分类不定因 */
+export type PeerScope = "loopback" | "lan" | "public" | "unknown";
+
+/** F21 单条入站来源明细（数字字面量，无反解析） */
+export interface PeerEntry {
+  addr: string;
+  scope: PeerScope;
+}
+
+/** F21 一个监听端口的入站来源摘要（Rust `PortPeers`，camelCase）。
+ *  计数是口径（含明细截断掉的部分），明细封顶 32 条 */
+export interface PortPeers {
+  loopback: number;
+  lan: number;
+  public: number;
+  unknown: number;
+  detail: PeerEntry[];
 }
 
 /** 端口提供的服务类型（与 Rust `ServiceKind` 同源，serde lowercase） */
