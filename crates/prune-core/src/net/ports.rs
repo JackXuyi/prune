@@ -30,6 +30,10 @@ pub struct TcpScan {
     pub conns: Vec<(u16, u32)>,
     /// pid → 连接计数（M8）。与 `conns` 同源，只是按进程再切一刀
     pub conns_by_pid: std::collections::BTreeMap<i32, super::ConnStats>,
+    /// F21 入站来源：本端端口 → 对端地址原样保留（lsof `->` 右侧）。
+    /// 解析层只搬运不定段；scope 分类与「只留监听口」的过滤在 `scan()` 做
+    /// （listeners 与连接块在文件里的先后顺序不定，必须后处理）
+    pub peers: Vec<(u16, String)>,
 }
 
 /// lsof 可执行文件路径。
@@ -197,6 +201,16 @@ pub fn parse_lsof_tcp(text: &str) -> TcpScan {
             Some("ESTABLISHED") => {
                 *conns.entry(port).or_insert(0) += 1;
                 scan.conns_by_pid.entry(pid).or_default().established += 1;
+                // F21：对端地址原样保留（`->` 右侧，去端口只留地址）。
+                // 连出去的本端是临时端口，不在监听集合里，`scan()` 后处理时
+                // 天然过滤——inbound 语义自动成立
+                if let Some(remote) = name.split("->").nth(1) {
+                    if let Some((raddr, rport)) = split_addr(remote) {
+                        if rport > 0 {
+                            scan.peers.push((port, raddr));
+                        }
+                    }
+                }
             }
             // CLOSE_WAIT 不进端口计数（它不是服务），但对应用维度是泄漏信号：
             // 本端没关、对端已关，说明程序没释放 fd。只计数，不下结论。
@@ -458,6 +472,10 @@ pub fn scan_cached(
         );
     }
 
+    // F21 入站来源回填：纯函数，只对「本轮有监听」的 TCP 端口聚合对端。
+    // 没有对端的端口保持 None（= 0 条），与 conns 的口径一致
+    attach_inbound(&mut entries, &tcp_scan.peers, &tcp_scan.listeners);
+
     let listen_total = kernel.as_ref().map(|k| k.listen_total).unwrap_or(0);
     let attributed = tcp_listen_rows;
 
@@ -495,6 +513,38 @@ fn now_secs() -> i64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_secs() as i64)
         .unwrap_or(0)
+}
+
+// ---------------------------------------------------------------- 入站来源（F21）
+
+/// 把解析层保留的对端聚合成 `PortPeers`，回填到监听端口的 entry 上。
+///
+/// 纯函数（好测试）。两条纪律：
+/// 1. **只回填「本轮有监听」的端口**——连出去的本端是临时端口，天然过滤；
+/// 2. 没有对端的端口保持 `None`（= 0 条），与 `conns` 的「没有记录 = 0」口径一致。
+fn attach_inbound(
+    entries: &mut [PortEntry],
+    peers: &[(u16, String)],
+    listeners: &[PortBinding],
+) {
+    if peers.is_empty() {
+        return;
+    }
+    let listen_ports: std::collections::HashSet<u16> =
+        listeners.iter().map(|b| b.port).collect();
+    let mut by_port: std::collections::BTreeMap<u16, super::PortPeers> =
+        std::collections::BTreeMap::new();
+    for (port, raddr) in peers {
+        if listen_ports.contains(port) {
+            let pp = by_port.entry(*port).or_default();
+            pp.record(raddr.clone(), super::PeerScope::from_addr(raddr));
+        }
+    }
+    for e in entries.iter_mut() {
+        if e.proto == Proto::Tcp {
+            e.inbound = by_port.remove(&e.port);
+        }
+    }
 }
 
 // ---------------------------------------------------------------- 冲突（W2/D-07）
@@ -699,6 +749,47 @@ tcp4       0      0  192.168.0.115.57591    1.1.1.1.443            TIME_WAIT
         assert_eq!(k.time_wait, 0);
     }
 
+    // ---------------------------------------------------------- 入站来源（F21）
+
+    #[test]
+    fn peers_kept_for_established_with_addr_only() {
+        let scan = parse_lsof_tcp(TCP_SAMPLE);
+        // 两条 ESTABLISHED 各记一条对端（本地侧的地址）；对端只留地址不留端口
+        assert_eq!(scan.peers.len(), 2, "{:?}", scan.peers);
+        assert!(scan.peers.iter().all(|(_, a)| a == "::1"));
+    }
+
+    #[test]
+    fn inbound_attaches_only_to_listening_tcp_ports() {
+        // 监听 3000；两条入站（局域网 + 本机）+ 一条连出去的（本端 51741，应被滤掉）
+        let mut e = entry(3000, Proto::Tcp, vec![binding(3000, Some(99), "*")]);
+        let listeners = vec![binding(3000, Some(99), "*")];
+        attach_inbound(
+            std::slice::from_mut(&mut e),
+            &[
+                (3000, "10.0.0.5".into()),
+                (3000, "127.0.0.1".into()),
+                (51741, "203.0.113.9".into()), // 连出去，不回填
+            ],
+            &listeners,
+        );
+        let pp = e.inbound.expect("监听口应有 inbound");
+        assert_eq!(pp.lan, 1);
+        assert_eq!(pp.loopback, 1);
+        assert_eq!(pp.public, 0);
+        assert_eq!(pp.total(), 2);
+        assert_eq!(pp.detail.len(), 2);
+
+        // UDP 端口不回填（lsof 对 UDP 无连接语义）
+        let mut u = entry(3000, Proto::Udp, vec![binding(3000, Some(99), "*")]);
+        attach_inbound(
+            std::slice::from_mut(&mut u),
+            &[(3000, "10.0.0.5".into())],
+            &listeners,
+        );
+        assert!(u.inbound.is_none());
+    }
+
     // ---------------------------------------------------------- 冲突（W2/D-07）
 
     fn binding(port: u16, pid: Option<i32>, addr: &str) -> PortBinding {
@@ -725,6 +816,8 @@ tcp4       0      0  192.168.0.115.57591    1.1.1.1.443            TIME_WAIT
             watched: true,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
             listeners,
         }
     }

@@ -8,6 +8,9 @@
 //! 1099 GB（实测），而真实占用约 3 GB —— 虚高的数字会直接毁掉首屏可信度。
 
 pub mod incremental;
+/// Open Files 占用反查（F23，docs/f23-open-files-plan.md）：谁占着这块盘。
+/// 只读纪律——只查不解；VREG 过滤 + NUL 解析 + coverage 盲区说明。
+pub mod open_files;
 pub mod project;
 pub mod whitelist;
 

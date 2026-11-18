@@ -8,6 +8,9 @@
 
 pub mod footprint;
 pub mod process;
+/// 内存报告聚合与 CSV 导出（F20，docs/f20-memory-report-plan.md）：
+/// 纯观测数值，零结论字段；(name, family) 聚合 + 原始样本峰值 + 空窗标注。
+pub mod report;
 /// 自耗透明（F19）：Prune 自身的 footprint / CPU / 线程 / 库体积读数，
 /// 口径与内存页同源；缺数显「暂无」不显 0。
 pub mod self_footprint;

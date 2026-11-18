@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::leak::{ProcSeries, Sample};
 use crate::mem::ProcMem;
+use crate::net::baseline::BaselineRow;
 use crate::net::traffic::DayTraffic;
 
 /// 单进程单个时间点的序列记录
@@ -21,6 +22,17 @@ pub struct Point {
     pub ts: i64,
     pub rss: u64,
     pub footprint: Option<u64>,
+    pub swapped: Option<u64>,
+}
+
+/// F20 内存报告的原始行（`mem_report_rows` 的产出，聚合输入）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MemReportRow {
+    pub ts: i64,
+    pub pid: i32,
+    pub name: String,
+    pub family: String,
+    pub rss: u64,
     pub swapped: Option<u64>,
 }
 
@@ -110,6 +122,15 @@ CREATE TABLE IF NOT EXISTS scan_log (
     level TEXT    NOT NULL               -- 'full' | 'incr'（口径见 roadmap §5.2）
 );
 CREATE INDEX IF NOT EXISTS idx_scan_log_ts ON scan_log (ts);
+CREATE TABLE IF NOT EXISTS port_baseline (
+    port       INTEGER NOT NULL,
+    proto      TEXT    NOT NULL,       -- 'tcp' | 'udp'
+    comm       TEXT    NOT NULL,       -- 基线键含进程名：换程序占同端口 = 漂移
+    first_seen INTEGER NOT NULL,
+    last_seen  INTEGER NOT NULL,       -- 消失不删行，30 天 prune 兜底
+    scope      TEXT    NOT NULL,       -- 基线时刻暴露面（只收窄不放宽）
+    PRIMARY KEY (port, proto, comm)
+);
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -275,6 +296,32 @@ impl Store {
             }
         }
         Ok(out)
+    }
+
+    /// F20 内存报告的全量行（含 rss/swapped，不筛 footprint）。
+    /// 与 `series()` 的差异：那边为泄漏判定只取 footprint 非空的样本，
+    /// 报告要的是「每个采样点的真实内存」，空 footprint 不影响 rss 行的价值。
+    pub fn mem_report_rows(&self, since: i64) -> rusqlite::Result<Vec<MemReportRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT ts, pid, name, family, rss, swapped
+             FROM mem_process
+             WHERE ts >= ?1
+             ORDER BY ts, pid",
+        )?;
+        let rows = stmt
+            .query_map(params![since], |r| {
+                Ok(MemReportRow {
+                    ts: r.get(0)?,
+                    pid: r.get(1)?,
+                    name: r.get(2)?,
+                    family: r.get(3)?,
+                    rss: r.get::<_, i64>(4)?.max(0) as u64,
+                    swapped: r.get::<_, Option<i64>>(5)?.map(|s| s.max(0) as u64),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
     }
 
     /// 行数（体积预算校验用）
@@ -627,6 +674,54 @@ impl Store {
         )
     }
 
+    // ------------------------------------------------------------ 端口基线（F22）
+
+    /// 全量基线行（表很小——几十行，每轮 30 s 读一次可忽略）。
+    pub fn port_baseline_all(&self) -> rusqlite::Result<Vec<BaselineRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT port, proto, comm, first_seen, last_seen, scope
+             FROM port_baseline ORDER BY port, proto, comm",
+        )?;
+        let rows = stmt
+            .query_map([], |r| {
+                Ok(BaselineRow {
+                    port: r.get::<_, i64>(0)? as u16,
+                    proto: parse_proto(&r.get::<_, String>(1)?),
+                    comm: r.get(2)?,
+                    first_seen: r.get(3)?,
+                    last_seen: r.get(4)?,
+                    scope: parse_scope(&r.get::<_, String>(5)?),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// 基线整表重写（合并结果落库）。表小 + 单写者（采样轮），整表替换在
+    /// 一个事务里完成——比逐行 upsert 语义简单且原子。`rebase` 也走这里。
+    pub fn port_baseline_replace(&self, rows: &[BaselineRow]) -> rusqlite::Result<usize> {
+        let mut conn = self.lock();
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM port_baseline", [])?;
+        for r in rows {
+            tx.execute(
+                "INSERT INTO port_baseline (port, proto, comm, first_seen, last_seen, scope)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+                params![
+                    r.port as i64,
+                    proto_str(r.proto),
+                    r.comm,
+                    r.first_seen,
+                    r.last_seen,
+                    scope_str(r.scope),
+                ],
+            )?;
+        }
+        tx.commit()?;
+        Ok(rows.len())
+    }
+
     /// 激活读数（M2，roadmap §5.2）：首启→首清 24h 率的分子分母原料。
     /// 零遥测下的本地读数；「率」本身在设备外由导出的时间戳算出。
     pub fn activation_summary(&self) -> rusqlite::Result<ActivationSummary> {
@@ -722,6 +817,41 @@ pub struct ActivationSummary {
 /// u64 → i64 的饱和转换：日流量不可能到 9.2 EB，但脏数据不能翻转成负数
 fn sat(v: u64) -> i64 {
     v.min(i64::MAX as u64) as i64
+}
+
+// ---------------- 端口基线（F22）的枚举序列化 helper（表存字符串） ----------------
+
+fn proto_str(p: crate::net::Proto) -> &'static str {
+    match p {
+        crate::net::Proto::Tcp => "tcp",
+        crate::net::Proto::Udp => "udp",
+    }
+}
+
+fn parse_proto(s: &str) -> crate::net::Proto {
+    if s == "udp" {
+        crate::net::Proto::Udp
+    } else {
+        crate::net::Proto::Tcp
+    }
+}
+
+fn scope_str(s: crate::net::BindScope) -> &'static str {
+    match s {
+        crate::net::BindScope::Loopback => "loopback",
+        crate::net::BindScope::Interface => "interface",
+        crate::net::BindScope::Any => "any",
+        crate::net::BindScope::Unknown => "unknown",
+    }
+}
+
+fn parse_scope(s: &str) -> crate::net::BindScope {
+    match s {
+        "interface" => crate::net::BindScope::Interface,
+        "any" => crate::net::BindScope::Any,
+        "unknown" => crate::net::BindScope::Unknown,
+        _ => crate::net::BindScope::Loopback,
+    }
 }
 
 /// 秒级 UTC 时间戳（meta.first_boot 用；失败归 0 与上游 scan/commands 同纪律）
@@ -1340,6 +1470,41 @@ mod tests {
         assert_eq!(removed, 1, "只删严格早于 cutoff 的行");
         let left = store.project_day_recent("2027-01-01").unwrap();
         assert_eq!(left.len(), 2, "边界当天必须保留");
+    }
+
+    #[test]
+    fn port_baseline_replace_roundtrips() {
+        use crate::net::baseline::BaselineRow;
+        use crate::net::{BindScope, Proto};
+
+        let store = Store::open_in_memory().unwrap();
+        assert!(store.port_baseline_all().unwrap().is_empty());
+        let rows = vec![
+            BaselineRow {
+                port: 3000,
+                proto: Proto::Tcp,
+                comm: "node".into(),
+                first_seen: 1,
+                last_seen: 2,
+                scope: BindScope::Any,
+            },
+            BaselineRow {
+                port: 5353,
+                proto: Proto::Udp,
+                comm: "mDNSResponder".into(),
+                first_seen: 1,
+                last_seen: 2,
+                scope: BindScope::Loopback,
+            },
+        ];
+        store.port_baseline_replace(&rows).unwrap();
+        let got = store.port_baseline_all().unwrap();
+        assert_eq!(got.len(), 2);
+        assert_eq!((got[0].port, got[0].comm.as_str(), got[0].scope), (3000, "node", BindScope::Any));
+        assert_eq!(got[1].proto, Proto::Udp);
+        // 整表替换：重写后行数不变（rebase 语义）
+        store.port_baseline_replace(&rows[..1]).unwrap();
+        assert_eq!(store.port_baseline_all().unwrap().len(), 1);
     }
 
     #[test]

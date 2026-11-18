@@ -24,6 +24,9 @@ pub mod lan_history;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
 pub mod ports;
+/// 基线漂移（F22，docs/f22-port-baseline-plan.md）：可信基线 + diff/merge 纯函数。
+/// 只做查询态呈现（CLI / 行内徽标），不做灵动岛事件（路线图裁决红线）。
+pub mod baseline;
 /// 暴露面可达实测（docs/f17-exposure-reach-plan.md，F17）：同机经网卡地址
 /// 回连一次，四态分层。用户显式触发，无常驻轮询；只报观测事实不定因。
 pub mod reach;
@@ -136,11 +139,21 @@ pub struct PortEntry {
     pub watched: bool,
     /// 内置解释（目前只有 AirPlay 5000/7000）。有就显示，没有就不占位。
     pub note: Option<String>,
-    /// 服务类型（L0 静态推断）。None = 推断不出，**不是「不是服务」**。
+/// 服务类型（L0 静态推断）。None = 推断不出，**不是「不是服务」**。
     /// L1 探针（`probe.rs`）的确认结果不落这里——它是快照外的即时数据，
     /// 由前端按 `(pid, port, start_time)` 叠加显示。
     #[serde(default)]
     pub service: Option<service::ServiceKind>,
+    /// 入站来源摘要（F21，docs/f21-inbound-source-plan.md）。None = 本端口
+    /// 没有 ESTABLISHED 连接或本轮未统计；语义是「没有记录 = 0 条」。
+    /// 只统计「本端是监听端口」的连接（连出去的本端是临时端口，天然过滤）。
+    #[serde(default)]
+    pub inbound: Option<PortPeers>,
+    /// 基线漂移徽标（F22，docs/f22-port-baseline-plan.md）。None = 无漂移 /
+    /// 基线还没建 / 非采样轮路径（CLI 的 `scan()` 不带基线，漂移由 `--drift` 单独算）。
+    /// 判定在核心层 `baseline::diff` 算好随轮下发，前端不持基线。
+    #[serde(default)]
+    pub drift: Option<baseline::DriftKind>,
 }
 
 impl PortEntry {
@@ -178,6 +191,116 @@ pub struct ConnStats {
 impl ConnStats {
     pub fn is_empty(&self) -> bool {
         self.established == 0 && self.close_wait == 0
+    }
+}
+
+// ───────────────────────── 入站来源（F21） ─────────────────────────
+
+/// 连接对端的来源段分类（F21）。**只分类，不定因**——不做反解析、不发包，
+/// 全部判据来自地址字面值（lsof 以 `-n` 数字输出，无 DNS 依赖）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PeerScope {
+    /// 127.0.0.0/8、::1 —— 本机自己
+    Loopback,
+    /// RFC1918（10/8、172.16/12、192.168/16）+ 链路本地（169.254/16、fe80::/10）
+    /// + IPv6 ULA（fc00::/7）—— 局域网 / 内网
+    Lan,
+    /// 其余可解析地址 —— 公网。对 any 暴露面这是正常态，不是攻击信号
+    Public,
+    /// 字面值解析失败（不应出现，出现就如实标，不塞进别的段谎报）
+    Unknown,
+}
+
+impl PeerScope {
+    /// 地址字面值 → 来源段。判据表集中在此处，测试对表。
+    pub fn from_addr(addr: &str) -> Self {
+        let a = addr.trim_start_matches('[').trim_end_matches(']');
+        // IPv6 先判（含 ':' 的都是 v6 字面量）
+        if a.contains(':') {
+            let la = a.to_ascii_lowercase();
+            if la == "::1" || la == "::" {
+                return PeerScope::Loopback;
+            }
+            if la.starts_with("fe8") || la.starts_with("fe9") || la.starts_with("fea") || la.starts_with("feb") {
+                return PeerScope::Lan; // 链路本地 fe80::/10
+            }
+            if la.starts_with("fc") || la.starts_with("fd") {
+                return PeerScope::Lan; // ULA fc00::/7
+            }
+            return PeerScope::Public;
+        }
+        // IPv4
+        let octets: Vec<u32> = a.split('.').filter_map(|s| s.parse().ok()).collect();
+        if octets.len() != 4 {
+            return PeerScope::Unknown;
+        }
+        match octets[0] {
+            127 => PeerScope::Loopback,
+            10 => PeerScope::Lan,
+            192 if octets[1] == 168 => PeerScope::Lan,
+            172 if (16..=31).contains(&octets[1]) => PeerScope::Lan,
+            169 if octets[1] == 254 => PeerScope::Lan,
+            _ => PeerScope::Public,
+        }
+    }
+
+    pub fn label_cn(self) -> &'static str {
+        match self {
+            PeerScope::Loopback => "本机",
+            PeerScope::Lan => "局域网",
+            PeerScope::Public => "公网",
+            PeerScope::Unknown => "未知",
+        }
+    }
+}
+
+/// 单条入站来源明细。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PeerEntry {
+    /// 对端地址（数字字面量，无反解析）
+    pub addr: String,
+    pub scope: PeerScope,
+}
+
+/// 一个监听端口的入站来源摘要（F21）。
+///
+/// 计数是口径（压测场景一个端口几百连入），明细是给人看的——截断 32 条，
+/// 余量由 `total - detail.len()` 表达，不谎称「全部」。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortPeers {
+    pub loopback: u32,
+    pub lan: u32,
+    pub public: u32,
+    pub unknown: u32,
+    /// 对端明细（去重，≤32 条）。空 = 只有计数没有细节（不应出现）
+    pub detail: Vec<PeerEntry>,
+}
+
+impl PortPeers {
+    /// 对端总数（各段计数之和，含明细截断掉的部分）
+    pub fn total(&self) -> u32 {
+        self.loopback + self.lan + self.public + self.unknown
+    }
+
+    /// 明细之外的余量（`+N more` 用）
+    pub fn more(&self) -> u32 {
+        self.total().saturating_sub(self.detail.len() as u32)
+    }
+
+    /// 记录一条对端：计数 +1；明细未满 32 条且地址未出现过则追加
+    pub fn record(&mut self, addr: String, scope: PeerScope) {
+        match scope {
+            PeerScope::Loopback => self.loopback += 1,
+            PeerScope::Lan => self.lan += 1,
+            PeerScope::Public => self.public += 1,
+            PeerScope::Unknown => self.unknown += 1,
+        }
+        if self.detail.len() < 32 && self.detail.iter().all(|p| p.addr != addr) {
+            self.detail.push(PeerEntry { addr, scope });
+        }
     }
 }
 
@@ -419,6 +542,10 @@ pub fn group_with_watched(
             note,
             // 推断需要 exe/cmd（group 只有 comm），由 scan_cached 按 ProcIdentity 回填
             service: None,
+            // 入站来源由 scan() 按 tcp_scan.peers 回填（F21）
+            inbound: None,
+            // 基线漂移由采样轮按 baseline::diff 回填（F22）；CLI 路径保持 None
+            drift: None,
         });
     }
     out
@@ -570,5 +697,45 @@ mod tests {
             note: None,
         };
         assert_eq!(c2.invisible(), 0);
+    }
+
+    #[test]
+    fn peer_scope_from_addr_table() {
+        // 本机
+        assert_eq!(PeerScope::from_addr("127.0.0.1"), PeerScope::Loopback);
+        assert_eq!(PeerScope::from_addr("::1"), PeerScope::Loopback);
+        // 局域网 / 内网
+        assert_eq!(PeerScope::from_addr("192.168.1.8"), PeerScope::Lan);
+        assert_eq!(PeerScope::from_addr("10.0.0.2"), PeerScope::Lan);
+        assert_eq!(PeerScope::from_addr("172.16.0.1"), PeerScope::Lan);
+        assert_eq!(PeerScope::from_addr("169.254.7.7"), PeerScope::Lan);
+        assert_eq!(PeerScope::from_addr("fe80::1"), PeerScope::Lan);
+        assert_eq!(PeerScope::from_addr("fd00::5"), PeerScope::Lan);
+        // 172 只在 16..=31 段是内网
+        assert_eq!(PeerScope::from_addr("172.32.0.1"), PeerScope::Public);
+        // 公网
+        assert_eq!(PeerScope::from_addr("203.0.113.9"), PeerScope::Public);
+        // 解析失败如实标 Unknown，不塞进别的段谎报
+        assert_eq!(PeerScope::from_addr("not-an-ip"), PeerScope::Unknown);
+    }
+
+    #[test]
+    fn port_peers_counts_caps_and_dedups_detail() {
+        let mut pp = PortPeers::default();
+        // 先记本机（明细未满，地址能进明细），再灌满局域网
+        pp.record("127.0.0.1".into(), PeerScope::Loopback);
+        for i in 0..40u8 {
+            pp.record(format!("10.0.0.{i}"), PeerScope::Lan);
+        }
+        assert_eq!(pp.lan, 40);
+        assert_eq!(pp.loopback, 1);
+        // 明细封顶 32 条，余量可算（不谎称「全部」）
+        assert_eq!(pp.detail.len(), 32);
+        assert_eq!(pp.total(), 41);
+        assert_eq!(pp.more(), 9);
+        // 同地址重复：计数 +1，明细不重复
+        pp.record("127.0.0.1".into(), PeerScope::Loopback);
+        assert_eq!(pp.loopback, 2);
+        assert_eq!(pp.detail.iter().filter(|p| p.addr == "127.0.0.1").count(), 1);
     }
 }

@@ -394,6 +394,8 @@ mod tests {
             watched: true,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(5000, &s);
         assert_eq!(v.kind, WhyKind::SystemService);
@@ -417,6 +419,8 @@ mod tests {
             watched: true,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(5000, &s);
         assert_eq!(v.kind, WhyKind::DevServer);
@@ -437,6 +441,8 @@ mod tests {
             watched: true,
             note: None,
             service: Some(crate::net::service::ServiceKind::DevServer),
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(5173, &s);
         assert_eq!(v.kind, WhyKind::DevServer);
@@ -459,6 +465,8 @@ mod tests {
             watched: true,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(3000, &s);
         assert_eq!(v.kind, WhyKind::Conflict);
@@ -516,6 +524,8 @@ mod tests {
             watched: true,
             note: None,
             service: Some(crate::net::service::ServiceKind::Database),
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(3306, &s);
         assert_eq!(v.kind, WhyKind::KnownService);
@@ -536,6 +546,8 @@ mod tests {
             watched: false,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(58583, &s);
         assert_eq!(v.kind, WhyKind::Unknown);
@@ -557,6 +569,8 @@ mod tests {
             watched: true,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
         }], empty_coverage());
         let v = why(22, &s);
         assert_eq!(v.kind, WhyKind::Unknown);

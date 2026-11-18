@@ -1064,6 +1064,8 @@ mod tests {
             watched,
             note: None,
             service: None,
+            inbound: None,
+            drift: None,
         }
     }
 
