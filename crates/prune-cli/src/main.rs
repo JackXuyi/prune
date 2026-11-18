@@ -10,6 +10,7 @@
 
 mod docs_json;
 mod doctor;
+mod emit_script;
 mod mcp;
 mod mcp_install;
 mod watch;
@@ -37,6 +38,9 @@ pub enum Command {
     },
     Reclaim {
         yes: bool,
+        /// `--emit-script`（W3/D-15，DP-4 裁 A）：只打印候选删除命令的
+        /// 可审计脚本，永不执行；与 `--yes` 互斥
+        emit_script: bool,
     },
     Mem {
         swapped: bool,
@@ -158,10 +162,12 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
         }
         "reclaim" => {
             let mut yes = false;
+            let mut emit_script = false;
             let mut level = false;
             for a in it {
                 match a.as_str() {
                     "--yes" | "-y" => yes = true,
+                    "--emit-script" => emit_script = true,
                     "--level" => level = true,
                     "green" if level => level = false,
                     // 默认就是 dry-run，接受以兼容 README 示例
@@ -172,7 +178,15 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             if level {
                 return Err("--level 需要一个值（v1 只支持 green）".into());
             }
-            Ok(Command::Reclaim { yes })
+            // D-15：语义互斥——一个只打印、一个真执行，同给说明意图混乱，
+            // 直接用法错退出 2，不猜
+            if yes && emit_script {
+                return Err(format!(
+                    "--emit-script 与 --yes 互斥：一个只打印命令（人执行），一个真删\n{}",
+                    usage()
+                ));
+            }
+            Ok(Command::Reclaim { yes, emit_script })
         }
         "mem" => {
             let mut swapped = false;
@@ -471,8 +485,8 @@ fn usage() -> String {
         "\
 用法：
   prune scan [--json]                 全盘扫描，输出可回收清单
-  prune reclaim [--level green] [--yes]
-                                      预览零风险清理项（默认 dry-run；--yes 才真删）
+  prune reclaim [--level green] [--emit-script] [--yes]
+                                      预览零风险清理项（默认 dry-run）；--emit-script 打印可审计脚本（永不执行）；--yes 才真删
   prune mem [--swapped] [--json]      一次性内存读数（footprint 口径）
   prune mem --watch [--interval N]    【已弃用】改用 prune watch --only mem
   prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
@@ -510,7 +524,7 @@ fn main() {
             0
         }
         Command::Scan { json } => cmd_scan(json),
-        Command::Reclaim { yes } => cmd_reclaim(yes),
+        Command::Reclaim { yes, emit_script } => cmd_reclaim(yes, emit_script),
         Command::Mem {
             swapped,
             json,
@@ -874,13 +888,21 @@ fn level_note(g: &CacheGroup) -> &'static str {
 
 // ---------------------------------------------------------------- reclaim
 
-fn cmd_reclaim(yes: bool) -> i32 {
+fn cmd_reclaim(yes: bool, emit_script: bool) -> i32 {
     let home = home_dir();
     eprintln!("扫描中…");
     let report = disk::scan(&home, None);
 
     // v1 绿级 = A1 死重条目（L1，零风险）；整库清理不进 CLI（D-C4）
     let pv = reclaim::preview(&["yarn".into()], &report);
+
+    // D-15（DP-4 裁 A）：--emit-script 只打印候选删除命令的可审计脚本。
+    // 此分支提前 return——本命令在 emit 模式下结构上不接触 reclaim::execute，
+    // 「无执行路径」由 emit_script.rs 的源码断言测试守门。
+    if emit_script {
+        return emit_script::run(&pv, &home, &ts_full(prune_core::swap::now_secs() as i64));
+    }
+
     if pv.items.is_empty() {
         println!("没有可清理的零风险项。");
         return 0;
@@ -1695,6 +1717,28 @@ pub(crate) fn ts_hms(ts: i64) -> String {
     format!("{ts}")
 }
 
+/// 本地时间全串（D-15 emit-script 脚本头用）：`YYYY-MM-DD HH:MM:SS`。
+/// libc 失败时回退 unix 时间戳——不伪造日期。
+fn ts_full(ts: i64) -> String {
+    #[cfg(unix)]
+    unsafe {
+        let t = ts as libc::time_t;
+        let tm = libc::localtime(&t);
+        if !tm.is_null() {
+            return format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}:{:02}",
+                (*tm).tm_year + 1900,
+                (*tm).tm_mon + 1,
+                (*tm).tm_mday,
+                (*tm).tm_hour,
+                (*tm).tm_min,
+                (*tm).tm_sec
+            );
+        }
+    }
+    format!("unix:{ts}")
+}
+
 // ---------------------------------------------------------------- mcp
 
 fn cmd_mcp() -> i32 {
@@ -1879,12 +1923,27 @@ mod tests {
         );
         assert_eq!(
             parse_args(&[s("reclaim"), s("--level"), s("green")]).unwrap(),
-            Command::Reclaim { yes: false }
+            Command::Reclaim {
+                yes: false,
+                emit_script: false
+            }
         );
         assert_eq!(
             parse_args(&[s("reclaim"), s("--yes")]).unwrap(),
-            Command::Reclaim { yes: true }
+            Command::Reclaim {
+                yes: true,
+                emit_script: false
+            }
         );
+        assert_eq!(
+            parse_args(&[s("reclaim"), s("--emit-script")]).unwrap(),
+            Command::Reclaim {
+                yes: false,
+                emit_script: true
+            }
+        );
+        // D-15：打印与执行语义互斥，同给必须用法错
+        assert!(parse_args(&[s("reclaim"), s("--emit-script"), s("--yes")]).is_err());
         assert_eq!(
             parse_args(&[s("mem"), s("--swapped")]).unwrap(),
             Command::Mem {

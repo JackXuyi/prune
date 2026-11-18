@@ -9,7 +9,7 @@
 | 命令 | 一句话 |
 |---|---|
 | `prune scan [--json]` | 全盘扫描，输出可回收清单 |
-| `prune reclaim [--level green]` | 预览零风险清理项（默认 dry-run；`--yes` 才真删） |
+| `prune reclaim [--emit-script] [--yes]` | 预览零风险清理项（默认 dry-run；`--emit-script` 打印可审计脚本永不执行；`--yes` 才真删） |
 | `prune mem [--swapped] [--json]` | 一次性内存读数（footprint 口径） |
 | `prune mem --watch [--interval N]` | 【已弃用】改用 `prune watch --only mem`（2027-09 移除别名） |
 | `prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]` | 按需守护：前台进程，Ctrl-C 即停，不装后台 |
@@ -66,7 +66,23 @@ prune reclaim --level green          # 预览
 prune reclaim --level green --yes    # 执行
 ```
 
-flags：`--level`（v1 只支持 green）、`--yes` / `-y`、`--dry-run`（兼容别名）
+flags：`--level`（v1 只支持 green）、`--yes` / `-y`、`--dry-run`（兼容别名）、`--emit-script`（与 `--yes` 互斥）
+
+### `--emit-script`（D-15，DP-4 裁 A）
+
+把预览清单命令化成一段**可审计的 POSIX sh 脚本**打印到 stdout——只打印，**永不执行**；执行权在人。典型用途：把脚本交给 Agent 转述或存档，由人审阅后自行运行。
+
+```sh
+prune reclaim --emit-script > prune-clean.sh   # 保存，人工审阅后 sh prune-clean.sh
+```
+
+脚本特征：
+
+- 每条命令是 `mv -n '<路径>' "$HOME/.Trash/"`——只进废纸篓、不用 `rm`、`-n` 不覆盖同名条目；路径经单引号转义，空格/引号/元字符全部失效在引号内
+- 每项附注释：体积、分组与**白名单校验结果**（✓ 静态白名单 L1 零风险）；白名单复验不过的项不进脚本并 stderr 告警
+- 脚本头自证来源（生成时间、版本）与边界声明「Prune 进程内不存在执行它的代码路径」——由 `emit_script.rs` 的源码断言单测守门
+
+范围与 reclaim 一致：只取 L1 死重白名单项；L3 需逐项人工判断不进脚本，L4 永不提供删除命令。
 
 ## prune mem
 

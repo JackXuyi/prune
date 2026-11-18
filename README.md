@@ -108,7 +108,8 @@ One binary, two shapes: `cargo build --release -p prune-cli` produces `target/re
 
 ```bash
 prune scan [--json]                 # full disk scan: headline / cross-platform detail / duplicate stores / Docker hints (also records one project-ledger row)
-prune reclaim [--level green]       # preview reclaimable items (dry-run by default; --yes deletes, via trash)
+prune reclaim [--level green] [--emit-script] [--yes]
+                                    # preview reclaimable items (dry-run by default; --emit-script prints an auditable script, never runs; --yes deletes, via trash)
 prune mem [--swapped] [--json]      # one-shot memory reading (footprint, deep probe top 20)
 prune mem --watch [--interval N]    # DEPRECATED: use prune watch --only mem (alias removed 2027-09)
 prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]

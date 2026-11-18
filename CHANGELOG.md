@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+### `prune reclaim --emit-script`：打印候选删除命令，永不执行（[D-15 方案](./docs/d15-emit-script-plan.md)，DP-4 裁 A）
+
+- **开一条「打印命令」的缝**：把 reclaim 预览的 L1 白名单项命令化成一段可审计的 POSIX sh 脚本输出到 stdout，执行权完全留在人手里——Prune 进程内不存在执行该脚本的代码路径，`emit_script.rs` 源码断言单测守门（禁词：进程启动 / 废纸篓原语 / 文件删除）
+- 每条命令 `mv -n '<路径>' "$HOME/.Trash/"`：只进废纸篓、不用 `rm`、`-n` 不覆盖同名条目；路径经单引号转义，空格 / 引号 / `$()` / 反引号全部失效在引号内
+- **逐项白名单复验**：emit 通道不豁免最后一道闸——复验不过的项不进脚本并 stderr 告警；每项注释带体积、分组与校验结果，脚本头自证生成时间 / 版本与边界声明
+- `--emit-script` 与 `--yes` 互斥（同给用法错退出 2）；范围与 reclaim 一致只取 L1，L3 不进脚本、L4 永不提供删除命令
+
 ### `prune watch` 吃 CWD 项目的 `watch.ports`（[W2 收尾方案](./docs/wave2-cli-plan.md)）
 
 - **修一个真实告警缺口**：watch 的端口关注层此前只含在线项目（对绑定进程的 cwd 解析后读配置）；在还没起服务的项目里跑 watch，该项目的关注端口起服务那一刻不会告警——`PortGuardMonitor` 的 NewListen 只看条目的 watched 标志
