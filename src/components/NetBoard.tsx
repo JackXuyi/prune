@@ -525,10 +525,13 @@ function AppRanking({
     return [...pidsByFamily.entries()]
       .map(([family, pids]) => ({ family, speed: netSpeedOfPids(netSample, pids) }))
       .filter((r) => r.speed.downBps + r.speed.upBps > 0)
-      .sort(
-        (a, b) =>
-          b.speed.downBps + b.speed.upBps - (a.speed.downBps + a.speed.upBps),
-      );
+      .sort((a, b) => {
+        const ta = a.speed.downBps + a.speed.upBps;
+        const tb = b.speed.downBps + b.speed.upBps;
+        // 相差 < 5% 视为同档按名称排：瞬时差分有噪声，纯按值排会让相邻行每秒洗牌
+        if (Math.abs(ta - tb) >= Math.max(ta, tb) * 0.05) return tb - ta;
+        return a.family.localeCompare(b.family);
+      });
   }, [processes, netSample]);
 
   const shown = expanded ? rows : rows.slice(0, TOP_APPS);
