@@ -1500,7 +1500,10 @@ mod tests {
         store.port_baseline_replace(&rows).unwrap();
         let got = store.port_baseline_all().unwrap();
         assert_eq!(got.len(), 2);
-        assert_eq!((got[0].port, got[0].comm.as_str(), got[0].scope), (3000, "node", BindScope::Any));
+        assert_eq!(
+            (got[0].port, got[0].comm.as_str(), got[0].scope),
+            (3000, "node", BindScope::Any)
+        );
         assert_eq!(got[1].proto, Proto::Udp);
         // 整表替换：重写后行数不变（rebase 语义）
         store.port_baseline_replace(&rows[..1]).unwrap();

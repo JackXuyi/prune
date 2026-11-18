@@ -419,9 +419,16 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
         };
         // F19：记自身进程 CPU（10 轮环形缓冲，均值给设置页「自身开销」）。
         // 首轮差分未就绪 cpu_usage = None → 不记账（那不是 0%）
-        if let Some(me) = scan.procs.iter().find(|p| p.pid == std::process::id() as i32) {
+        if let Some(me) = scan
+            .procs
+            .iter()
+            .find(|p| p.pid == std::process::id() as i32)
+        {
             if let Some(cpu) = me.cpu {
-                let mut ring = state.self_cpu_hist.lock().unwrap_or_else(|e| e.into_inner());
+                let mut ring = state
+                    .self_cpu_hist
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 ring.push_back(cpu);
                 while ring.len() > 10 {
                     ring.pop_front();

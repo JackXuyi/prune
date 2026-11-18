@@ -13,6 +13,9 @@
 //! 关注度分层（§3.3）是本模块的产品核心：实测本机 27 个监听端口里 19 个（70%）
 //! 是 Electron / 微信 / Cursor 的内部 IPC 随机端口，全列出来等于把功能做废。
 
+/// 基线漂移（F22，docs/f22-port-baseline-plan.md）：可信基线 + diff/merge 纯函数。
+/// 只做查询态呈现（CLI / 行内徽标），不做灵动岛事件（路线图裁决红线）。
+pub mod baseline;
 /// 网络诊断（docs/net-diag-plan.md）：DNS / 网关 / 出口三层探测 + 分层判定
 pub mod diag;
 pub mod host;
@@ -24,24 +27,21 @@ pub mod lan_history;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
 pub mod ports;
-/// 基线漂移（F22，docs/f22-port-baseline-plan.md）：可信基线 + diff/merge 纯函数。
-/// 只做查询态呈现（CLI / 行内徽标），不做灵动岛事件（路线图裁决红线）。
-pub mod baseline;
-/// 暴露面可达实测（docs/f17-exposure-reach-plan.md，F17）：同机经网卡地址
-/// 回连一次，四态分层。用户显式触发，无常驻轮询；只报观测事实不定因。
-pub mod reach;
 /// 端口服务类型（docs/research/port-service-type-research.md）：
 /// L0 静态推断（`service.rs`）+ L1 主动探针（`probe.rs`，用户显式触发）。
 pub mod probe;
+/// 暴露面可达实测（docs/f17-exposure-reach-plan.md，F17）：同机经网卡地址
+/// 回连一次，四态分层。用户显式触发，无常驻轮询；只报观测事实不定因。
+pub mod reach;
 pub mod service;
-/// 端口白话解释（docs/f16-port-why-plan.md，F16）：把快照证据翻译成
-/// 一句人话 + 证据 + 指路。纯函数零 IO，CLI / MCP / 前端共用同一结论。
-pub mod why;
 /// 站点连通性 / 传输速率（docs/net-sites-plan.md，F15）：按站点测五阶段，
 /// 与 `diag` 的「网络哪一层慢」互补，不共用判定表
 pub mod sites;
 /// M14：系统口径总网速 + 每日流量（网卡分类 / 本地日期 / 数据契约）
 pub mod traffic;
+/// 端口白话解释（docs/f16-port-why-plan.md，F16）：把快照证据翻译成
+/// 一句人话 + 证据 + 指路。纯函数零 IO，CLI / MCP / 前端共用同一结论。
+pub mod why;
 /// Windows 走 iphlpapi 的 owner-pid 表，不依赖 lsof
 #[cfg(windows)]
 pub mod win_ports;
@@ -139,7 +139,7 @@ pub struct PortEntry {
     pub watched: bool,
     /// 内置解释（目前只有 AirPlay 5000/7000）。有就显示，没有就不占位。
     pub note: Option<String>,
-/// 服务类型（L0 静态推断）。None = 推断不出，**不是「不是服务」**。
+    /// 服务类型（L0 静态推断）。None = 推断不出，**不是「不是服务」**。
     /// L1 探针（`probe.rs`）的确认结果不落这里——它是快照外的即时数据，
     /// 由前端按 `(pid, port, start_time)` 叠加显示。
     #[serde(default)]
@@ -222,7 +222,11 @@ impl PeerScope {
             if la == "::1" || la == "::" {
                 return PeerScope::Loopback;
             }
-            if la.starts_with("fe8") || la.starts_with("fe9") || la.starts_with("fea") || la.starts_with("feb") {
+            if la.starts_with("fe8")
+                || la.starts_with("fe9")
+                || la.starts_with("fea")
+                || la.starts_with("feb")
+            {
                 return PeerScope::Lan; // 链路本地 fe80::/10
             }
             if la.starts_with("fc") || la.starts_with("fd") {
@@ -736,6 +740,9 @@ mod tests {
         // 同地址重复：计数 +1，明细不重复
         pp.record("127.0.0.1".into(), PeerScope::Loopback);
         assert_eq!(pp.loopback, 2);
-        assert_eq!(pp.detail.iter().filter(|p| p.addr == "127.0.0.1").count(), 1);
+        assert_eq!(
+            pp.detail.iter().filter(|p| p.addr == "127.0.0.1").count(),
+            1
+        );
     }
 }

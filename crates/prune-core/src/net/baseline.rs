@@ -263,7 +263,12 @@ mod tests {
     fn new_listen_flagged_then_ages_out() {
         let base = vec![
             // 老住户（早过 24 h 新鲜期）：不标
-            row(3000, "node", T0 - NEW_WINDOW_SECS - 100, BindScope::Loopback),
+            row(
+                3000,
+                "node",
+                T0 - NEW_WINDOW_SECS - 100,
+                BindScope::Loopback,
+            ),
         ];
         let s = snap(vec![
             entry(3000, "node", BindScope::Loopback),
@@ -281,7 +286,12 @@ mod tests {
     #[test]
     fn pid_rebirth_is_not_drift_but_comm_change_is() {
         // node 重生（pid 变了，comm 没变）：基线键不含 pid → 不是漂移
-        let base = vec![row(3000, "node", T0 - NEW_WINDOW_SECS - 100, BindScope::Loopback)];
+        let base = vec![row(
+            3000,
+            "node",
+            T0 - NEW_WINDOW_SECS - 100,
+            BindScope::Loopback,
+        )];
         let s = snap(vec![entry(3000, "node", BindScope::Loopback)]);
         let r = diff(&base, &s, T0);
         assert!(r.flagged.is_empty());
@@ -294,7 +304,12 @@ mod tests {
 
     #[test]
     fn exposure_widened_flagged() {
-        let base = vec![row(3000, "node", T0 - NEW_WINDOW_SECS - 100, BindScope::Loopback)];
+        let base = vec![row(
+            3000,
+            "node",
+            T0 - NEW_WINDOW_SECS - 100,
+            BindScope::Loopback,
+        )];
         let s = snap(vec![entry(3000, "node", BindScope::Any)]);
         let r = diff(&base, &s, T0);
         assert_eq!(r.flagged, vec![(3000, Proto::Tcp, DriftKind::Widened)]);

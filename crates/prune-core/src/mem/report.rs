@@ -163,10 +163,7 @@ pub fn to_csv(report: &MemReport, generated_at: i64, version: &str) -> String {
         "summary,{},,,,,,,\"window start\"\n",
         report.from_ts
     ));
-    out.push_str(&format!(
-        "summary,{},,,,,,,\"window end\"\n",
-        report.to_ts
-    ));
+    out.push_str(&format!("summary,{},,,,,,,\"window end\"\n", report.to_ts));
     for (start, end) in &report.gaps {
         out.push_str(&format!(
             "gap,{start},,,,,,,\"Prune 未运行 {start} -> {end}，该时段无观测\"\n"
@@ -281,9 +278,30 @@ mod tests {
     #[test]
     fn peak_swapped_takes_max_across_samples() {
         let mut rows = vec![
-            MemReportRow { ts: 1, pid: 1, name: "n".into(), family: "f".into(), rss: 1, swapped: Some(10) },
-            MemReportRow { ts: 2, pid: 1, name: "n".into(), family: "f".into(), rss: 2, swapped: Some(30) },
-            MemReportRow { ts: 3, pid: 1, name: "n".into(), family: "f".into(), rss: 3, swapped: None },
+            MemReportRow {
+                ts: 1,
+                pid: 1,
+                name: "n".into(),
+                family: "f".into(),
+                rss: 1,
+                swapped: Some(10),
+            },
+            MemReportRow {
+                ts: 2,
+                pid: 1,
+                name: "n".into(),
+                family: "f".into(),
+                rss: 2,
+                swapped: Some(30),
+            },
+            MemReportRow {
+                ts: 3,
+                pid: 1,
+                name: "n".into(),
+                family: "f".into(),
+                rss: 3,
+                swapped: None,
+            },
         ];
         rows.reverse(); // 乱序输入也要取对
         let r = aggregate(&rows);

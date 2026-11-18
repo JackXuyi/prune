@@ -278,14 +278,10 @@ pub async fn port_why(
 /// 绝不进轮询循环、不自动批量探测（f17 方案 §3.2 / S6）。无状态：结果不缓存
 /// （端口随时可能被停掉，缓存「可达」比缓存探针结果更危险）。
 #[tauri::command]
-pub async fn port_reach_test(
-    port: u16,
-) -> Result<prune_core::net::reach::ReachResult, String> {
-    tauri::async_runtime::spawn_blocking(move || {
-        Ok(prune_core::net::reach::execute(port, 2000))
-    })
-    .await
-    .map_err(|e| format!("实测线程失败: {e}"))?
+pub async fn port_reach_test(port: u16) -> Result<prune_core::net::reach::ReachResult, String> {
+    tauri::async_runtime::spawn_blocking(move || Ok(prune_core::net::reach::execute(port, 2000)))
+        .await
+        .map_err(|e| format!("实测线程失败: {e}"))?
 }
 
 // ---------------------------------------------------------------- 内存报告导出（F20）
@@ -328,7 +324,9 @@ pub async fn mem_export_csv(
         let Some(file) = file else {
             return Ok(None); // 用户取消：无事发生
         };
-        let path = file.into_path().map_err(|e| format!("保存路径解析失败: {e}"))?;
+        let path = file
+            .into_path()
+            .map_err(|e| format!("保存路径解析失败: {e}"))?;
         std::fs::write(&path, csv).map_err(|e| format!("写文件失败: {e}"))?;
         Ok(Some(path.to_string_lossy().into_owned()))
     })
@@ -341,7 +339,12 @@ pub async fn mem_export_csv(
 /// F23 占用反查缓存状态：TTL 5 min（AppDiskState 同款模式——卡片反复切 tab
 /// 不该反复跑全量 lsof）。键就是整份报告（查询粒度 = 挂载点，量级可忽略）。
 pub struct OpenFilesState {
-    cache: Mutex<Option<(std::time::Instant, prune_core::disk::open_files::OpenFilesReport)>>,
+    cache: Mutex<
+        Option<(
+            std::time::Instant,
+            prune_core::disk::open_files::OpenFilesReport,
+        )>,
+    >,
 }
 
 impl Default for OpenFilesState {
@@ -352,7 +355,9 @@ impl Default for OpenFilesState {
 
 impl OpenFilesState {
     pub fn new() -> Self {
-        Self { cache: Mutex::new(None) }
+        Self {
+            cache: Mutex::new(None),
+        }
     }
 }
 
@@ -379,11 +384,10 @@ pub async fn open_files_scan(
             }
         }
     }
-    let out = tauri::async_runtime::spawn_blocking(move || {
-        prune_core::disk::open_files::scan(&path)
-    })
-    .await
-    .map_err(|e| format!("占用反查线程失败: {e}"))??;
+    let out =
+        tauri::async_runtime::spawn_blocking(move || prune_core::disk::open_files::scan(&path))
+            .await
+            .map_err(|e| format!("占用反查线程失败: {e}"))??;
     *state.cache.lock().unwrap_or_else(|e| e.into_inner()) =
         Some((std::time::Instant::now(), out.clone()));
     Ok(out)

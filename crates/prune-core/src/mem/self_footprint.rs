@@ -120,7 +120,10 @@ mod tests {
     #[test]
     fn db_size_none_when_missing() {
         assert_eq!(db_size(None), None);
-        assert_eq!(db_size(Some(Path::new("/nonexistent-prune-db/prune.db"))), None);
+        assert_eq!(
+            db_size(Some(Path::new("/nonexistent-prune-db/prune.db"))),
+            None
+        );
     }
 
     #[test]

@@ -138,7 +138,9 @@ pub fn parse(text: &str, path: &str) -> Vec<Holder> {
                     if !by_pid.contains_key(&pid) {
                         order.push(pid);
                     }
-                    by_pid.entry(pid).or_insert_with(|| (String::new(), Vec::new()));
+                    by_pid
+                        .entry(pid)
+                        .or_insert_with(|| (String::new(), Vec::new()));
                 }
             }
             "c" => {
@@ -151,7 +153,9 @@ pub fn parse(text: &str, path: &str) -> Vec<Holder> {
             }
             "t" => cur_type = Some(rest.to_string()),
             "n" => {
-                let Some(t) = cur_type.as_deref() else { continue };
+                let Some(t) = cur_type.as_deref() else {
+                    continue;
+                };
                 // macOS lsof 报 `REG`，GNU lsof 报 `VREG`——两者都是普通文件
                 let is_vreg = t == "VREG" || t == "REG";
                 cur_type = None;
@@ -222,10 +226,16 @@ mod tests {
     #[test]
     fn parse_honors_prefix_boundary() {
         // /Volumes/Backup2 不能命中 /Volumes/Backup 的前缀（目录边界，不是字符串前缀）
-        let holders = parse("p1\0capp\0f1\0tVREG\0n/Volumes/Backup2/x\0\0", "/Volumes/Backup");
+        let holders = parse(
+            "p1\0capp\0f1\0tVREG\0n/Volumes/Backup2/x\0\0",
+            "/Volumes/Backup",
+        );
         assert!(holders.is_empty());
         // 精确等于前缀本身（打开的是挂载点目录本体 → 不是 VREG，也不该命中）
-        let holders2 = parse("p1\0capp\0f1\0tVREG\0n/Volumes/Backup\0\0", "/Volumes/Backup");
+        let holders2 = parse(
+            "p1\0capp\0f1\0tVREG\0n/Volumes/Backup\0\0",
+            "/Volumes/Backup",
+        );
         assert_eq!(holders2.len(), 1);
     }
 

@@ -226,10 +226,7 @@ pub fn contract_shape() -> Value {
     let port_doc = port_doc(None, &[], &port_snap);
     let conflicts_doc = port_conflicts_doc(0, &[], &port_snap.coverage);
     let drift_doc = port_drift_doc(false, false, serde_json::json!([]), &[]);
-    let why_doc = why_doc(&prune_core::net::why::why(
-        0,
-        &port_snap,
-    ));
+    let why_doc = why_doc(&prune_core::net::why::why(0, &port_snap));
 
     let app = AppResource {
         family: String::new(),

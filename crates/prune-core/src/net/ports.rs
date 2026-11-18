@@ -522,16 +522,11 @@ fn now_secs() -> i64 {
 /// 纯函数（好测试）。两条纪律：
 /// 1. **只回填「本轮有监听」的端口**——连出去的本端是临时端口，天然过滤；
 /// 2. 没有对端的端口保持 `None`（= 0 条），与 `conns` 的「没有记录 = 0」口径一致。
-fn attach_inbound(
-    entries: &mut [PortEntry],
-    peers: &[(u16, String)],
-    listeners: &[PortBinding],
-) {
+fn attach_inbound(entries: &mut [PortEntry], peers: &[(u16, String)], listeners: &[PortBinding]) {
     if peers.is_empty() {
         return;
     }
-    let listen_ports: std::collections::HashSet<u16> =
-        listeners.iter().map(|b| b.port).collect();
+    let listen_ports: std::collections::HashSet<u16> = listeners.iter().map(|b| b.port).collect();
     let mut by_port: std::collections::BTreeMap<u16, super::PortPeers> =
         std::collections::BTreeMap::new();
     for (port, raddr) in peers {

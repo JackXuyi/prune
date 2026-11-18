@@ -79,7 +79,8 @@ pub fn execute(port: u16, timeout_ms: u64) -> ReachResult {
         };
     };
     let target = SocketAddrV4::new(addr, port);
-    let result = TcpStream::connect_timeout(&target.into(), Duration::from_millis(timeout_ms.max(1)));
+    let result =
+        TcpStream::connect_timeout(&target.into(), Duration::from_millis(timeout_ms.max(1)));
     let elapsed_ms = started.elapsed().as_millis() as u64;
     let outcome = match result {
         Ok(_) => ReachOutcome::Connected,

@@ -1088,7 +1088,8 @@ fn cmd_mem_csv(path: &str) -> i32 {
     0
 }
 
-fn cmd_mem(swapped: bool, json: bool) -> i32 {    eprintln!("采样中（深探 Top 20，约 1-2s）…");
+fn cmd_mem(swapped: bool, json: bool) -> i32 {
+    eprintln!("采样中（深探 Top 20，约 1-2s）…");
     let procs = mcp::watch_round(20);
 
     let swap_info = swap::collect(None);
@@ -1308,9 +1309,9 @@ fn cmd_port_drift(snap: &net::PortSnapshot, rebase: bool, json: bool) -> i32 {
     let drift_json = serde_json::Value::Array(
         drifts
             .iter()
-            .map(|(p, pr, c, k)| {
-                serde_json::json!({ "port": p, "proto": pr, "comm": c, "kind": k })
-            })
+            .map(
+                |(p, pr, c, k)| serde_json::json!({ "port": p, "proto": pr, "comm": c, "kind": k }),
+            )
             .collect(),
     );
     if json {
@@ -2450,11 +2451,17 @@ mod tests {
     fn parses_why_subcommand() {
         assert_eq!(
             parse_args(&[s("why"), s("5000")]).unwrap(),
-            Command::Why { port: 5000, json: false }
+            Command::Why {
+                port: 5000,
+                json: false
+            }
         );
         assert_eq!(
             parse_args(&[s("why"), s("3000"), s("--json")]).unwrap(),
-            Command::Why { port: 3000, json: true }
+            Command::Why {
+                port: 3000,
+                json: true
+            }
         );
         // 缺端口号 → 用法错；多余端口号 → 用法错；非数字 → 用法错
         assert!(parse_args(&[s("why")]).is_err());

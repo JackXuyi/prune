@@ -18,10 +18,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use prune_core::net::{
-    baseline as net_baseline,
-    host as net_host,
-    ports as net_ports,
-    PortSnapshot,
+    baseline as net_baseline, host as net_host, ports as net_ports, PortSnapshot,
 };
 use tauri::{AppHandle, Emitter, Manager};
 

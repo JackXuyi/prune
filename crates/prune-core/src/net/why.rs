@@ -70,7 +70,12 @@ const SYSTEM_SERVICES: &[(u16, &str, &str, &str)] = &[
         "AirPlay 接收器",
         "系统设置 → 通用 → 隔空投送与接力 → AirPlay 接收器 可关闭",
     ),
-    (22, "sshd", "远程登录（SSH）", "系统设置 → 通用 → 共享 → 远程登录 可关闭"),
+    (
+        22,
+        "sshd",
+        "远程登录（SSH）",
+        "系统设置 → 通用 → 共享 → 远程登录 可关闭",
+    ),
     (
         631,
         "cupsd",
@@ -159,7 +164,9 @@ fn free_or_blocked(port: u16, snap: &super::PortSnapshot) -> WhyVerdict {
         return WhyVerdict {
             port,
             kind: WhyKind::TimeWait,
-            headline: format!("端口 {port} 刚被关闭，处于内核 TIME_WAIT 保留期（约 2 分钟），没有持有进程"),
+            headline: format!(
+                "端口 {port} 刚被关闭，处于内核 TIME_WAIT 保留期（约 2 分钟），没有持有进程"
+            ),
             evidence: vec![format!(
                 "TIME_WAIT 共 {} 条（内核口径）；该端口在其中",
                 snap.time_wait.unwrap_or(0)
@@ -172,7 +179,10 @@ fn free_or_blocked(port: u16, snap: &super::PortSnapshot) -> WhyVerdict {
         return WhyVerdict {
             port,
             kind: WhyKind::Unknown,
-            headline: format!("可见范围内没有进程监听 {port}，但有 {} 个监听无法归属到进程，不能确认空闲", invisible),
+            headline: format!(
+                "可见范围内没有进程监听 {port}，但有 {} 个监听无法归属到进程，不能确认空闲",
+                invisible
+            ),
             evidence: vec![format!(
                 "内核报告 {} 个监听，能归属 {} 个（Coverage 口径）",
                 snap.coverage.listen_total, snap.coverage.attributed
@@ -209,7 +219,9 @@ fn conflict_verdict(e: &super::PortEntry) -> WhyVerdict {
         evidence.push(format!(
             "{} (pid {})  绑定 {}  {}",
             b.comm,
-            b.pid.map(|p| p.to_string()).unwrap_or_else(|| "内核".into()),
+            b.pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "内核".into()),
             b.addr,
             scope_text(b.scope)
         ));
@@ -244,7 +256,9 @@ fn system_service_verdict(e: &super::PortEntry) -> Option<WhyVerdict> {
         evidence: vec![format!(
             "{} (pid {})  绑定 {}  {}  {}/{}",
             b.comm,
-            b.pid.map(|p| p.to_string()).unwrap_or_else(|| "内核".into()),
+            b.pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "内核".into()),
             b.addr,
             scope_text(e.exposure),
             proto_text(e.proto),
@@ -255,11 +269,7 @@ fn system_service_verdict(e: &super::PortEntry) -> Option<WhyVerdict> {
 }
 
 /// 项目归属命中：cwd 就是项目根（M7 口径）。
-fn devserver_verdict(
-    e: &super::PortEntry,
-    b: &super::PortBinding,
-    label: &str,
-) -> WhyVerdict {
+fn devserver_verdict(e: &super::PortEntry, b: &super::PortBinding, label: &str) -> WhyVerdict {
     let mut evidence = vec![format!(
         "{} (pid {})  绑定 {}  {}",
         b.comm,
@@ -281,20 +291,30 @@ fn devserver_verdict(
             b.comm, e.port, label
         ),
         evidence,
-        action_hint: b.project.clone().or_else(|| Some(format!("prune port {}", e.port))),
+        action_hint: b
+            .project
+            .clone()
+            .or_else(|| Some(format!("prune port {}", e.port))),
     }
 }
 
 /// L0 推断命中（无项目归属）：引用 service.rs 的结论，不自行加戏。
-fn known_service_verdict(
-    e: &super::PortEntry,
-    kind: super::service::ServiceKind,
-) -> WhyVerdict {
+fn known_service_verdict(e: &super::PortEntry, kind: super::service::ServiceKind) -> WhyVerdict {
     let b = e.primary();
     let (comm, pid) = b
-        .map(|b| (b.comm.clone(), b.pid.map(|p| p.to_string()).unwrap_or_default()))
+        .map(|b| {
+            (
+                b.comm.clone(),
+                b.pid.map(|p| p.to_string()).unwrap_or_default(),
+            )
+        })
         .unwrap_or_else(|| ("内核".into(), "内核".into()));
-    let mut evidence = vec![format!("{} (pid {})  绑定面 {}", comm, pid, scope_text(e.exposure))];
+    let mut evidence = vec![format!(
+        "{} (pid {})  绑定面 {}",
+        comm,
+        pid,
+        scope_text(e.exposure)
+    )];
     if let Some(conns) = e.conns {
         evidence.push(format!("ESTABLISHED 连接 {conns} 条"));
     }
@@ -321,7 +341,9 @@ fn unknown_verdict(e: &super::PortEntry) -> WhyVerdict {
         evidence.push(format!(
             "{} (pid {})  绑定 {}  {}",
             b.comm,
-            b.pid.map(|p| p.to_string()).unwrap_or_else(|| "内核".into()),
+            b.pid
+                .map(|p| p.to_string())
+                .unwrap_or_else(|| "内核".into()),
             b.addr,
             scope_text(e.exposure)
         ));
@@ -385,18 +407,21 @@ mod tests {
 
     #[test]
     fn s1_airplay_system_service_hit() {
-        let s = snap(vec![PortEntry {
-            port: 5000,
-            proto: Proto::Tcp,
-            listeners: vec![binding(5000, 291, "ControlCenter", "*")],
-            conns: None,
-            exposure: BindScope::Any,
-            watched: true,
-            note: None,
-            service: None,
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 5000,
+                proto: Proto::Tcp,
+                listeners: vec![binding(5000, 291, "ControlCenter", "*")],
+                conns: None,
+                exposure: BindScope::Any,
+                watched: true,
+                note: None,
+                service: None,
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(5000, &s);
         assert_eq!(v.kind, WhyKind::SystemService);
         assert!(v.headline.contains("系统服务"), "{}", v.headline);
@@ -410,18 +435,21 @@ mod tests {
         let mut b = binding(5000, 4321, "python", "127.0.0.1");
         b.project = Some("/home/me/flask-app".into());
         b.project_label = Some("flask-app".into());
-        let s = snap(vec![PortEntry {
-            port: 5000,
-            proto: Proto::Tcp,
-            listeners: vec![b],
-            conns: Some(0),
-            exposure: BindScope::Loopback,
-            watched: true,
-            note: None,
-            service: None,
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 5000,
+                proto: Proto::Tcp,
+                listeners: vec![b],
+                conns: Some(0),
+                exposure: BindScope::Loopback,
+                watched: true,
+                note: None,
+                service: None,
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(5000, &s);
         assert_eq!(v.kind, WhyKind::DevServer);
         assert!(v.headline.contains("flask-app"));
@@ -432,18 +460,21 @@ mod tests {
         let mut b = binding(5173, 1000, "node", "127.0.0.1");
         b.project = Some("/Users/me/prune".into());
         b.project_label = Some("prune".into());
-        let s = snap(vec![PortEntry {
-            port: 5173,
-            proto: Proto::Tcp,
-            listeners: vec![b],
-            conns: Some(2),
-            exposure: BindScope::Loopback,
-            watched: true,
-            note: None,
-            service: Some(crate::net::service::ServiceKind::DevServer),
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 5173,
+                proto: Proto::Tcp,
+                listeners: vec![b],
+                conns: Some(2),
+                exposure: BindScope::Loopback,
+                watched: true,
+                note: None,
+                service: Some(crate::net::service::ServiceKind::DevServer),
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(5173, &s);
         assert_eq!(v.kind, WhyKind::DevServer);
         assert!(v.headline.contains("prune"));
@@ -453,21 +484,24 @@ mod tests {
 
     #[test]
     fn s4_conflict_lists_all_holders() {
-        let s = snap(vec![PortEntry {
-            port: 3000,
-            proto: Proto::Tcp,
-            listeners: vec![
-                binding(3000, 11, "node", "*"),
-                binding(3000, 22, "python", "*"),
-            ],
-            conns: Some(0),
-            exposure: BindScope::Any,
-            watched: true,
-            note: None,
-            service: None,
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 3000,
+                proto: Proto::Tcp,
+                listeners: vec![
+                    binding(3000, 11, "node", "*"),
+                    binding(3000, 22, "python", "*"),
+                ],
+                conns: Some(0),
+                exposure: BindScope::Any,
+                watched: true,
+                note: None,
+                service: None,
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(3000, &s);
         assert_eq!(v.kind, WhyKind::Conflict);
         assert!(v.headline.contains("2 个"));
@@ -476,7 +510,14 @@ mod tests {
 
     #[test]
     fn s3_free_requires_no_invisible_gap() {
-        let s = snap(Vec::new(), Coverage { listen_total: 5, attributed: 5, note: None });
+        let s = snap(
+            Vec::new(),
+            Coverage {
+                listen_total: 5,
+                attributed: 5,
+                note: None,
+            },
+        );
         let v = why(9999, &s);
         assert_eq!(v.kind, WhyKind::Free);
         assert!(v.headline.contains("空闲"));
@@ -484,7 +525,14 @@ mod tests {
 
     #[test]
     fn s3_invisible_gap_is_unknown_not_free() {
-        let s = snap(Vec::new(), Coverage { listen_total: 9, attributed: 5, note: None });
+        let s = snap(
+            Vec::new(),
+            Coverage {
+                listen_total: 9,
+                attributed: 5,
+                note: None,
+            },
+        );
         let v = why(9999, &s);
         assert_eq!(v.kind, WhyKind::Unknown);
         assert!(v.headline.contains("不能确认空闲"));
@@ -492,11 +540,14 @@ mod tests {
 
     #[test]
     fn s3_scan_failure_is_unknown() {
-        let s = snap(Vec::new(), Coverage {
-            listen_total: 0,
-            attributed: 0,
-            note: Some("端口采集失败：lsof 无法执行".into()),
-        });
+        let s = snap(
+            Vec::new(),
+            Coverage {
+                listen_total: 0,
+                attributed: 0,
+                note: Some("端口采集失败：lsof 无法执行".into()),
+            },
+        );
         let v = why(3000, &s);
         assert_eq!(v.kind, WhyKind::Unknown);
         assert!(v.headline.contains("查询受限"));
@@ -515,18 +566,21 @@ mod tests {
 
     #[test]
     fn known_service_quotes_static_inference_honestly() {
-        let s = snap(vec![PortEntry {
-            port: 3306,
-            proto: Proto::Tcp,
-            listeners: vec![binding(3306, 88, "mysqld", "127.0.0.1")],
-            conns: None,
-            exposure: BindScope::Loopback,
-            watched: true,
-            note: None,
-            service: Some(crate::net::service::ServiceKind::Database),
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 3306,
+                proto: Proto::Tcp,
+                listeners: vec![binding(3306, 88, "mysqld", "127.0.0.1")],
+                conns: None,
+                exposure: BindScope::Loopback,
+                watched: true,
+                note: None,
+                service: Some(crate::net::service::ServiceKind::Database),
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(3306, &s);
         assert_eq!(v.kind, WhyKind::KnownService);
         assert!(v.headline.contains("疑似"));
@@ -537,18 +591,21 @@ mod tests {
     #[test]
     fn unknown_never_invents_a_use() {
         // 高位随机端口 + 无归属 GUI 进程 + 推断不出：只能报观测事实
-        let s = snap(vec![PortEntry {
-            port: 58583,
-            proto: Proto::Tcp,
-            listeners: vec![binding(58583, 77, "Cursor Helper", "127.0.0.1")],
-            conns: None,
-            exposure: BindScope::Loopback,
-            watched: false,
-            note: None,
-            service: None,
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 58583,
+                proto: Proto::Tcp,
+                listeners: vec![binding(58583, 77, "Cursor Helper", "127.0.0.1")],
+                conns: None,
+                exposure: BindScope::Loopback,
+                watched: false,
+                note: None,
+                service: None,
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(58583, &s);
         assert_eq!(v.kind, WhyKind::Unknown);
         assert!(v.headline.contains("未知"));
@@ -560,18 +617,21 @@ mod tests {
     #[test]
     fn system_port_wrong_comm_falls_through() {
         // ControlCenter 占了 22？端口+进程双匹配不成立 → 不套系统服务结论
-        let s = snap(vec![PortEntry {
-            port: 22,
-            proto: Proto::Tcp,
-            listeners: vec![binding(22, 5, "ControlCenter", "*")],
-            conns: None,
-            exposure: BindScope::Any,
-            watched: true,
-            note: None,
-            service: None,
-            inbound: None,
-            drift: None,
-        }], empty_coverage());
+        let s = snap(
+            vec![PortEntry {
+                port: 22,
+                proto: Proto::Tcp,
+                listeners: vec![binding(22, 5, "ControlCenter", "*")],
+                conns: None,
+                exposure: BindScope::Any,
+                watched: true,
+                note: None,
+                service: None,
+                inbound: None,
+                drift: None,
+            }],
+            empty_coverage(),
+        );
         let v = why(22, &s);
         assert_eq!(v.kind, WhyKind::Unknown);
     }

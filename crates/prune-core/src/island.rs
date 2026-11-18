@@ -1242,10 +1242,16 @@ mod tests {
         let mut m = IdleServerMonitor::new();
         m.observe(0, &[project_entry(3000, Some(0))]);
         // 闲置 20 min 后来了连接：会话破坏
-        assert!(m.observe(20 * MIN, &[project_entry(3000, Some(3))]).is_empty());
+        assert!(m
+            .observe(20 * MIN, &[project_entry(3000, Some(3))])
+            .is_empty());
         // 连接断开重新闲置：重新计时，旧的 20 min 不累计
-        assert!(m.observe(25 * MIN, &[project_entry(3000, Some(0))]).is_empty());
-        assert!(m.observe(50 * MIN, &[project_entry(3000, Some(0))]).is_empty());
+        assert!(m
+            .observe(25 * MIN, &[project_entry(3000, Some(0))])
+            .is_empty());
+        assert!(m
+            .observe(50 * MIN, &[project_entry(3000, Some(0))])
+            .is_empty());
         let alerts = m.observe(56 * MIN, &[project_entry(3000, Some(0))]);
         assert_eq!(alerts.len(), 1, "31 min 连续闲置后提报");
     }
@@ -1298,7 +1304,9 @@ mod tests {
         m.observe(0, &[project_entry(3000, Some(0))]);
         m.reset();
         // 重置后回到基线模式：不报，重新计时
-        assert!(m.observe(90 * MIN, &[project_entry(3000, Some(0))]).is_empty());
+        assert!(m
+            .observe(90 * MIN, &[project_entry(3000, Some(0))])
+            .is_empty());
     }
 
     fn th() -> CpuThresholds {
