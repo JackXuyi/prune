@@ -46,6 +46,8 @@ pub enum Command {
         swapped: bool,
         json: bool,
         watch: Option<u64>,
+        /// F20：导出内存报告 CSV 到该路径（读序列库历史，不触发扫描）
+        csv: Option<String>,
     },
     /// `prune port` 列关注层；`prune port 3000` 查单个端口；`--all` 含内部 IPC
     Port {
@@ -54,10 +56,19 @@ pub enum Command {
         all: bool,
         /// 只看冲突端口（同端口 ≥2 个不同 pid）
         conflicts: bool,
+        /// F22：相对可信基线的漂移（新增 / 暴露面变宽 / 消失）
+        drift: bool,
+        /// F22：以当前快照重建基线（显式重置，不做自动老化）
+        rebase: bool,
     },
     /// `prune why 5000`：端口白话解释（F16）——一句话结论 + 证据 + 指路
     Why {
         port: u16,
+        json: bool,
+    },
+    /// `prune files <PATH>`：Open Files 占用反查（F23）——谁占着这块盘
+    Files {
+        path: String,
         json: bool,
     },
     /// `prune app <家族名>`：一个应用的五域资源画像（M8）
@@ -197,6 +208,7 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
             let mut swapped = false;
             let mut json = false;
             let mut watch: Option<u64> = None;
+            let mut csv: Option<String> = None;
             let all: Vec<&str> = it.map(|s| s.as_str()).collect();
             let mut i = 0;
             while i < all.len() {
@@ -204,6 +216,14 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                     "--swapped" => swapped = true,
                     "--json" => json = true,
                     "--watch" => watch = Some(10),
+                    "--csv" => {
+                        i += 1;
+                        csv = Some(
+                            all.get(i)
+                                .ok_or_else(|| "--csv 需要一个输出路径".to_string())?
+                                .to_string(),
+                        );
+                    }
                     "--interval" => {
                         i += 1;
                         let v = all
@@ -222,18 +242,23 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                 swapped,
                 json,
                 watch,
+                csv,
             })
         }
         "port" => {
             let mut json = false;
             let mut all = false;
             let mut conflicts = false;
+            let mut drift = false;
+            let mut rebase = false;
             let mut port: Option<u16> = None;
             for a in it {
                 match a.as_str() {
                     "--json" => json = true,
                     "--all" | "-a" => all = true,
                     "--conflicts" | "-c" => conflicts = true,
+                    "--drift" => drift = true,
+                    "--rebase" => rebase = true,
                     other => match other.parse::<u16>() {
                         Ok(p) if port.is_none() => port = Some(p),
                         Ok(_) => return Err("port 只接受一个端口号".into()),
@@ -243,11 +268,16 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                     },
                 }
             }
+            if rebase && !drift {
+                return Err("--rebase 只随 --drift 使用\n{}".to_string() + &usage());
+            }
             Ok(Command::Port {
                 port,
                 json,
                 all,
                 conflicts,
+                drift,
+                rebase,
             })
         }
         "why" => {
@@ -272,6 +302,24 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                 ));
             };
             Ok(Command::Why { port, json })
+        }
+        "files" => {
+            let mut json = false;
+            let mut path: Option<String> = None;
+            for a in it {
+                match a.as_str() {
+                    "--json" => json = true,
+                    other if path.is_none() => path = Some(other.to_string()),
+                    _ => return Err(format!("files 只接受一个路径\n{}", usage())),
+                }
+            }
+            let Some(path) = path else {
+                return Err(format!(
+                    "files 需要一个路径，如 prune files /Volumes/Backup\n{}",
+                    usage()
+                ));
+            };
+            Ok(Command::Files { path, json })
         }
         "app" => {
             let mut json = false;
@@ -516,12 +564,15 @@ fn usage() -> String {
   prune reclaim [--level green] [--emit-script] [--yes]
                                       预览零风险清理项（默认 dry-run）；--emit-script 打印可审计脚本（永不执行）；--yes 才真删
   prune mem [--swapped] [--json]      一次性内存读数（footprint 口径）
+  prune mem --csv <PATH>              导出内存报告 CSV（读序列库历史，不触发扫描）
   prune mem --watch [--interval N]    【已弃用】改用 prune watch --only mem
   prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
                                       按需守护：前台进程，Ctrl-C 即停，不装后台
-  prune port [PORT] [--json] [--all] [--conflicts]
-                                      谁占着这个端口（--conflicts 只看冲突端口）
+  prune port [PORT] [--json] [--all] [--conflicts] [--drift [--rebase]]
+                                      谁占着这个端口（--conflicts 只看冲突端口；
+                                      --drift 看相对基线的漂移，--rebase 重建基线）
   prune why <PORT> [--json]           端口白话解释：一句话说清谁占着、为什么杀不掉、去哪关
+  prune files <PATH> [--json]         占用反查（F23）：这块盘/目录被谁开着文件（只读，不解）
   prune projects [--days N] [--json]  项目依赖账本（按天趋势，默认 30 天）
   prune doctor [--json] [--only disk,mem,port,net] [--timeout N]
                                       四域体检：磁盘/内存/端口/网络的结论+证据+下一步
@@ -558,17 +609,25 @@ fn main() {
             swapped,
             json,
             watch,
-        } => match watch {
-            Some(_) => {
-                // DP-1 裁 A：别名过渡而不是立即 Breaking。已有脚本还能跑，
-                // 但必须让写脚本的人知道正确入口在哪，且给出去除时点。
-                eprintln!(
-                    "提示：prune mem --watch 已并入 prune watch --only mem（2027-09 移除本别名）"
-                );
-                cmd_mem_watch_legacy(json)
+            csv,
+        } => {
+            // F20 导出优先：--csv 是读历史的独立路径，与 --watch / 采样正交
+            if let Some(path) = csv {
+                cmd_mem_csv(&path)
+            } else {
+                match watch {
+                    Some(_) => {
+                        // DP-1 裁 A：别名过渡而不是立即 Breaking。已有脚本还能跑，
+                        // 但必须让写脚本的人知道正确入口在哪，且给出去除时点。
+                        eprintln!(
+                            "提示：prune mem --watch 已并入 prune watch --only mem（2027-09 移除本别名）"
+                        );
+                        cmd_mem_watch_legacy(json)
+                    }
+                    None => cmd_mem(swapped, json),
+                }
             }
-            None => cmd_mem(swapped, json),
-        },
+        }
         Command::Watch {
             interval,
             only,
@@ -597,8 +656,11 @@ fn main() {
             json,
             all,
             conflicts,
-        } => cmd_port(port, json, all, conflicts),
+            drift,
+            rebase,
+        } => cmd_port(port, json, all, conflicts, drift, rebase),
         Command::Why { port, json } => cmd_why(port, json),
+        Command::Files { path, json } => cmd_files(&path, json),
         Command::App { name, json } => cmd_app(&name, json),
         Command::Lan { scan, json } => cmd_lan(scan, json),
         Command::Mcp => cmd_mcp(),
@@ -978,8 +1040,55 @@ fn cmd_reclaim(yes: bool, emit_script: bool) -> i32 {
 
 // ---------------------------------------------------------------- mem
 
-fn cmd_mem(swapped: bool, json: bool) -> i32 {
-    eprintln!("采样中（深探 Top 20，约 1-2s）…");
+/// `prune mem --csv <path>`（F20，docs/f20-memory-report-plan.md）：导出内存
+/// 报告 CSV。读序列库历史（7 天窗口 = 库的真相边界），**不触发扫描**；
+/// 空库输出指路文案并正常退出（0）——不是错误。聚合与 CSV 渲染都在核心层
+/// `mem::report` 纯函数，GUI 导出走同一函数（逐字节一致是验收项）。
+fn cmd_mem_csv(path: &str) -> i32 {
+    let db_path = mcp::default_db_path();
+    if !db_path.exists() {
+        println!(
+            "暂无序列数据（{} 不存在）：先跑一次 GUI 采样或 prune scan，之后导出才有内容。",
+            db_path.display()
+        );
+        return 0;
+    }
+    let store = match Store::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("序列库打开失败: {e}");
+            return 4;
+        }
+    };
+    let rows = match store.mem_report_rows(0) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("读序列失败: {e}");
+            return 4;
+        }
+    };
+    if rows.is_empty() {
+        println!("暂无序列数据（库为空）：先跑一次 GUI 采样，之后导出才有内容。");
+        return 0;
+    }
+    let report = mem::report::aggregate(&rows);
+    let now = swap::now_secs() as i64;
+    let csv = mem::report::to_csv(&report, now, env!("CARGO_PKG_VERSION"));
+    if let Err(e) = std::fs::write(path, csv) {
+        eprintln!("写文件失败（{path}）: {e}");
+        return 4;
+    }
+    println!(
+        "已导出 {} 个进程 / {} 段空窗 → {path}（窗口 {} → {}）",
+        report.procs.len(),
+        report.gaps.len(),
+        report.from_ts,
+        report.to_ts
+    );
+    0
+}
+
+fn cmd_mem(swapped: bool, json: bool) -> i32 {    eprintln!("采样中（深探 Top 20，约 1-2s）…");
     let procs = mcp::watch_round(20);
 
     let swap_info = swap::collect(None);
@@ -1078,8 +1187,226 @@ fn cmd_why(port: u16, json: bool) -> i32 {
     exit_code_for_empty(snap.coverage.note.as_deref())
 }
 
-fn cmd_port(only: Option<u16>, json: bool, all: bool, conflicts_only: bool) -> i32 {
+/// `prune port --drift`（F22，docs/f22-port-baseline-plan.md）：相对可信基线的漂移。
+///
+/// 基线落在 db `port_baseline` 表，GUI 采样轮与 CLI 共享同一张表——谁先跑谁建基线，
+/// 两边口径同源（`baseline::diff/merge` 纯函数）。判据只允许在核心层一处。
+/// `--rebase` 显式重建（不做自动老化——基线静默漂移违背「可信」二字）。
+fn cmd_port_drift(snap: &net::PortSnapshot, rebase: bool, json: bool) -> i32 {
+    let now = snap.at;
+    let store = match Store::open(&mcp::default_db_path()) {
+        Ok(s) => s,
+        Err(e) => {
+            let note = format!("基线库打开失败: {e}");
+            if json {
+                println!(
+                    "{}",
+                    serde_json::to_string_pretty(&docs_json::port_drift_doc(
+                        false,
+                        rebase,
+                        serde_json::json!([]),
+                        &[]
+                    ))
+                    .unwrap()
+                );
+            } else {
+                println!("{note}");
+            }
+            return 4;
+        }
+    };
+
+    if rebase {
+        let merged = net::baseline::merge(&[], snap, now);
+        return match store.port_baseline_replace(&merged) {
+            Ok(n) => {
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::to_string_pretty(&docs_json::port_drift_doc(
+                            false,
+                            true,
+                            serde_json::json!([]),
+                            &[]
+                        ))
+                        .unwrap()
+                    );
+                } else {
+                    println!("基线已重建：{n} 个监听记为基线（首次出现时刻 = 现在）。");
+                }
+                0
+            }
+            Err(e) => {
+                eprintln!("基线落库失败: {e}");
+                4
+            }
+        };
+    }
+
+    let baseline = match store.port_baseline_all() {
+        Ok(b) => b,
+        Err(e) => {
+            eprintln!("基线读取失败: {e}");
+            return 4;
+        }
+    };
+    let report = net::baseline::diff(&baseline, snap, now);
+    if report.seeded {
+        // 首扫：全部记为基线，不报漂移（首轮 N 个「漂移」是谎报）
+        let merged = net::baseline::merge(&baseline, snap, now);
+        if let Err(e) = store.port_baseline_replace(&merged) {
+            eprintln!("基线落库失败: {e}");
+        }
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&docs_json::port_drift_doc(
+                    true,
+                    false,
+                    serde_json::json!([]),
+                    &[]
+                ))
+                .unwrap()
+            );
+        } else {
+            println!(
+                "首轮：当前 {} 个监听已记为基线。之后用 prune port --drift 看漂移。",
+                snap.entries.len()
+            );
+        }
+        return 0;
+    }
+
+    // flagged tuple → 带 comm 的展示条目（core 的 tuple 形态不带 comm，这层翻译）
+    let mut drifts: Vec<(u16, String, String, String)> = Vec::new(); // (port, proto, comm, kind)
+    for (port, proto, kind) in &report.flagged {
+        let comm = snap
+            .entries
+            .iter()
+            .find(|e| e.port == *port && e.proto == *proto)
+            .and_then(|e| e.primary())
+            .map(|b| b.comm.clone())
+            .unwrap_or_default();
+        let proto_s = match proto {
+            net::Proto::Tcp => "tcp",
+            net::Proto::Udp => "udp",
+        };
+        let kind_s = match kind {
+            net::baseline::DriftKind::New => "new",
+            net::baseline::DriftKind::Widened => "widened",
+        };
+        drifts.push((*port, proto_s.into(), comm, kind_s.into()));
+    }
+    drifts.sort();
+
+    // 比对完成即落基线（last_seen 刷新 / 新行 first_seen / 消失行保留）
+    let merged = net::baseline::merge(&baseline, snap, now);
+    if let Err(e) = store.port_baseline_replace(&merged) {
+        eprintln!("基线落库失败: {e}");
+    }
+
+    let drift_json = serde_json::Value::Array(
+        drifts
+            .iter()
+            .map(|(p, pr, c, k)| {
+                serde_json::json!({ "port": p, "proto": pr, "comm": c, "kind": k })
+            })
+            .collect(),
+    );
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&docs_json::port_drift_doc(
+                false,
+                false,
+                drift_json,
+                &report.removed
+            ))
+            .unwrap()
+        );
+        return 0;
+    }
+
+    if drifts.is_empty() && report.removed.is_empty() {
+        println!("与基线一致：没有新增监听，也没有暴露面变宽。");
+        return 0;
+    }
+    println!(
+        "相对基线漂移 {} 项（消失 {} 项）：",
+        drifts.len(),
+        report.removed.len()
+    );
+    for (port, proto, comm, kind) in &drifts {
+        let kind_cn = match kind.as_str() {
+            "widened" => "暴露面变宽",
+            _ => "新监听",
+        };
+        println!("  {kind_cn}  {port}/{proto}  {comm}");
+    }
+    for r in &report.removed {
+        println!("  消失      {r}");
+    }
+    println!("  重建基线：prune port --drift --rebase");
+    0
+}
+
+/// `prune files <PATH>`（F23）：Open Files 占用反查——谁占着这块盘。
+///
+/// 只读纪律：只查不解，解除占用（关 App / 强制弹出）是用户的决定。
+/// Coverage 纪律：coverage_note 永远随结果输出——「没有可见的占用者」
+/// ≠「没人占用」。文案逻辑不出核心层（`open_files::parse` 纯函数）。
+fn cmd_files(path: &str, json: bool) -> i32 {
+    if !std::path::Path::new(path).exists() {
+        eprintln!("路径不存在：{path}");
+        return 2;
+    }
+    let report = match disk::open_files::scan(path) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("{e}");
+            return 4;
+        }
+    };
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&docs_json::files_doc(&report)).unwrap()
+        );
+        return 0;
+    }
+    println!(
+        "{} 的占用者 {} 个（{} ms）：",
+        report.path,
+        report.holders.len(),
+        report.scanned_ms
+    );
+    for h in &report.holders {
+        println!("  {} (pid {})  {} 个文件", h.comm, h.pid, h.files);
+        for f in &h.sample_files {
+            println!("      {f}");
+        }
+    }
+    if report.holders.is_empty() {
+        println!("  没有**可见的**占用者。");
+    }
+    if let Some(note) = &report.coverage_note {
+        println!("  ⚠️ {note}");
+    }
+    0
+}
+
+fn cmd_port(
+    only: Option<u16>,
+    json: bool,
+    all: bool,
+    conflicts_only: bool,
+    drift: bool,
+    rebase: bool,
+) -> i32 {
     let snap = net::ports::scan(None);
+    if drift {
+        return cmd_port_drift(&snap, rebase, json);
+    }
 
     // `--conflicts`：只回答「此刻谁和谁抢端口」。与 `island` 的端口事件同一判据
     // （`owner_count() > 1`），区别是这里给**现状**，那边给**变化**。
@@ -1183,6 +1510,28 @@ fn cmd_port(only: Option<u16>, json: bool, all: bool, conflicts_only: bool) -> i
             }
             if let Some(n) = e.conns {
                 println!("  连接    {n} 条 ESTABLISHED");
+            }
+            // F21 入站来源：计数是口径，明细 ≤5 条给人看，余量诚实标注
+            if let Some(pp) = &e.inbound {
+                println!(
+                    "  入站    {} 条：本机 {} · 局域网 {} · 公网 {}{}",
+                    pp.total(),
+                    pp.loopback,
+                    pp.lan,
+                    pp.public,
+                    if pp.unknown > 0 {
+                        format!(" · 未知 {}", pp.unknown)
+                    } else {
+                        String::new()
+                    }
+                );
+                for p in pp.detail.iter().take(5) {
+                    println!("      <- {} ({})", p.addr, p.scope.label_cn());
+                }
+                let more = pp.more();
+                if more > 0 {
+                    println!("      … 还有 {more} 个对端");
+                }
             }
             if let Some(note) = &e.note {
                 println!("  说明    {note}");
@@ -2003,7 +2352,8 @@ mod tests {
             Command::Mem {
                 swapped: true,
                 json: false,
-                watch: None
+                watch: None,
+                csv: None,
             }
         );
         assert_eq!(
@@ -2011,7 +2361,8 @@ mod tests {
             Command::Mem {
                 swapped: false,
                 json: false,
-                watch: Some(10)
+                watch: Some(10),
+                csv: None,
             }
         );
         assert_eq!(
@@ -2019,7 +2370,8 @@ mod tests {
             Command::Mem {
                 swapped: false,
                 json: false,
-                watch: Some(5)
+                watch: Some(5),
+                csv: None,
             }
         );
         assert_eq!(parse_args(&[s("mcp")]).unwrap(), Command::Mcp);
@@ -2058,7 +2410,9 @@ mod tests {
                 port: None,
                 json: false,
                 all: false,
-                conflicts: false
+                conflicts: false,
+                drift: false,
+                rebase: false,
             }
         );
         assert_eq!(
@@ -2067,7 +2421,9 @@ mod tests {
                 port: Some(3000),
                 json: false,
                 all: false,
-                conflicts: false
+                conflicts: false,
+                drift: false,
+                rebase: false,
             }
         );
         assert_eq!(
@@ -2076,7 +2432,9 @@ mod tests {
                 port: Some(3000),
                 json: true,
                 all: true,
-                conflicts: false
+                conflicts: false,
+                drift: false,
+                rebase: false,
             }
         );
         // 端口 0 是通配 fd，不是服务：命令行上接受但扫描层会丢掉

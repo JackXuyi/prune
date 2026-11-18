@@ -125,7 +125,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "port_listeners",
-            "description": "端口监听反查（只读，约 40-140 ms）：谁占着某个端口，含持有进程的 pid、绑定地址（全部网卡/仅本机）、cwd 归属的项目目录与 ESTABLISHED 连接数。不传 port 时返回关注层（开发/数据库端口 + 有项目归属的端口）。coverage 说明可见性：listenTotal 是内核口径，attributed 是能归属到进程的条数，差额是权限看不到的部分——「没查到」不等于端口空闲。timeWait 是内核残留连接，没有持有进程。",
+            "description": "端口监听反查（只读，约 40-140 ms）：谁占着某个端口，含持有进程的 pid、绑定地址（全部网卡/仅本机）、cwd 归属的项目目录、ESTABLISHED 连接数与入站来源摘要（inbound：loopback/lan/public 三段计数 + ≤32 条对端明细）。不传 port 时返回关注层（开发/数据库端口 + 有项目归属的端口）。coverage 说明可见性：listenTotal 是内核口径，attributed 是能归属到进程的条数，差额是权限看不到的部分——「没查到」不等于端口空闲。timeWait 是内核残留连接，没有持有进程。inbound 有公网连入对 any 暴露面属正常态，是否收紧看绑定面，不由该字段判断。",
             "inputSchema": {
                 "type": "object",
                 "properties": {
@@ -1162,6 +1162,8 @@ mod tests {
                 watched: true,
                 note: None,
                 service: None,
+                inbound: None,
+                drift: None,
             };
         let loopback = mk_entry(prune_core::net::BindScope::Loopback, "127.0.0.1");
         let wildcard = mk_entry(prune_core::net::BindScope::Any, "0.0.0.0");

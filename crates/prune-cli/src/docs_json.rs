@@ -91,6 +91,23 @@ pub fn why_doc(verdict: &prune_core::net::why::WhyVerdict) -> Value {
     enveloped(serde_json::to_value(verdict).unwrap_or(Value::Null))
 }
 
+/// `prune port --drift --json`（F22）：基线漂移报告。`drifts` 是调用方组装的
+/// `[{port, proto, comm, kind}]`（core 的 tuple 形态不带 comm，这层翻译）。
+pub fn port_drift_doc(seeded: bool, rebased: bool, drifts: Value, removed: &[String]) -> Value {
+    enveloped(json!({
+        "seeded": seeded,
+        "rebased": rebased,
+        "drifts": drifts,
+        "removed": removed,
+    }))
+}
+
+/// `prune files --json`（F23）：占用反查报告。形状与 `OpenFilesReport`
+/// 序列化一致（camelCase），只补信封。
+pub fn files_doc(report: &prune_core::disk::open_files::OpenFilesReport) -> Value {
+    enveloped(serde_json::to_value(report).unwrap_or(Value::Null))
+}
+
 /// `prune projects --json`。
 pub fn projects_doc(from: &str, days: u32, projects: &[DiskTrend]) -> Value {
     enveloped(json!({
@@ -208,6 +225,7 @@ pub fn contract_shape() -> Value {
     };
     let port_doc = port_doc(None, &[], &port_snap);
     let conflicts_doc = port_conflicts_doc(0, &[], &port_snap.coverage);
+    let drift_doc = port_drift_doc(false, false, serde_json::json!([]), &[]);
     let why_doc = why_doc(&prune_core::net::why::why(
         0,
         &port_snap,
@@ -259,6 +277,13 @@ pub fn contract_shape() -> Value {
             .collect();
     let doctor_doc = doctor_doc(0, 0, &[], &doctor_cov);
 
+    let files_doc = files_doc(&prune_core::disk::open_files::OpenFilesReport {
+        path: String::new(),
+        holders: Vec::new(),
+        scanned_ms: 0,
+        coverage_note: None,
+    });
+
     json!({
         "schemaVersion": SCHEMA_VERSION,
         "commands": {
@@ -266,7 +291,9 @@ pub fn contract_shape() -> Value {
             "mem":            { "keys": keys_of(&mem_doc) },
             "port":           { "keys": keys_of(&port_doc) },
             "port_conflicts": { "keys": keys_of(&conflicts_doc) },
+            "port_drift":     { "keys": keys_of(&drift_doc) },
             "why":            { "keys": keys_of(&why_doc) },
+            "files":          { "keys": keys_of(&files_doc) },
             "app":            { "keys": keys_of(&app_doc) },
             "lan":            { "keys": keys_of(&lan_doc) },
             "projects":       { "keys": keys_of(&projects_doc) },

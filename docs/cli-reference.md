@@ -13,8 +13,9 @@
 | `prune mem [--swapped] [--json]` | 一次性内存读数（footprint 口径） |
 | `prune mem --watch [--interval N]` | 【已弃用】改用 `prune watch --only mem`（2027-09 移除别名） |
 | `prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]` | 按需守护：前台进程，Ctrl-C 即停，不装后台 |
-| `prune port [PORT] [--json] [--all] [--conflicts]` | 谁占着这个端口（`--conflicts` 只看冲突端口） |
+| `prune port [PORT] [--json] [--all] [--conflicts] [--drift [--rebase]]` | 谁占着这个端口（`--conflicts` 只看冲突端口；`--drift` 看相对基线的漂移，`--rebase` 重建基线） |
 | `prune why <PORT> [--json]` | 端口白话解释：一句话说清谁占着、为什么杀不掉、去哪关 |
+| `prune files <PATH> [--json]` | 占用反查（F23）：这块盘/目录被谁开着文件（只读，不解） |
 | `prune projects [--days N] [--json]` | 项目依赖账本（按天趋势，默认 30 天） |
 | `prune doctor [--json] [--only disk,mem,port,net] [--timeout N]` | 四域体检：磁盘/内存/端口/网络的结论+证据+下一步 |
 | `prune app <家族名> [--json]` | 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘 |
@@ -125,10 +126,15 @@ prune port                           # 关注层端口
 prune port 3000                      # 单端口完整解释
 prune port --conflicts --json        # 只看冲突（同端口 ≥2 个不同 pid）
 prune port --all                     # 含内部 IPC / 系统服务端口
+prune port --drift                   # 相对可信基线的漂移（F22）
+prune port --drift --rebase          # 以当前快照重建基线（显式重置）
 ```
 
 默认分支 JSON 顶层键：`schemaVersion`, `port`, `entries`, `coverage`, `timeWait`, `timeWaitPorts`, `scanMs`
 `--conflicts` 分支 JSON 顶层键：`schemaVersion`, `at`, `conflicts`, `coverage`
+`--drift` 分支 JSON 顶层键：`schemaVersion`, `seeded`, `rebased`, `drifts`, `removed`
+
+基线说明（F22）：基线键 = `(port, proto, comm)`，不含 pid（进程重生不算漂移，换程序占同端口算）；首次使用时当前监听全部记为基线，不报漂移；「新」徽标 24 h 过点自动消失；暴露面变宽（如仅本机 → 全部网卡）持续标出直到 `--rebase`。基线由 GUI 采样轮与 CLI 共享同一张表，谁先跑谁建基线。
 
 退出码特例：`--json` 主输出为空且 `coverage.note` 指明权限不足 → **3**；采集失败 → **4**；差额说明 → 0。
 
@@ -142,6 +148,22 @@ prune why 5173 --json | jq '.headline'
 ```
 
 结论类别（`kind`）：`systemService` / `devServer` / `conflict` / `knownService`（L0 静态推断，headline 标「疑似」）/ `timeWait` / `free` / `unknown`。
+
+## prune files
+
+Open Files 占用反查（F23）：这块盘 / 目录被谁开着文件——外置盘弹出失败的「谁占着」。**只读纪律：只查不解**，解除占用（关 App / 强制弹出）是用户的决定；holders 行不带任何执行入口。
+
+```sh
+prune files /Volumes/Backup          # 占用者列表（files 降序 + ≤3 条代表文件）
+prune files /Volumes/Backup --json | jq '.holders'
+```
+
+JSON 顶层键：`schemaVersion`, `path`, `holders`, `scannedMs`, `coverageNote`
+`holders[i]`：`pid`, `comm`, `files`, `sampleFiles`（≤3 条）。
+
+Coverage 纪律：`coverageNote` **永远有值**——以当前用户权限运行，其他用户的进程句柄不可见，「没有可见的占用者」≠「没人占用」，可用 `sudo lsof` 复查。目录与 socket/pipe 不算占用（只计普通文件 VREG）。
+
+退出码：路径不存在 → **2**；lsof 失败 → **4**；其余 → 0（含「没有可见占用者」——那是数据事实）。
 
 口径纪律：`free` 必须在 Coverage 无差额时才出现——「没查到」≠「端口空闲」；`unknown` 只报观测事实，不编造用途；本命令只解释、不给任何执行动作。
 

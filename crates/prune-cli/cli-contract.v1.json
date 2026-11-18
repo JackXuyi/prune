@@ -23,6 +23,15 @@
         "schemaVersion"
       ]
     },
+    "files": {
+      "keys": [
+        "coverageNote",
+        "holders",
+        "path",
+        "scannedMs",
+        "schemaVersion"
+      ]
+    },
     "lan": {
       "keys": [
         "at",
@@ -64,6 +73,15 @@
         "conflicts",
         "coverage",
         "schemaVersion"
+      ]
+    },
+    "port_drift": {
+      "keys": [
+        "drifts",
+        "rebased",
+        "removed",
+        "schemaVersion",
+        "seeded"
       ]
     },
     "projects": {
