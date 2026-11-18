@@ -12,6 +12,7 @@ use std::sync::Arc;
 
 use tauri::Manager;
 
+mod autostart;
 mod commands;
 mod dock;
 mod i18n;
@@ -48,7 +49,13 @@ pub fn run() {
     // dialog：托盘「检查更新」的原生结果弹窗（Rust 侧 DialogExt 调用，无需 JS 权限）
     let builder = tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
-        .plugin(tauri_plugin_dialog::init());
+        .plugin(tauri_plugin_dialog::init())
+        // 开机自启动（docs/autostart-plan.md）：macOS 走 LaunchAgent。
+        // 前端不直调插件 JS API，IPC 走 autostart.rs 的两个自定义 command
+        .plugin(tauri_plugin_autostart::init(
+            tauri_plugin_autostart::MacosLauncher::LaunchAgent,
+            None,
+        ));
 
     // NSPanel 插件（M15）：必须注册，否则 PanelBuilder::build 里 `state()` 找不到
     // WebviewPanelManager，会在主线程 panic（且无法 unwind，直接 abort）
@@ -57,6 +64,8 @@ pub fn run() {
 
     builder
         .invoke_handler(tauri::generate_handler![
+            autostart::autostart_get,
+            autostart::autostart_set,
             updater::update_check,
             updater::update_pending,
             updater::update_install,

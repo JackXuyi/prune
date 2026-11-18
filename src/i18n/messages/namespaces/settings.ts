@@ -108,6 +108,13 @@ const zh = {
     dark: "深色",
   },
 
+  /** 开机自启动（docs/autostart-plan.md）：状态直接问系统，不落 settings.json */
+  autostart: {
+    title: "开机自启动",
+    desc: "登录 macOS 后自动在菜单栏待命，不弹主窗口。也可在「系统设置 → 登录项」里管理。",
+    enable: "登录时启动 Prune",
+  },
+
   /** W2/D-09：prune.toml——只复制模板到剪贴板，Prune 永不写项目文件 */
   pruneToml: {
     title: "项目配置（prune.toml）",
@@ -222,6 +229,13 @@ const en: MessageTree<typeof zh> = {
     system: "System",
     light: "Light",
     dark: "Dark",
+  },
+
+  /** Autostart (docs/autostart-plan.md): state comes from the system, not settings.json */
+  autostart: {
+    title: "Launch at login",
+    desc: "Starts Prune in the menu bar when you log in — no main window pops up. Also manageable under System Settings → Login Items.",
+    enable: "Launch Prune at login",
   },
 
   /** W2/D-09: prune.toml — copy the template to the clipboard only; Prune never writes project files */

@@ -116,6 +116,21 @@ export function revealPath(path: string): Promise<void> {
   return invoke<void>("reveal_path", { path });
 }
 
+// ---------------------------------------------------------------- 开机自启动
+
+/**
+ * 读当前自启动状态（docs/autostart-plan.md）：直接问系统
+ * （macOS 读 LaunchAgent plist），用户在系统设置里手动增删也能反映出来。
+ */
+export function autostartGet(): Promise<boolean> {
+  return invoke<boolean>("autostart_get");
+}
+
+/** 开/关自启动。失败由调用方回滚开关并提示 */
+export function autostartSet(enabled: boolean): Promise<void> {
+  return invoke<void>("autostart_set", { enabled });
+}
+
 // ---------------------------------------------------------------- 体检报告（复用已装 CLI）
 
 /** 本机探测到的 prune CLI；null = 未装或 < v0.13（无 doctor 子命令） */

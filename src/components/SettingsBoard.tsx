@@ -18,7 +18,7 @@ import { LanguageSection } from "./LanguageSection";
 import { ReportSection } from "./ReportSection";
 import { Badge } from "../components/primitives";
 import { useI18n } from "../i18n/store";
-import { isTauri, pruneTomlTemplate } from "../lib/ipc";
+import { isTauri, pruneTomlTemplate, autostartGet, autostartSet } from "../lib/ipc";
 import { writeClipboard } from "../lib/clipboard";
 import { getTheme, setTheme, subscribeTheme, type ThemeMode } from "../lib/theme";
 import { usePortStore } from "../stores/portStore";
@@ -66,6 +66,9 @@ export function SettingsBoard() {
 
   const [cfg, setCfg] = useState<IslandSettings | null>(null);
   const [status, setStatus] = useState<IslandStatus | null>(null);
+  // 开机自启动（docs/autostart-plan.md）：与灵动岛设置不同源——状态直接问系统
+  // （LaunchAgent plist），不落 settings.json；null = 还没读到
+  const [autostartOn, setAutostartOn] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<number>(0);
 
@@ -76,19 +79,23 @@ export function SettingsBoard() {
     if (!isTauri()) {
       setCfg(DEFAULTS);
       setStatus({ available: false, notchW: 0, notchH: 0 });
+      setAutostartOn(false);
       return;
     }
     void (async () => {
       try {
-        const [s, st] = await Promise.all([
+        const [s, st, auto] = await Promise.all([
           invoke<IslandSettings>("island_settings_get"),
           invoke<IslandStatus>("island_status"),
+          autostartGet(),
         ]);
         setCfg(s);
         setStatus(st);
+        setAutostartOn(auto);
       } catch (e) {
         setError(String(e));
         setCfg(DEFAULTS);
+        setAutostartOn(false);
       }
     })();
   }, []);
@@ -117,6 +124,23 @@ export function SettingsBoard() {
     setCfg((prev) => (prev ? { ...prev, ...patch } : prev));
   };
 
+  /**
+   * 开机自启动开关（docs/autostart-plan.md）：不进 400 ms 防抖通道
+   * （那是滑杆连发的场景），单击直接生效。乐观更新 + 失败回滚。
+   */
+  const toggleAutostart = async (v: boolean) => {
+    const prev = autostartOn;
+    setAutostartOn(v);
+    try {
+      await autostartSet(v);
+      setError(null);
+      setSavedAt(Date.now());
+    } catch (e) {
+      setAutostartOn(prev);
+      setError(String(e));
+    }
+  };
+
   if (!cfg) {
     return <div className="px-5 py-6 text-[12px] text-ink-faint">{t("settings.loading")}</div>;
   }
@@ -137,6 +161,24 @@ export function SettingsBoard() {
               <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">{t("settings.theme.desc")}</p>
             </div>
             <ThemeSegmented />
+          </div>
+        </section>
+
+        {/* 开机自启动（docs/autostart-plan.md）：状态直接问系统（LaunchAgent plist），
+            不落 settings.json —— 用户在系统设置登录项里手动增删也能反映出来 */}
+        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <span className="text-[13px] font-medium">{t("settings.autostart.title")}</span>
+              <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">
+                {t("settings.autostart.desc")}
+              </p>
+            </div>
+            <Switch
+              checked={autostartOn ?? false}
+              onChange={(v) => void toggleAutostart(v)}
+              label={t("settings.autostart.enable")}
+            />
           </div>
         </section>
 

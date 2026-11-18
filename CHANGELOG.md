@@ -4,6 +4,13 @@
 
 ## Unreleased
 
+### 设置页新增「开机自启动」（[方案](./docs/autostart-plan.md)）
+
+- **登录后菜单栏自动待命**：开关打开后写入 macOS LaunchAgent plist（`~/Library/LaunchAgents/`），登录时自动拉起 Prune——守门员形态不变，不弹主窗口；关闭开关即移除 plist
+- **官方 `tauri-plugin-autostart` 插件 + 自定义 command 收口**：capabilities 纪律不变（前端权限仍只有 core:default），IPC 走 `autostart_get` / `autostart_set` 两个 Rust 命令，与 updater「不走 JS ACL」同一约定
+- **状态不落 settings.json**：`is_enabled()` 直接问系统（plist 是否存在），用户在「系统设置 → 登录项」里手动增删也能如实反映，两处管理不冲突
+- **默认关**：常驻 App 开机拉起是侵入性行为，用户显式授权才开；开关乐观更新、失败回滚并在设置页报错
+
 ### `prune reclaim --emit-script`：打印候选删除命令，永不执行（[D-15 方案](./docs/d15-emit-script-plan.md)，DP-4 裁 A）
 
 - **开一条「打印命令」的缝**：把 reclaim 预览的 L1 白名单项命令化成一段可审计的 POSIX sh 脚本输出到 stdout，执行权完全留在人手里——Prune 进程内不存在执行该脚本的代码路径，`emit_script.rs` 源码断言单测守门（禁词：进程启动 / 废纸篓原语 / 文件删除）
