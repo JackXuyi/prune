@@ -544,6 +544,139 @@ impl PortGuardMonitor {
     }
 }
 
+// ───────────────────────── 闲置 dev server（F18） ─────────────────────────
+
+/// 闲置判定窗口：持续零连接满 30 min 才提报（f18 方案 §3.1）。
+///
+/// 主判据是**端口级 ESTABLISHED 计数**（`PortEntry.conns`，每轮随快照免费拿到）；
+/// 进程 CPU 是辅助信号，采集缺失时按不参与处理——宁可漏报不可误报。
+pub const IDLE_SERVER_MINUTES: u64 = 30;
+pub const IDLE_SERVER_MS: u64 = IDLE_SERVER_MINUTES * 60 * 1000;
+/// 提报后的冷却：60 min。同一闲置会话只报一次；会话结束（出现连接 / 端口关闭）
+/// 即重新武装，但重开服务后的一小时内不再报第二条（防重启横跳刷屏）。
+pub const IDLE_SERVER_COOLDOWN_MS: u64 = 60 * 60 * 1000;
+
+/// 一次闲置提报。字段与 M7 的 `PortEntry` 同源，UI 不需要二次查询就能展开。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IdleServerAlert {
+    pub port: u16,
+    /// 主展示进程
+    pub comm: String,
+    pub pid: Option<i32>,
+    /// 项目归属（cwd 推断）——只有有归属的端口才会触发闲置判定
+    pub project_label: Option<String>,
+    /// 聚合暴露面
+    pub exposure: BindScope,
+    /// 实际闲置分钟数（≥ 30）
+    pub idle_minutes: u64,
+}
+
+/// 闲置判定：**会话模型**，与 PortGuard 的「边沿检测」互补——
+/// 那边看变化（空闲 → 被占），这边看**持续状态**（一直被占着却没人访问）。
+///
+/// 参与门槛（S4 的代码层保证）：
+/// - 只看 TCP 且本轮 `conns` 已统计（None = 采集失败，宁漏勿误）；
+/// - 只看有项目归属（cwd）的端口——系统服务 / GUI 应用内部端口永不触发；
+///
+/// 会话生命周期：
+/// - 进入闲置：`conns == 0` 持续累积（arming 记起点）；
+/// - 会话破坏：`conns > 0` 或端口关闭 → arming / reported 清除（重新武装）；
+/// - 提报：闲置满 [`IDLE_SERVER_MINUTES`] 且不在冷却 → 报一次 + 进冷却。
+#[derive(Debug, Default)]
+pub struct IdleServerMonitor {
+    baseline_done: bool,
+    arming: HashMap<u16, u64>,
+    reported: HashSet<u16>,
+    cooldown: HashMap<u16, u64>,
+}
+
+impl IdleServerMonitor {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// 配置变更时调用：全部重新武装（重开开关的第一轮当新起点）。
+    pub fn reset(&mut self) {
+        *self = Self::default();
+    }
+
+    fn cooled(&self, now_ms: u64, port: u16) -> bool {
+        self.cooldown
+            .get(&port)
+            .map(|&t| now_ms.saturating_sub(t) >= IDLE_SERVER_COOLDOWN_MS)
+            .unwrap_or(true)
+    }
+
+    fn session_alive(live: &HashMap<u16, u64>, port: &u16) -> bool {
+        live.get(port).map(|c| *c == 0).unwrap_or(false)
+    }
+
+    /// 投入一轮端口聚合结果，返回本拍要提报的闲置事件。
+    pub fn observe(&mut self, now_ms: u64, entries: &[PortEntry]) -> Vec<IdleServerAlert> {
+        let mut live: HashMap<u16, u64> = HashMap::new();
+        for e in entries {
+            if e.proto != crate::net::Proto::Tcp || e.listeners.is_empty() {
+                continue;
+            }
+            if !e.listeners.iter().any(|b| b.project.is_some()) {
+                continue;
+            }
+            let Some(conns) = e.conns else {
+                continue;
+            };
+            live.insert(e.port, conns as u64);
+        }
+
+        // 首轮：只建基线。已在闲置的端口从现在起计时（不回溯、不补报存量）。
+        if !self.baseline_done {
+            self.baseline_done = true;
+            for (port, conns) in &live {
+                if *conns == 0 {
+                    self.arming.insert(*port, now_ms);
+                }
+            }
+            return Vec::new();
+        }
+
+        // 会话破坏：端口消失 / 出现连接 / 本轮未统计 → 清 arming 与 reported
+        self.arming.retain(|p, _| Self::session_alive(&live, p));
+        self.reported.retain(|p| Self::session_alive(&live, p));
+
+        let mut alerts = Vec::new();
+        for (port, conns) in &live {
+            if *conns != 0 {
+                continue;
+            }
+            let start = *self.arming.entry(*port).or_insert(now_ms);
+            if self.reported.contains(port) {
+                continue;
+            }
+            let idle = now_ms.saturating_sub(start);
+            if idle >= IDLE_SERVER_MS && self.cooled(now_ms, *port) {
+                self.reported.insert(*port);
+                self.cooldown.insert(*port, now_ms);
+                if let Some(e) = entries.iter().find(|e| e.port == *port) {
+                    let primary = e.primary();
+                    alerts.push(IdleServerAlert {
+                        port: e.port,
+                        comm: primary.map(|p| p.comm.clone()).unwrap_or_default(),
+                        pid: primary.and_then(|p| p.pid),
+                        project_label: primary.and_then(|p| p.project_label.clone()),
+                        exposure: e.exposure,
+                        idle_minutes: idle / 60_000,
+                    });
+                }
+            }
+        }
+
+        // 过期冷却清理（同 PortGuard 纪律：表不无限增长）
+        self.cooldown
+            .retain(|_, t| now_ms.saturating_sub(*t) < IDLE_SERVER_COOLDOWN_MS);
+
+        alerts
+    }
+}
+
 // ───────────────────────── 局域网新面孔（M23） ─────────────────────────
 
 use crate::net::lan::LanDevice;
@@ -1061,6 +1194,109 @@ mod tests {
         let alerts = observe(&mut m, 1_000, &[e]);
         assert_eq!(alerts[0].project_label.as_deref(), Some("prune"));
         assert_eq!(alerts[0].exposure, BindScope::Any);
+    }
+
+    // ---- F18 闲置 dev server ----
+
+    /// 有项目归属的端口行（闲置判定的参与门槛）
+    fn project_entry(port: u16, conns: Option<u32>) -> PortEntry {
+        let mut b = bind(port, 42, "node");
+        b.project = Some("/Users/me/prune".into());
+        b.project_label = Some("prune".into());
+        let mut e = entry(port, true, vec![b]);
+        e.conns = conns;
+        e
+    }
+
+    const MIN: u64 = 60_000;
+
+    #[test]
+    fn idle_baseline_is_silent_and_starts_arming() {
+        let mut m = IdleServerMonitor::new();
+        // 基线轮：已在闲置（0 连接）的端口只起计时，不补报存量
+        let entries = vec![project_entry(3000, Some(0))];
+        assert!(m.observe(0, &entries).is_empty(), "首轮基线不报");
+        // 29 分钟：还没满窗口
+        assert!(m.observe(29 * MIN, &entries).is_empty());
+    }
+
+    #[test]
+    fn idle_alerts_after_window() {
+        let mut m = IdleServerMonitor::new();
+        let entries = vec![project_entry(3000, Some(0))];
+        m.observe(0, &entries);
+        let alerts = m.observe(31 * MIN, &entries);
+        assert_eq!(alerts.len(), 1);
+        assert_eq!(alerts[0].port, 3000);
+        assert_eq!(alerts[0].comm, "node");
+        assert_eq!(alerts[0].project_label.as_deref(), Some("prune"));
+        assert!(alerts[0].idle_minutes >= 30);
+        // 同会话不重报（S2）
+        assert!(m.observe(32 * MIN, &entries).is_empty());
+    }
+
+    #[test]
+    fn connection_breaks_session_and_rearms() {
+        let mut m = IdleServerMonitor::new();
+        m.observe(0, &[project_entry(3000, Some(0))]);
+        // 闲置 20 min 后来了连接：会话破坏
+        assert!(m.observe(20 * MIN, &[project_entry(3000, Some(3))]).is_empty());
+        // 连接断开重新闲置：重新计时，旧的 20 min 不累计
+        assert!(m.observe(25 * MIN, &[project_entry(3000, Some(0))]).is_empty());
+        assert!(m.observe(50 * MIN, &[project_entry(3000, Some(0))]).is_empty());
+        let alerts = m.observe(56 * MIN, &[project_entry(3000, Some(0))]);
+        assert_eq!(alerts.len(), 1, "31 min 连续闲置后提报");
+    }
+
+    #[test]
+    fn port_close_rearms() {
+        let mut m = IdleServerMonitor::new();
+        let entries = vec![project_entry(3000, Some(0))];
+        m.observe(0, &entries);
+        // 35 min 连续闲置 → 第一次提报（T0=0 起 30 min 满窗口）
+        let alerts = m.observe(35 * MIN, &entries);
+        assert_eq!(alerts.len(), 1);
+        // 端口没了（服务停了）：会话结束，不报「闲置」（停掉不是闲置，是消失）
+        assert!(m.observe(40 * MIN, &[]).is_empty());
+        // 同端口重新起来再闲置：重新武装，但一小时内冷却兜底（S3）
+        assert!(m.observe(50 * MIN, &entries).is_empty(), "冷却期内不再报");
+        let alerts = m.observe(96 * MIN, &entries);
+        assert_eq!(alerts.len(), 1, "冷却过后重新报");
+    }
+
+    #[test]
+    fn system_and_unattributed_ports_never_idle_alert() {
+        // S4 负例：无项目归属（系统服务 / GUI 内部端口）永不触发
+        let mut m = IdleServerMonitor::new();
+        let mut b = bind(5353, 66, "mDNSResponder");
+        // project 保持 None
+        let mut e = entry(5353, false, vec![b]);
+        e.conns = Some(0);
+        m.observe(0, &[e.clone()]);
+        assert!(m.observe(90 * MIN, &[e]).is_empty());
+        b = bind(5000, 291, "ControlCenter");
+        let mut sys = entry(5000, true, vec![b]);
+        sys.conns = Some(0);
+        m.observe(0, &[sys.clone()]);
+        assert!(m.observe(90 * MIN, &[sys]).is_empty());
+    }
+
+    #[test]
+    fn unknown_conns_never_arms() {
+        // conns = None（本轮未统计）：宁漏勿误，不参与判定
+        let mut m = IdleServerMonitor::new();
+        let e = project_entry(3000, None);
+        m.observe(0, &[e.clone()]);
+        assert!(m.observe(90 * MIN, &[e]).is_empty(), "conns 未知不得触发");
+    }
+
+    #[test]
+    fn idle_reset_rebuilds_baseline() {
+        let mut m = IdleServerMonitor::new();
+        m.observe(0, &[project_entry(3000, Some(0))]);
+        m.reset();
+        // 重置后回到基线模式：不报，重新计时
+        assert!(m.observe(90 * MIN, &[project_entry(3000, Some(0))]).is_empty());
     }
 
     fn th() -> CpuThresholds {

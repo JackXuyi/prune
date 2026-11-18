@@ -24,10 +24,16 @@ pub mod lan_history;
 /// M10：应用网速（nettop 累计字节差分）
 pub mod netspeed;
 pub mod ports;
+/// 暴露面可达实测（docs/f17-exposure-reach-plan.md，F17）：同机经网卡地址
+/// 回连一次，四态分层。用户显式触发，无常驻轮询；只报观测事实不定因。
+pub mod reach;
 /// 端口服务类型（docs/research/port-service-type-research.md）：
 /// L0 静态推断（`service.rs`）+ L1 主动探针（`probe.rs`，用户显式触发）。
 pub mod probe;
 pub mod service;
+/// 端口白话解释（docs/f16-port-why-plan.md，F16）：把快照证据翻译成
+/// 一句人话 + 证据 + 指路。纯函数零 IO，CLI / MCP / 前端共用同一结论。
+pub mod why;
 /// 站点连通性 / 传输速率（docs/net-sites-plan.md，F15）：按站点测五阶段，
 /// 与 `diag` 的「网络哪一层慢」互补，不共用判定表
 pub mod sites;

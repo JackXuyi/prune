@@ -8,6 +8,9 @@
 
 pub mod footprint;
 pub mod process;
+/// 自耗透明（F19）：Prune 自身的 footprint / CPU / 线程 / 库体积读数，
+/// 口径与内存页同源；缺数显「暂无」不显 0。
+pub mod self_footprint;
 pub mod system;
 pub mod workspace;
 
