@@ -4,9 +4,9 @@ import { create } from "zustand";
 import { tGlobal } from "../i18n/store";
 
 import { devPortSnapshot } from "../lib/devFixture";
-import { isTauri, portProbe, portRefresh, portSetActive, portSnapshot } from "../lib/ipc";
+import { isTauri, portProbe, portReachTest, portRefresh, portSetActive, portSnapshot, portWhy } from "../lib/ipc";
 import { isSystemProcess } from "../types/net";
-import type { PortEntry, PortSnapshot, ProbeOutcome } from "../types/net";
+import type { PortEntry, PortSnapshot, ProbeOutcome, ReachResult, WhyVerdict } from "../types/net";
 
 /** 自动探测开关落盘键。与主题同款 localStorage 约定：纯前端偏好，不进 Rust 设置 */
 const AUTO_PROBE_KEY = "prune.ports.autoprobe";
@@ -48,6 +48,18 @@ interface PortStore {
   probing: Record<string, boolean>;
   /** 探测失败的原因（连接失败 / 服务已退出） */
   probeErrors: Record<string, string>;
+  /** F17 暴露面实测结果（键 = 端口号字符串）。与快照独立——结果只在用户再点时更新 */
+  reachResults: Record<string, ReachResult>;
+  /** 实测中的端口（键同 reachResults） */
+  reaching: Record<string, boolean>;
+  /** 实测失败的原因（invoke 层错误） */
+  reachErrors: Record<string, string>;
+  /** F16 白话解释结果（键 = 端口号字符串）。零网络 IO，结果随快照更新在下次点击时刷新 */
+  whyResults: Record<string, WhyVerdict>;
+  /** 解释中的端口（键同 whyResults） */
+  whying: Record<string, boolean>;
+  /** 解释失败的原因（invoke 层错误） */
+  whyErrors: Record<string, string>;
   /**
    * 设置项「自动探测关注层端口」（P2）。默认关——它发包，
    * 与行内「探测」按钮共享同一纪律：用户显式授权才跑（调研 §5）。
@@ -63,6 +75,10 @@ interface PortStore {
   hydrate: () => Promise<void>;
   /** L1 探测一行端口。用户显式触发；Rust 侧有缓存，重复点击零网络开销 */
   probe: (entry: PortEntry) => Promise<void>;
+  /** F17 暴露面实测。用户显式触发（安全语义，绝不批量）；无缓存，每次点都实测 */
+  reach: (entry: PortEntry) => Promise<void>;
+  /** F16 白话解释。用户显式触发；零网络 IO，重复点击随最新快照重放结论 */
+  why: (entry: PortEntry) => Promise<void>;
   /** 切换自动探测并落盘。开启后立即对当前快照跑一轮 */
   setAutoProbe: (v: boolean) => void;
   /** 对当前快照的关注层 TCP 端口补探缺漏（缓存命中零开销，30 s 轮幂等） */
@@ -83,6 +99,12 @@ export const usePortStore = create<PortStore>((set, get) => ({
   probeResults: {},
   probing: {},
   probeErrors: {},
+  reachResults: {},
+  reaching: {},
+  reachErrors: {},
+  whyResults: {},
+  whying: {},
+  whyErrors: {},
   autoProbe: readAutoProbe(),
 
   init: async () => {
@@ -176,6 +198,41 @@ export const usePortStore = create<PortStore>((set, get) => ({
       set({ probeErrors: { ...get().probeErrors, [key]: String(e) } });
     } finally {
       set({ probing: { ...get().probing, [key]: false } });
+    }
+  },
+
+  reach: async (entry) => {
+    if (entry.proto !== "tcp") return;
+    const key = String(entry.port);
+    if (get().reaching[key]) return; // 进行中禁用：防抖，一次一轮（S4）
+    set({
+      reaching: { ...get().reaching, [key]: true },
+      reachErrors: { ...get().reachErrors, [key]: "" },
+    });
+    try {
+      const out = await portReachTest(entry.port);
+      set({ reachResults: { ...get().reachResults, [key]: out } });
+    } catch (e) {
+      set({ reachErrors: { ...get().reachErrors, [key]: String(e) } });
+    } finally {
+      set({ reaching: { ...get().reaching, [key]: false } });
+    }
+  },
+
+  why: async (entry) => {
+    const key = String(entry.port);
+    if (get().whying[key]) return; // 进行中禁用：防抖
+    set({
+      whying: { ...get().whying, [key]: true },
+      whyErrors: { ...get().whyErrors, [key]: "" },
+    });
+    try {
+      const out = await portWhy(entry.port);
+      set({ whyResults: { ...get().whyResults, [key]: out } });
+    } catch (e) {
+      set({ whyErrors: { ...get().whyErrors, [key]: String(e) } });
+    } finally {
+      set({ whying: { ...get().whying, [key]: false } });
     }
   },
 

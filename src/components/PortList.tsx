@@ -22,6 +22,8 @@ import {
   splitLayers,
   type PortBinding,
   type PortEntry,
+  type ReachOutcome,
+  type WhyKind,
 } from "../types/net";
 
 /** 端口 tab 的整块内容（主窗口第 4 个 tab） */
@@ -314,6 +316,42 @@ export function PortBoard({
 /** 端口 / 局域网 两分段（spec §11：局域网挂 ports tab 内，不新增一级导航） */
 type PortSubPage = "ports" | "lan";
 
+/** F17 实测四态 → 文案。MessageKey 严格类型，动态拼接过不了编译，switch 罗列 */
+function reachOutcomeLabel(
+  outcome: ReachOutcome,
+  t: ReturnType<typeof useI18n>["t"],
+): string {
+  switch (outcome.outcome) {
+    case "connected":
+      return t("ports.reach.connected");
+    case "refused":
+      return t("ports.reach.refused");
+    case "timeout":
+      return t("ports.reach.timeout");
+    case "noroute":
+      return t("ports.reach.noroute");
+    case "noifaceaddr":
+      return t("ports.reach.noifaceaddr");
+    case "failed":
+      return t("ports.reach.failedDetail", { detail: outcome.detail });
+  }
+}
+
+/** F16 结论类别 → 文字色调：系统服务 / 冲突是警告（别杀 / 别动，杀掉会复活），
+ *  dev / known 是确认级结论，其余（free / timewait / unknown）中性 */
+function whyToneClass(kind: WhyKind): string {
+  switch (kind) {
+    case "systemservice":
+    case "conflict":
+      return "text-warn";
+    case "devserver":
+    case "knownservice":
+      return "text-accent";
+    default:
+      return "text-ink-dim";
+  }
+}
+
 function PortSubTabs({
   page,
   onChange,
@@ -386,6 +424,24 @@ function PortRow({
     ? t("ports.service.hintConfirmed") + (probeDetail ? ` · ${probeDetail}` : "")
     : t("ports.service.hintInferred");
 
+  // F17 暴露面实测：只对外部面（any / interface）的 TCP 端口给入口——
+  // loopback 是「本机可达」的定义使然，测了没有信息量（f17 方案 S1）
+  const reachEligible =
+    entry.proto === "tcp" && (entry.exposure === "any" || entry.exposure === "interface");
+  const reachKey = String(entry.port);
+  const reachResult = usePortStore((s) => s.reachResults[reachKey]);
+  const reaching = usePortStore((s) => s.reaching[reachKey]) ?? false;
+  const reachError = usePortStore((s) => s.reachErrors[reachKey]) ?? "";
+  const reach = usePortStore((s) => s.reach);
+
+  // F16 白话解释：所有行都给入口（UDP / 内核持有 / 空闲端口也不例外）——
+  // 空闲端口的「为什么」同样有信息量（TIME_WAIT / Coverage 盲区口径，S3）
+  const whyKey = String(entry.port);
+  const whyResult = usePortStore((s) => s.whyResults[whyKey]);
+  const whying = usePortStore((s) => s.whying[whyKey]) ?? false;
+  const whyError = usePortStore((s) => s.whyErrors[whyKey]) ?? "";
+  const why = usePortStore((s) => s.why);
+
   return (
     <li>
       <div
@@ -444,6 +500,30 @@ function PortRow({
                 {probing ? t("ports.probe.running") : t("ports.probe.action")}
               </button>
             ) : null}
+            {reachEligible ? (
+              <button
+                type="button"
+                disabled={reaching}
+                onClick={() => void reach(entry)}
+                title={t("ports.reach.title")}
+                className="shrink-0 text-accent opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-60"
+              >
+                {reaching ? t("ports.reach.running") : t("ports.reach.action")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              disabled={whying}
+              onClick={() => void why(entry)}
+              title={t("ports.why.title")}
+              className="shrink-0 text-accent opacity-0 transition-opacity group-hover:opacity-100 disabled:opacity-60"
+            >
+              {whying
+                ? t("ports.why.running")
+                : whyResult
+                  ? t("ports.why.again")
+                  : t("ports.why.action")}
+            </button>
           </span>
         </span>
 
@@ -497,6 +577,57 @@ function PortRow({
           {t("ports.probe.confirmedLine", {
             detail: [probeResult.detail, probeResult.version].filter(Boolean).join(" "),
           })}
+        </p>
+      ) : null}
+      {/* F17 实测结果：实测为主、推断面为副（冲突时实测更有信息量），口径 caveat 放 hover（S3） */}
+      {reachResult ? (
+        <p
+          className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-ink-dim"
+          title={reachResult.caveat}
+        >
+          {t("ports.reach.result", {
+            addr: reachResult.triedAddr ?? "—",
+            label: reachOutcomeLabel(reachResult.outcome, t),
+            ms: reachResult.elapsedMs,
+          })}
+          {reachResult.outcome.outcome !== "connected" ? (
+            <span className="ml-1 text-ink-faint">
+              {t("ports.reach.inferredStill", { exposure: exposure.label })}
+            </span>
+          ) : null}
+        </p>
+      ) : null}
+      {reachError ? (
+        <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-warn">
+          {t("ports.reach.failed")} · {reachError}
+        </p>
+      ) : null}
+      {/* F16 白话解释：headline 按类别上色，证据行 + 指路压暗一级。
+          文案来自核心层（CLI 决策 W1-DP-6 中文单语），与 CLI / MCP 同源同词 */}
+      {whyResult ? (
+        <div className="mb-1 ml-2 pl-2">
+          <p className={`text-[10px] leading-snug ${whyToneClass(whyResult.kind)}`}>
+            {whyResult.headline}
+          </p>
+          {whyResult.evidence.length > 0 ? (
+            <ul className="mt-0.5">
+              {whyResult.evidence.map((line, i) => (
+                <li key={i} className="text-[9.5px] leading-snug text-ink-faint">
+                  · {line}
+                </li>
+              ))}
+            </ul>
+          ) : null}
+          {whyResult.actionHint ? (
+            <p className="mt-0.5 text-[9.5px] leading-snug text-ink-faint">
+              {whyResult.actionHint}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+      {whyError ? (
+        <p className="mb-1 ml-2 pl-2 text-[10px] leading-snug text-warn">
+          {t("ports.why.failed")} · {whyError}
         </p>
       ) : null}
       {/* 开发服务（有 cwd 归属）才给 loopback 地址：GUI 应用那行贴个 URL 只是噪音 */}

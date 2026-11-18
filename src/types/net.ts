@@ -56,6 +56,67 @@ export interface ProbeOutcome {
   version: string | null;
 }
 
+/** F17 暴露面可达实测的四态结论（Rust `reach::ReachOutcome`，serde internally-tagged） */
+export type ReachOutcome =
+  | { outcome: "connected" }
+  | { outcome: "refused" }
+  | { outcome: "timeout" }
+  | { outcome: "noroute" }
+  | { outcome: "noifaceaddr" }
+  | { outcome: "failed"; detail: string };
+
+/** F17 一次实测的完整产出（Rust `reach::ReachResult`，camelCase） */
+export interface ReachResult {
+  port: number;
+  /** 实际回连的本机网卡地址；null = 无可用非 loopback 地址 */
+  triedAddr: string | null;
+  outcome: ReachOutcome;
+  elapsedMs: number;
+  /** 固定口径说明：同机回连 ≠ 其他设备可达 */
+  caveat: string;
+}
+
+/** F16 白话解释的结论类别（Rust `why::WhyKind`，serde lowercase）。
+ *  文案呈现按类别区分语气：system/conflict → warn，dev/know → accent，free → 中性 */
+export type WhyKind =
+  | "systemservice"
+  | "devserver"
+  | "conflict"
+  | "knownservice"
+  | "timewait"
+  | "free"
+  | "unknown";
+
+/** F16 一次白话解释的完整产出（Rust `why::WhyVerdict`，camelCase）。
+ *  headline / evidence / actionHint 是核心层产出的中文单语文案
+ *  （CLI 决策 W1-DP-6），与 CLI / MCP 三个消费者同一契约 */
+export interface WhyVerdict {
+  port: number;
+  kind: WhyKind;
+  /** 一句话结论 */
+  headline: string;
+  /** 证据行：进程 / pid / 绑定 / 项目 / 连接 / Coverage 口径 */
+  evidence: string[];
+  /** 指路（只指路不执行）：关闭路径、项目目录、自查命令 */
+  actionHint: string | null;
+}
+
+/** F19 自耗读数（Rust `self_footprint::SelfFootprint`，camelCase）。
+ *  null = 该项暂无数据（显示「暂无」而不是 0） */
+export interface SelfFootprint {
+  pid: number;
+  /** phys_footprint 口径，与内存页同源 */
+  footprint: number | null;
+  threads: number | null;
+  /** 自身 CPU 多轮均值（%）；null = 采样不足 */
+  cpuPctAvg: number | null;
+  cpuSamples: number;
+  /** 序列库（prune.db 含 -wal / -shm）字节数 */
+  dbBytes: number | null;
+  /** 采样时刻（Unix 秒） */
+  sampleAt: number;
+}
+
 /**
  * 服务类型的展示文案。标签走静态 key（MessageKey 是严格类型，动态拼接过不了编译）；
  * 提示词区分「推断」与「确认」两档——推断不准充「确认」就是撒谎。

@@ -34,6 +34,8 @@ interface IslandSettings {
   portGuard: boolean;
   /** 局域网新面孔（M23）：邻居表出现新设备 → 灵动岛提报 */
   lanWatch: boolean;
+  /** 闲置 dev server（F18，实验功能）：项目端口持续无访问 → 灵动岛提报。默认关 */
+  idleServer: boolean;
   maxPerHour: number;
 }
 
@@ -54,6 +56,7 @@ const DEFAULTS: IslandSettings = {
   memSustainSec: 30,
   portGuard: true,
   lanWatch: true,
+  idleServer: false,
   maxPerHour: 6,
 };
 
@@ -261,6 +264,32 @@ export function SettingsBoard() {
               checked={cfg.lanWatch}
               onChange={(v) => update({ lanWatch: v })}
               label={t("settings.lanWatch.enable")}
+            />
+          </div>
+        </section>
+
+        {/* F18 闲置 dev server 提报（实验功能，默认关）：路线图「冻结第五类事件」
+            的 opt-in 通道——默认值翻转到 M-B 访谈判定通过后（f18 方案 §1 门禁）。
+            随灵动岛开关变灰 */}
+        <section
+          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
+            disabled ? "opacity-40" : ""
+          }`}
+        >
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2">
+                <span className="text-[12px] font-medium">{t("settings.idleServer.title")}</span>
+                <span className="text-[10px] text-ink-faint">{t("settings.idleServer.tag")}</span>
+              </div>
+              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
+                {t("settings.idleServer.desc")}
+              </p>
+            </div>
+            <Switch
+              checked={cfg.idleServer}
+              onChange={(v) => update({ idleServer: v })}
+              label={t("settings.idleServer.enable")}
             />
           </div>
         </section>

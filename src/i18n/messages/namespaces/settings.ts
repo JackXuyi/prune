@@ -49,6 +49,12 @@ const zh = {
     desc: "有新设备连上 Wi-Fi 时从刘海里说一声。同一设备只提醒一次；换了网络会重新记住，不刷屏。",
     enable: "启用局域网新面孔",
   },
+  idleServer: {
+    title: "闲置 dev server 提醒",
+    tag: "实验功能 · 默认关",
+    desc: "有项目归属的开发端口持续 30 分钟没有任何访问连接时，从刘海里提报一次。不会自动停掉服务；操作仍在端口页。默认关闭，确认对你有用再开。",
+    enable: "启用闲置 dev server 提醒",
+  },
   portsProbe: {
     title: "端口服务自动探测",
     tag: "关注层 TCP 端口 · 本机握手",
@@ -84,6 +90,18 @@ const zh = {
     title: "关于",
     checkUpdate: "检查更新",
     checking: "检查中…",
+  },
+  selfFootprint: {
+    title: "自身开销",
+    at: "{clock} 实测",
+    sampleNote: "打开设置页时实测；数字随版本与机器而异",
+    mem: "内存",
+    cpu: "CPU",
+    threads: "线程",
+    db: "数据库",
+    memHint: "phys_footprint 口径，与内存页同源",
+    unavailable: "暂无",
+    noPromise: "数字为当前实测，随版本与机器而异；不设上限承诺。CPU 为近 10 轮均值。",
   },
   report: {
     title: "体检报告",
@@ -169,6 +187,12 @@ const en: MessageTree<typeof zh> = {
     desc: "A word from the notch when a new device joins Wi-Fi. Reported once per device; a new network re-baselines.",
     enable: "Enable new-device alerts",
   },
+  idleServer: {
+    title: "Idle dev server alert",
+    tag: "Experimental · off by default",
+    desc: "Reports once from the notch when a project-owned dev port has had zero connections for 30 minutes. Never stops the service for you — actions stay on the Ports page. Off by default; turn it on if it proves useful.",
+    enable: "Enable idle dev server alerts",
+  },
   portsProbe: {
     title: "Auto-probe port services",
     tag: "Focus-layer TCP ports · local handshake",
@@ -207,6 +231,19 @@ const en: MessageTree<typeof zh> = {
     title: "About",
     checkUpdate: "Check for updates",
     checking: "Checking…",
+  },
+  selfFootprint: {
+    title: "Its own footprint",
+    at: "measured {clock}",
+    sampleNote: "Measured when this page opened; numbers vary by version and machine",
+    mem: "Memory",
+    cpu: "CPU",
+    threads: "Threads",
+    db: "Database",
+    memHint: "phys_footprint, same source as the Memory page",
+    unavailable: "n/a",
+    noPromise:
+      "Current measurement only — varies by version and machine; no ceiling promised. CPU is a 10-round average.",
   },
   report: {
     title: "Health report",

@@ -27,6 +27,9 @@ import type {
   NetTotalSample,
   PortSnapshot,
   ProbeOutcome,
+  ReachResult,
+  SelfFootprint,
+  WhyVerdict,
   Site,
   SiteCapability,
   SiteList,
@@ -271,6 +274,32 @@ export function portProbe(
   startTime: number,
 ): Promise<ProbeOutcome> {
   return invoke<ProbeOutcome>("port_probe", { port, pid, startTime });
+}
+
+/**
+ * F17 暴露面可达实测：对本机网卡地址发起一次 TCP connect（超时 2 s）。
+ * 用户显式触发——它发包且是安全语义；Rust 侧无状态无缓存（端口随时可能被停掉，
+ * 缓存「可达」比缓存探针结果更危险）。
+ */
+export function portReachTest(port: number): Promise<ReachResult> {
+  return invoke<ReachResult>("port_reach_test", { port });
+}
+
+/**
+ * F16 端口白话解释：一句人话 + 证据行 + 指路。零网络 IO——结论只产自
+ * `net::why::why()` 纯函数；Rust 侧优先用采样器最新快照（点击零扫描开销）。
+ * 用户显式触发（行内「为什么？」按钮）。
+ */
+export function portWhy(port: number): Promise<WhyVerdict> {
+  return invoke<WhyVerdict>("port_why", { port });
+}
+
+/**
+ * F19 自耗透明：Prune 自身的 footprint / CPU 十轮均值 / 线程 / 序列库体积。
+ * 内存口径与内存页同一 probe 函数；打开设置页时拉一次，不轮询。
+ */
+export function selfFootprint(): Promise<SelfFootprint> {
+  return invoke<SelfFootprint>("self_footprint");
 }
 
 // ---------------------------------------------------------------- 应用磁盘（M8）

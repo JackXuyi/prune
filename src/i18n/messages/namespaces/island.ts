@@ -17,6 +17,7 @@ const zh = {
     newFace: "新面孔",
     conflict: "冲突",
     ports: "端口",
+    idle: "闲置",
   },
 
   cpu: {
@@ -61,6 +62,14 @@ const zh = {
     device: "设备",
     randomMac: "随机化 MAC，厂商不可识别（手机私密地址是常态）",
   },
+
+  /** F18 闲置 dev server（实验功能，默认关） */
+  idle: {
+    idleFor: "已闲置 {minutes} 分钟",
+    noAccess: "持续无访问连接",
+    open: "点击打开端口页",
+    experimental: "实验功能",
+  },
 } as const;
 
 const en: MessageTree<typeof zh> = {
@@ -69,6 +78,7 @@ const en: MessageTree<typeof zh> = {
     newFace: "New",
     conflict: "Clash",
     ports: "Port",
+    idle: "Idle",
   },
 
   cpu: {
@@ -111,6 +121,13 @@ const en: MessageTree<typeof zh> = {
     open: "Click to view LAN devices",
     device: "Device",
     randomMac: "Randomized MAC, vendor unknown (normal for phones' private addresses)",
+  },
+
+  idle: {
+    idleFor: "Idle for {minutes} min",
+    noAccess: "No incoming connections for a while",
+    open: "Click to open the Ports page",
+    experimental: "Experimental",
   },
 };
 

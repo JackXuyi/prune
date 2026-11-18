@@ -91,7 +91,20 @@ interface LanPayload {
   notchH?: number;
 }
 
-type AlertPayload = CpuPayload | MemPayload | PortPayload | LanPayload;
+/** 闲置 dev server 事件（F18，实验功能默认关）：项目端口持续无访问 */
+interface IdlePayload {
+  kind: "idle_server";
+  port: number;
+  comm: string;
+  pid: number | null;
+  projectLabel: string | null;
+  exposure: "any" | "interface" | "loopback" | "unknown";
+  /** 实际闲置分钟数（≥ 30） */
+  idleMinutes: number;
+  notchH?: number;
+}
+
+type AlertPayload = CpuPayload | MemPayload | PortPayload | LanPayload | IdlePayload;
 
 /** 与 Rust `island_geo` 保持一致 */
 const COLLAPSED_W = 229;
@@ -107,6 +120,8 @@ const RED = "#FF453A";
 const BLUE = "#0A84FF";
 /** 新面孔事件强调色：绿（第四种；标签「新面孔」是第二识别通道） */
 const GREEN = "#30D158";
+/** 闲置事件强调色：琥珀（第五种；标签「闲置」是第二识别通道） */
+const AMBER = "#FFD60A";
 
 /** 出现后无人干预的存活时间 */
 const AUTO_HIDE_MS = 6000;
@@ -227,10 +242,14 @@ export function Island() {
   const h = expanded ? EXPANDED_H : COLLAPSED_H;
 
   const onOpen = () => {
-    // 端口 / 新面孔事件直达 ports tab：端口细节与局域网设备区（LanBoard）都在那里。
+    // 端口 / 新面孔 / 闲置事件直达 ports tab：端口细节与局域网设备区（LanBoard）都在那里。
     // W2/D-07：端口事件带上端口号深链——到达即定位到该行，不用再搜一遍
-    const tab: "ports" | "stats" = data?.kind === "port" || data?.kind === "lan" ? "ports" : "stats";
-    const focus = data?.kind === "port" ? String(data.port) : undefined;
+    const tab: "ports" | "stats" =
+      data?.kind === "port" || data?.kind === "lan" || data?.kind === "idle_server"
+        ? "ports"
+        : "stats";
+    const focus =
+      data?.kind === "port" || data?.kind === "idle_server" ? String(data.port) : undefined;
     fireAndForget(openMain(undefined, tab, undefined, focus), "open_main");
     hide();
   };
@@ -297,6 +316,15 @@ export function Island() {
           >
             {data.label || data.ip}
           </CollapsedRow>
+        ) : data.kind === "idle_server" ? (
+          <CollapsedRow
+            notchH={notchH}
+            icon={<PlugIcon color={AMBER} />}
+            label={t("island.tag.idle")}
+            accent={AMBER}
+          >
+            {`:${data.port}`}
+          </CollapsedRow>
         ) : (
           <CollapsedRow
             notchH={notchH}
@@ -314,6 +342,8 @@ export function Island() {
           <MemExpanded data={data} notchH={notchH} />
         ) : data.kind === "lan" ? (
           <LanExpanded data={data} notchH={notchH} />
+        ) : data.kind === "idle_server" ? (
+          <IdleExpanded data={data} notchH={notchH} />
         ) : (
           <PortExpanded data={data} notchH={notchH} />
         ))}
@@ -673,6 +703,92 @@ function PortExpanded({ data, notchH }: { data: PortPayload; notchH: number }) {
               {data.projectLabel}
             </span>
             <span style={{ fontVariantNumeric: "tabular-nums", color: BLUE }}>
+              {t("island.ports.project")}
+            </span>
+          </div>
+        ) : (
+          <span style={{ fontSize: 11, color: "var(--island-ink-faint)" }}>
+            {t("island.ports.noProject")}
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/** 闲置 dev server 展开卡（F18）：大号端口 + 闲置时长 + 项目归属。
+ *  只指路不给「停掉」入口——操作纪律与端口事件相同（f18 方案 §2）。 */
+function IdleExpanded({ data, notchH }: { data: IdlePayload; notchH: number }) {
+  const { t } = useI18n();
+  const dim = "var(--island-ink-mute)";
+  const exposureWarn = data.exposure === "any";
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: notchH,
+        left: 0,
+        right: 0,
+        bottom: 0,
+        padding: "12px 18px 16px",
+        display: "flex",
+        flexDirection: "column",
+        color: "#fff",
+        animation: "island-fade 180ms ease-out",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+        <PlugIcon color={AMBER} />
+        <span
+          style={{
+            fontSize: 26,
+            fontWeight: 500,
+            fontVariantNumeric: "tabular-nums",
+            lineHeight: 1,
+          }}
+        >
+          {`:${data.port}`}
+        </span>
+        <span style={{ fontSize: 12, color: "var(--island-ink-dim)" }}>
+          {data.comm || t("island.ports.unknownProc")}
+        </span>
+      </div>
+
+      <div
+        style={{
+          marginTop: 6,
+          fontSize: 11,
+          color: dim,
+          fontVariantNumeric: "tabular-nums",
+        }}
+      >
+        {t("island.idle.idleFor", { minutes: data.idleMinutes })} · {t("island.idle.noAccess")}
+        {exposureWarn && <span style={{ color: ORANGE }}> · {t("island.ports.exposed")}</span>}
+        {t("island.idle.open")}
+      </div>
+
+      <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 5 }}>
+        {data.projectLabel ? (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              fontSize: 11,
+              color: "var(--island-ink)",
+            }}
+          >
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                maxWidth: 250,
+              }}
+            >
+              {data.projectLabel}
+            </span>
+            <span style={{ fontVariantNumeric: "tabular-nums", color: AMBER }}>
               {t("island.ports.project")}
             </span>
           </div>

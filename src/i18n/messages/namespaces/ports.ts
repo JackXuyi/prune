@@ -93,6 +93,31 @@ const zh = {
     confirmedLine: "已握手确认：{detail}",
   },
 
+  /** F17 暴露面可达实测：只报观测事实不定因；口径 caveat 必须跟随结果 */
+  reach: {
+    action: "测一下",
+    running: "实测中…",
+    failed: "实测失败",
+    title: "从本机网卡地址实测一次该端口是否可达（约 2 s 超时）",
+    result: "实测 {addr}：{label}（{ms} ms）",
+    inferredStill: "· 推断面仍为 {exposure}",
+    connected: "可达（连接成功）",
+    refused: "拒连：该地址上没有进程监听（假活嫌疑）",
+    timeout: "超时：无响应（原因未知，可能是拦截或丢包）",
+    noroute: "无路由",
+    noifaceaddr: "无网卡地址可测（未联网或无默认路由）",
+    failedDetail: "失败：{detail}",
+    caveat: "同机经网卡地址回连实测，不等价于局域网其他设备可达",
+  },
+
+  why: {
+    action: "为什么?",
+    running: "解释中…",
+    again: "再解释",
+    failed: "解释失败",
+    title: "这个端口是怎么回事（白话解释，零网络请求）",
+  },
+
   subpage: {
     ports: "端口",
     lan: "局域网",
@@ -183,6 +208,31 @@ const en: MessageTree<typeof zh> = {
     running: "Probing…",
     failed: "Probe failed",
     confirmedLine: "Confirmed by handshake: {detail}",
+  },
+
+  reach: {
+    action: "Reach test",
+    running: "Testing…",
+    failed: "Reach test failed",
+    title: "One TCP connect from this machine's interface address (~2 s timeout)",
+    result: "Tested {addr}: {label} ({ms} ms)",
+    inferredStill: "· inferred exposure still {exposure}",
+    connected: "reachable (connected)",
+    refused: "refused: nothing listening on that address (stale-binding suspect)",
+    timeout: "timed out: no response (cause unknown — could be blocked or dropped)",
+    noroute: "no route",
+    noifaceaddr: "no interface address to test (offline or no default route)",
+    failedDetail: "failed: {detail}",
+    caveat:
+      "Same-machine connect via the interface address — not equivalent to reachability from other LAN devices",
+  },
+
+  why: {
+    action: "Why?",
+    running: "Explaining…",
+    again: "Explain again",
+    failed: "Explain failed",
+    title: "What is this port (plain-language verdict, zero network)",
   },
 
   subpage: {

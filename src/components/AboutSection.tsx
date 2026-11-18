@@ -1,5 +1,5 @@
 /**
- * 设置页「关于」卡片（docs/version-info-plan.md）。
+ * 设置页「关于」卡片（docs/version-info-plan.md + F19 自耗透明）。
  *
  * 版本号来自 getVersion()（@tauri-apps/api/app）—— 运行时读 tauri.conf.json
  * 的 version，与 `pnpm bump` 维护的四处版本号天然同源，零 Rust command。
@@ -10,23 +10,32 @@
  *
  * 「检查更新」按钮与托盘菜单项复用同一条 Rust 逻辑（updateCheckDialog →
  * check_and_prompt）：点了弹原生对话框，发现新版 / 已是最新 / 出错都有反馈。
+ *
+ * 「自身开销」四行（F19）：打开时拉一次，不轮询——这个数字不需要实时。
+ * 缺数显示「暂无」而不是 0%（S3 纪律：不撒谎）；数字永远带口径与时间（S1）。
  */
 import { useCallback, useEffect, useState } from "react";
 import { getVersion } from "@tauri-apps/api/app";
 
 import { useI18n } from "../i18n/store";
-import { isTauri, updateCheckDialog } from "../lib/ipc";
+import { isTauri, selfFootprint, updateCheckDialog } from "../lib/ipc";
+import type { SelfFootprint } from "../types/net";
+import { formatClock } from "../lib/format";
 import { RefreshIcon } from "./icons";
 
 export function AboutSection() {
   const { t } = useI18n();
   const [version, setVersion] = useState<string | null>(null);
   const [checking, setChecking] = useState(false);
+  const [selfFp, setSelfFp] = useState<SelfFootprint | null>(null);
 
   useEffect(() => {
     if (!isTauri()) return;
     void getVersion()
       .then(setVersion)
+      .catch(() => {});
+    void selfFootprint()
+      .then(setSelfFp)
       .catch(() => {});
   }, []);
 
@@ -42,6 +51,24 @@ export function AboutSection() {
     }
   }, [checking]);
 
+  const mem = selfFp?.footprint;
+  const memText =
+    mem != null
+      ? `${(mem / 1024 / 1024).toFixed(1)} MB`
+      : t("settings.selfFootprint.unavailable");
+  const cpu =
+    selfFp?.cpuPctAvg != null
+      ? `${selfFp.cpuPctAvg.toFixed(1)}%`
+      : t("settings.selfFootprint.unavailable");
+  const threads =
+    selfFp?.threads != null
+      ? String(selfFp.threads)
+      : t("settings.selfFootprint.unavailable");
+  const db =
+    selfFp?.dbBytes != null
+      ? `${(selfFp.dbBytes / 1024 / 1024).toFixed(1)} MB`
+      : t("settings.selfFootprint.unavailable");
+
   return (
     <section
       className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5"
@@ -53,6 +80,46 @@ export function AboutSection() {
           {version ? `v${version}` : "dev"}
         </span>
       </div>
+
+      {selfFp ? (
+        <div className="mt-2.5 border-t border-hairline-soft pt-2.5">
+          <div className="flex items-center justify-between">
+            <span className="text-[11px] font-medium text-ink-dim">
+              {t("settings.selfFootprint.title")}
+            </span>
+            <span
+              className="text-[9.5px] text-ink-faint"
+              title={t("settings.selfFootprint.sampleNote")}
+            >
+              {t("settings.selfFootprint.at", { clock: formatClock(selfFp.sampleAt) })}
+            </span>
+          </div>
+          <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1">
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-[10px] text-ink-faint" title={t("settings.selfFootprint.memHint")}>
+                {t("settings.selfFootprint.mem")}
+              </dt>
+              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{memText}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-[10px] text-ink-faint">{t("settings.selfFootprint.cpu")}</dt>
+              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{cpu}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-[10px] text-ink-faint">{t("settings.selfFootprint.threads")}</dt>
+              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{threads}</dd>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <dt className="text-[10px] text-ink-faint">{t("settings.selfFootprint.db")}</dt>
+              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{db}</dd>
+            </div>
+          </dl>
+          <p className="mt-1.5 text-[9.5px] leading-3.5 text-ink-faint">
+            {t("settings.selfFootprint.noPromise")}
+          </p>
+        </div>
+      ) : null}
+
       <div className="mt-2.5 border-t border-hairline-soft pt-2.5">
         <button
           type="button"
