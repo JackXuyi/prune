@@ -17,7 +17,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use prune_core::net::{host as net_host, ports as net_ports, PortSnapshot};
+use prune_core::net::{
+    baseline as net_baseline,
+    host as net_host,
+    ports as net_ports,
+    PortSnapshot,
+};
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::sampler::{DeepInFlight, MemState};
@@ -184,7 +189,41 @@ pub async fn port_round(app: &AppHandle, force: bool) -> Result<(), String> {
                     .collect()
             });
         let mut cache = scan_state.cache.lock().unwrap_or_else(|e| e.into_inner());
-        net_ports::scan_cached(identities.as_ref(), &mut cache)
+        let mut snap = net_ports::scan_cached(identities.as_ref(), &mut cache);
+
+        // F22 基线漂移（docs/f22-port-baseline-plan.md）：diff 判定在核心层，
+        // 这里只搬运。基线失败/缺失不阻塞快照（徽标缺失的代价远小于扫描失败）。
+        if let Some(store) = handle.try_state::<Arc<prune_core::db::Store>>() {
+            let now = snap.at;
+            let baseline = match store.port_baseline_all() {
+                Ok(b) => b,
+                Err(e) => {
+                    eprintln!("[f22] 基线读取失败（本轮不标漂移）: {e}");
+                    Vec::new()
+                }
+            };
+            let report = net_baseline::diff(&baseline, &snap, now);
+            if !report.seeded {
+                for (port, proto, kind) in &report.flagged {
+                    if let Some(e) = snap
+                        .entries
+                        .iter_mut()
+                        .find(|e| e.port == *port && e.proto == *proto)
+                    {
+                        // 冲突端口的漂移交给 F4 保镖：多持有者只标第一类判据，
+                        // 已有 drift 的 entry 不覆盖（变宽优先于新出现）
+                        if e.drift.is_none() {
+                            e.drift = Some(*kind);
+                        }
+                    }
+                }
+            }
+            let merged = net_baseline::merge(&baseline, &snap, now);
+            if let Err(e) = store.port_baseline_replace(&merged) {
+                eprintln!("[f22] 基线落库失败: {e}");
+            }
+        }
+        snap
     })
     .await
     .map_err(|e| format!("端口扫描线程失败: {e}"))?;

@@ -100,6 +100,9 @@ pub fn run() {
             commands::port_set_active,
             commands::port_probe,
             commands::port_why,
+            commands::mem_export_csv,
+            commands::open_files_scan,
+            commands::open_files_volumes,
             commands::port_reach_test,
             commands::app_disk,
             commands::app_bundles,
@@ -193,6 +196,7 @@ pub fn run() {
             app.manage(Arc::new(scan::DiskState::new()));
             app.manage(Arc::new(port_sampler::PortState::new()));
             app.manage(Arc::new(commands::AppDiskState::new()));
+            app.manage(Arc::new(commands::OpenFilesState::new()));
             app.manage(Arc::new(net_sampler::NetSpeedState::new()));
             // M14：每日流量也落在同一个 prune.db（`net_daily`）。库打不开就传 None，
             // 网络 tab 的「今日」显示「不可用」，实时速率与会话累计照常工作

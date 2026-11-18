@@ -288,6 +288,125 @@ pub async fn port_reach_test(
     .map_err(|e| format!("实测线程失败: {e}"))?
 }
 
+// ---------------------------------------------------------------- 内存报告导出（F20）
+
+/// F20 内存报告导出：聚合 → 原生 save 对话框（Rust 侧 DialogExt，无需 JS ACL，
+/// 与「检查更新」弹窗同款纪律）→ 写盘。
+///
+/// 返回 `None` = 用户取消保存——**无事发生，不是错误**，前端不弹提示。
+/// 聚合与 CSV 渲染在核心层 `mem::report` 纯函数，与 CLI `prune mem --csv`
+/// 同一函数（两路输出逐字节一致是 f20 验收项）。
+#[tauri::command]
+pub async fn mem_export_csv(
+    app: AppHandle,
+    since_hours: Option<i64>,
+) -> Result<Option<String>, String> {
+    use tauri_plugin_dialog::DialogExt;
+
+    let store = app.state::<std::sync::Arc<Store>>().inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let now = prune_core::swap::now_secs() as i64;
+        let since = match since_hours {
+            Some(h) if h > 0 => now - h * 3600,
+            _ => 0, // 缺省 = 序列库全窗口（7 天）
+        };
+        let rows = store
+            .mem_report_rows(since)
+            .map_err(|e| format!("读序列失败: {e}"))?;
+        if rows.is_empty() {
+            return Err("暂无序列数据：先让 Prune 跑一轮采样再导出".to_string());
+        }
+        let report = prune_core::mem::report::aggregate(&rows);
+        let csv = prune_core::mem::report::to_csv(&report, now, env!("CARGO_PKG_VERSION"));
+
+        let name = format!("prune-memory-report-{}.csv", now);
+        let file = app
+            .dialog()
+            .file()
+            .set_file_name(&name)
+            .blocking_save_file();
+        let Some(file) = file else {
+            return Ok(None); // 用户取消：无事发生
+        };
+        let path = file.into_path().map_err(|e| format!("保存路径解析失败: {e}"))?;
+        std::fs::write(&path, csv).map_err(|e| format!("写文件失败: {e}"))?;
+        Ok(Some(path.to_string_lossy().into_owned()))
+    })
+    .await
+    .map_err(|e| format!("导出线程失败: {e}"))?
+}
+
+// ---------------------------------------------------------------- Open Files（F23）
+
+/// F23 占用反查缓存状态：TTL 5 min（AppDiskState 同款模式——卡片反复切 tab
+/// 不该反复跑全量 lsof）。键就是整份报告（查询粒度 = 挂载点，量级可忽略）。
+pub struct OpenFilesState {
+    cache: Mutex<Option<(std::time::Instant, prune_core::disk::open_files::OpenFilesReport)>>,
+}
+
+impl Default for OpenFilesState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl OpenFilesState {
+    pub fn new() -> Self {
+        Self { cache: Mutex::new(None) }
+    }
+}
+
+/// F23 占用反查：这块盘/目录被谁开着文件。只读纪律——只查不解。
+/// 大目录（Time Machine 级）可能十余秒：前端给预期文案，本期不做中途取消
+/// （kill 子进程会留半截结论，以预期管理替代，f23 方案 §4.2）。
+#[tauri::command]
+pub async fn open_files_scan(
+    path: String,
+    app: AppHandle,
+) -> Result<prune_core::disk::open_files::OpenFilesReport, String> {
+    use std::sync::Arc;
+    if !std::path::Path::new(&path).exists() {
+        return Err(format!("路径不存在：{path}"));
+    }
+    let state = app.state::<Arc<OpenFilesState>>().inner().clone();
+    {
+        let cache = state.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((at, hit)) = cache.as_ref() {
+            if at.elapsed().as_secs() < 300
+                && hit.path == prune_core::disk::open_files::normalize(&path)
+            {
+                return Ok(hit.clone());
+            }
+        }
+    }
+    let out = tauri::async_runtime::spawn_blocking(move || {
+        prune_core::disk::open_files::scan(&path)
+    })
+    .await
+    .map_err(|e| format!("占用反查线程失败: {e}"))??;
+    *state.cache.lock().unwrap_or_else(|e| e.into_inner()) =
+        Some((std::time::Instant::now(), out.clone()));
+    Ok(out)
+}
+
+/// F23：已挂载的卷列表（macOS /Volumes 一级目录；过滤隐藏项与根盘名）。
+/// 拉不出来（Linux / 异常环境）返回空数组——前端退化为手输路径。
+#[tauri::command]
+pub fn open_files_volumes() -> Vec<String> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir("/Volumes") {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') || name == "Macintosh HD" {
+                continue;
+            }
+            out.push(e.path().to_string_lossy().to_string());
+        }
+    }
+    out.sort();
+    out
+}
+
 // ---------------------------------------------------------------- 应用磁盘（M8）
 /// 家族磁盘测量缓存。放在壳层而不是 core：它是有状态的（TTL），
 /// 生命周期应当与进程一致，跟 mem/disk 的 State 一个模式。
