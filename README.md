@@ -131,7 +131,7 @@ Full command reference (flags per command / JSON contract / exit codes): [docs/c
 
 ## MCP server
 
-**MCP tools (12, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail plus the most-swapped processes) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
+**MCP tools (13, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup, with `coverage` explaining what was visible) / `prune_why` (plain-language port verdict: who holds it, why a kill would revive it, where to turn it off) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail plus the most-swapped processes) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
 
 Wire it into any MCP-capable agent and ask questions like "what is eating disk on this machine", "is anything of mine exposed on the LAN", or "is this process leaking" — the agent reads, you decide.
 
@@ -300,7 +300,7 @@ The collapsed state is icon + label + reading; hovering expands to show *who* is
 
 This is a code-level property, not a slogan, and it is covered by tests:
 
-1. **Agents can look.** All 12 MCP tools are queries. There is no execution tool.
+1. **Agents can look.** All 13 MCP tools are queries. There is no execution tool.
 2. **Only a human can delete.** Cleanup happens in the GUI, behind whitelist + trash + 20 GB breaker. There is no IPC command an agent could call to delete anything.
 3. **The dispatcher refuses by name.** `reclaim` / `clean` / `execute` / `delete` and friends return an explicit read-only error that says why — not a generic "unknown tool". A test asserts that arm exists.
 4. **Whitelist as the last line.** Even if an execution path were opened later, only registered regenerable paths could be touched; free-form paths die in `prune-core`.

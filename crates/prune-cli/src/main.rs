@@ -55,6 +55,11 @@ pub enum Command {
         /// 只看冲突端口（同端口 ≥2 个不同 pid）
         conflicts: bool,
     },
+    /// `prune why 5000`：端口白话解释（F16）——一句话结论 + 证据 + 指路
+    Why {
+        port: u16,
+        json: bool,
+    },
     /// `prune app <家族名>`：一个应用的五域资源画像（M8）
     App {
         name: String,
@@ -244,6 +249,29 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                 all,
                 conflicts,
             })
+        }
+        "why" => {
+            let mut json = false;
+            let mut port: Option<u16> = None;
+            for a in it {
+                match a.as_str() {
+                    "--json" => json = true,
+                    other => match other.parse::<u16>() {
+                        Ok(p) if port.is_none() => port = Some(p),
+                        Ok(_) => return Err("why 只接受一个端口号".into()),
+                        Err(_) => {
+                            return Err(format!("why 不认识参数 {other:?}\n{}", usage()));
+                        }
+                    },
+                }
+            }
+            let Some(port) = port else {
+                return Err(format!(
+                    "why 需要一个端口号，如 prune why 5000\n{}",
+                    usage()
+                ));
+            };
+            Ok(Command::Why { port, json })
         }
         "app" => {
             let mut json = false;
@@ -493,6 +521,7 @@ fn usage() -> String {
                                       按需守护：前台进程，Ctrl-C 即停，不装后台
   prune port [PORT] [--json] [--all] [--conflicts]
                                       谁占着这个端口（--conflicts 只看冲突端口）
+  prune why <PORT> [--json]           端口白话解释：一句话说清谁占着、为什么杀不掉、去哪关
   prune projects [--days N] [--json]  项目依赖账本（按天趋势，默认 30 天）
   prune doctor [--json] [--only disk,mem,port,net] [--timeout N]
                                       四域体检：磁盘/内存/端口/网络的结论+证据+下一步
@@ -569,6 +598,7 @@ fn main() {
             all,
             conflicts,
         } => cmd_port(port, json, all, conflicts),
+        Command::Why { port, json } => cmd_why(port, json),
         Command::App { name, json } => cmd_app(&name, json),
         Command::Lan { scan, json } => cmd_lan(scan, json),
         Command::Mcp => cmd_mcp(),
@@ -1024,6 +1054,30 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
 /// - 「没查到」≠「端口空闲」：查不到时把内核口径与不可见条数一起说出来；
 /// - TIME_WAIT 不是占用：单独一行解释，且没有「结束」建议；
 /// - 双栈不重复：内核里 v4/v6 各一条 fd，这里只输出一行。
+/// `prune why <port>`（F16）：白话解释。结论只产自 `net::why::why()` 纯函数，
+/// 本函数只负责排版与退出码——文案逻辑不许散落在 CLI 层。
+fn cmd_why(port: u16, json: bool) -> i32 {
+    let snap = net::ports::scan(None);
+    let verdict = net::why::why(port, &snap);
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&docs_json::why_doc(&verdict)).unwrap()
+        );
+        return exit_code_for_empty(snap.coverage.note.as_deref());
+    }
+    println!("端口 {}：{}", verdict.port, verdict.headline);
+    for line in &verdict.evidence {
+        println!("  · {line}");
+    }
+    if let Some(hint) = &verdict.action_hint {
+        println!("  ↳ {hint}");
+    }
+    // 与 `port --json` 同一退出码纪律：Coverage 差额是数据事实（0），
+    // 权限不足（3）/ 采集失败（4）照旧区分
+    exit_code_for_empty(snap.coverage.note.as_deref())
+}
+
 fn cmd_port(only: Option<u16>, json: bool, all: bool, conflicts_only: bool) -> i32 {
     let snap = net::ports::scan(None);
 
@@ -2031,6 +2085,23 @@ mod tests {
         assert!(parse_args(&[s("port"), s("70000")]).is_err());
         assert!(parse_args(&[s("port"), s("abc")]).is_err());
         assert!(parse_args(&[s("port"), s("3000"), s("8080")]).is_err());
+    }
+
+    /// F16：why 子命令解析（端口必填、--json 可选、多余参数拒绝）
+    #[test]
+    fn parses_why_subcommand() {
+        assert_eq!(
+            parse_args(&[s("why"), s("5000")]).unwrap(),
+            Command::Why { port: 5000, json: false }
+        );
+        assert_eq!(
+            parse_args(&[s("why"), s("3000"), s("--json")]).unwrap(),
+            Command::Why { port: 3000, json: true }
+        );
+        // 缺端口号 → 用法错；多余端口号 → 用法错；非数字 → 用法错
+        assert!(parse_args(&[s("why")]).is_err());
+        assert!(parse_args(&[s("why"), s("3000"), s("8080")]).is_err());
+        assert!(parse_args(&[s("why"), s("abc")]).is_err());
     }
 
     #[test]

@@ -98,6 +98,16 @@
         "ports",
         "disk"
       ]
+    },
+    "why": {
+      "keys": [
+        "actionHint",
+        "evidence",
+        "headline",
+        "kind",
+        "port",
+        "schemaVersion"
+      ]
     }
   },
   "exitCodes": {

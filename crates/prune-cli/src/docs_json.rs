@@ -85,6 +85,12 @@ pub fn port_conflicts_doc(at: i64, conflicts: &[PortConflict], coverage: &net::C
     }))
 }
 
+/// `prune why --json`（F16）：白话解释结论。形状与 `net::why::WhyVerdict`
+/// 序列化完全一致（camelCase），只补信封——CLI 与 MCP `prune_why` 同源。
+pub fn why_doc(verdict: &prune_core::net::why::WhyVerdict) -> Value {
+    enveloped(serde_json::to_value(verdict).unwrap_or(Value::Null))
+}
+
 /// `prune projects --json`。
 pub fn projects_doc(from: &str, days: u32, projects: &[DiskTrend]) -> Value {
     enveloped(json!({
@@ -202,6 +208,10 @@ pub fn contract_shape() -> Value {
     };
     let port_doc = port_doc(None, &[], &port_snap);
     let conflicts_doc = port_conflicts_doc(0, &[], &port_snap.coverage);
+    let why_doc = why_doc(&prune_core::net::why::why(
+        0,
+        &port_snap,
+    ));
 
     let app = AppResource {
         family: String::new(),
@@ -256,6 +266,7 @@ pub fn contract_shape() -> Value {
             "mem":            { "keys": keys_of(&mem_doc) },
             "port":           { "keys": keys_of(&port_doc) },
             "port_conflicts": { "keys": keys_of(&conflicts_doc) },
+            "why":            { "keys": keys_of(&why_doc) },
             "app":            { "keys": keys_of(&app_doc) },
             "lan":            { "keys": keys_of(&lan_doc) },
             "projects":       { "keys": keys_of(&projects_doc) },

@@ -233,6 +233,20 @@ fn tool_defs() -> Value {
                     }
                 }
             }
+        },
+        {
+            "name": "prune_why",
+            "description": "端口白话解释（只读，约 40-140 ms）：直接给一句可转述的结论而不是原始条目——谁占着、是不是系统服务（杀掉会复活，附系统设置关闭路径）、属于哪个项目的 dev server、是否多持有者冲突、TIME_WAIT 残留还是确认空闲。与 port_listeners 的分工：那个给结构化明细，本工具给结论。无监听时严格区分「确认空闲 / 权限盲区 / TIME_WAIT」，不把「没查到」说成空闲；规则推断不出时明说未知，不编造用途。",
+            "inputSchema": {
+                "type": "object",
+                "properties": {
+                    "port": {
+                        "type": "number",
+                        "description": "要解释的端口号（如 5000）"
+                    }
+                },
+                "required": ["port"]
+            }
         }
     ])
 }
@@ -263,6 +277,7 @@ pub fn run_tool(name: &str, args: &Value) -> Result<Value, String> {
         "project_deps" => Ok(tool_project_deps(args)),
         "swap_report" => Ok(tool_swap_report()),
         "net_sites" => Ok(tool_net_sites()),
+        "prune_why" => Ok(tool_why(args)),
         // 执行类请求显式拒绝（M29）：让 Agent 与读代码的人都直接看到底线，
         // 而不是落进 unknown tool 的笼统报错。此清单只增不减。
         "reclaim" | "clean" | "clean_item" | "execute" | "delete" | "remove" | "kill" | "write"
@@ -720,6 +735,32 @@ fn tool_port_conflicts(args: &Value) -> Value {
     })
 }
 
+/// F16 `prune_why`（f16 方案 §3.3）：白话解释。结论只产自 `net::why::why()`
+/// 纯函数（CLI `prune why` 同源），本函数附上 Coverage 让 Agent 能自己核口径。
+fn tool_why(args: &Value) -> Value {
+    let port = args
+        .get("port")
+        .and_then(|v| v.as_u64())
+        .filter(|p| *p > 0 && *p <= 65535)
+        .map(|p| p as u16);
+    let Some(port) = port else {
+        return json!({
+            "error": "port 必须是 1-65535 的整数",
+            "usage": "prune_why { port: 5000 }"
+        });
+    };
+    let snap = prune_core::net::ports::scan(None);
+    let verdict = prune_core::net::why::why(port, &snap);
+    json!({
+        "schemaVersion": 1,
+        "at": snap.at,
+        "scanMs": snap.scan_ms,
+        "verdict": verdict,
+        "coverage": snap.coverage,
+        "note": "verdict.kind=free 才是确认空闲；unknown 表示推断不出（只报观测事实，不要替它编用途）。不要建议 kill 系统服务；dev server 的启停让用户在项目里操作。",
+    })
+}
+
 /// W2/D-08：项目依赖账本。**只读历史，不触发扫描**（理由同 lan_devices：
 /// Agent 高频调用不能每次都跑 15 s 全盘扫描）。
 fn tool_project_deps(args: &Value) -> Value {
@@ -968,7 +1009,8 @@ mod tests {
                 "project_deps",
                 "swap_report",
                 "net_sites",
-                "net_diag"
+                "net_diag",
+                "prune_why"
             ]
         );
         for t in defs.as_array().unwrap() {
@@ -993,6 +1035,22 @@ mod tests {
             live,
             "MCP 工具面已变更：请同批更新 crates/prune-cli/mcp-tools.v1.json（并提升 schemaVersion）"
         );
+    }
+
+    /// 快照导出工具：`PRUNE_DUMP_MCP_TOOLS=1 cargo test -p prune-cli dump_mcp_tools`
+    /// 用生产函数重写冻结文件。绝不手写快照（与 CLI 契约 dump 同一纪律）。
+    #[test]
+    fn dump_mcp_tools_when_env_set() {
+        if std::env::var("PRUNE_DUMP_MCP_TOOLS").is_err() {
+            return;
+        }
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/mcp-tools.v1.json");
+        std::fs::write(
+            path,
+            serde_json::to_string_pretty(&tool_defs()).unwrap() + "\n",
+        )
+        .unwrap();
+        eprintln!("已导出 MCP 工具快照：{path}");
     }
 
     #[test]

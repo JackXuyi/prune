@@ -118,7 +118,7 @@ prune mcp install [--client claude|cursor|vscode|all] [--write] [--json]
 
 ## MCP 服务
 
-**MCP 工具（12 个，全部只读）：** `mem_snapshot`（一次性内存读数）/ `mem_leaks`（读 GUI 序列库的泄漏嫌疑）/ `disk_report`（全盘扫描，约 15 s）/ `disk_scan`（白名单逐条细分 + 可选子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明可见范围）/ `port_conflicts`（此刻哪些端口有多个持有者）/ `project_deps`（项目依赖账本与趋势，只读历史不触发扫描）/ `swap_report`（swap 明细 + 换出受害者榜）/ `net_sites`（站点五阶段检测，**会发起真实 HTTPS 请求**，单轮 ≤ 20 MB）/ `net_diag`（暴露面诊断结论：谁在对外监听）/ `app_resources`（应用维度五域画像）/ `lan_devices`（局域网设备，只读缓存不发包）。
+**MCP 工具（13 个，全部只读）：** `mem_snapshot`（一次性内存读数）/ `mem_leaks`（读 GUI 序列库的泄漏嫌疑）/ `disk_report`（全盘扫描，约 15 s）/ `disk_scan`（白名单逐条细分 + 可选子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明可见范围）/ `prune_why`（端口白话解释：谁占着、为什么杀掉会复活、去哪关）/ `port_conflicts`（此刻哪些端口有多个持有者）/ `project_deps`（项目依赖账本与趋势，只读历史不触发扫描）/ `swap_report`（swap 明细 + 换出受害者榜）/ `net_sites`（站点五阶段检测，**会发起真实 HTTPS 请求**，单轮 ≤ 20 MB）/ `net_diag`（暴露面诊断结论：谁在对外监听）/ `app_resources`（应用维度五域画像）/ `lan_devices`（局域网设备，只读缓存不发包）。
 
 接进任何支持 MCP 的 Agent，就能问「这台机器什么在吃磁盘」「我有什么暴露在局域网」「这个进程在漏吗」——Agent 负责读，你负责决定。
 
@@ -287,7 +287,7 @@ Prune 不要 root、不要全盘访问、不要辅助功能。macOS 唯一一次
 
 这不是宣传语，是四条可验证的代码层约束，并且有测试固化：
 
-1. **Agent 能看**：12 个 MCP 工具全部是查询，没有一扇执行的门。
+1. **Agent 能看**：13 个 MCP 工具全部是查询，没有一扇执行的门。
 2. **人才能删**：清理只发生在 GUI，背后是白名单 + 废纸篓 + 20 GB 熔断；不存在一条 Agent 能调的删除 IPC。
 3. **分发层按名拒绝**：`reclaim` / `clean` / `execute` / `delete` 等执行类请求返回明确的只读错误并说明原因，而不是笼统的 unknown tool；有单测断言这条臂必须存在。
 4. **白名单兜底**：即使未来开放执行通道，可操作的也只有已登记的可再生路径——自由输入路径在 `prune-core` 层就死掉。

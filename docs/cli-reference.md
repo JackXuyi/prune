@@ -14,6 +14,7 @@
 | `prune mem --watch [--interval N]` | 【已弃用】改用 `prune watch --only mem`（2027-09 移除别名） |
 | `prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]` | 按需守护：前台进程，Ctrl-C 即停，不装后台 |
 | `prune port [PORT] [--json] [--all] [--conflicts]` | 谁占着这个端口（`--conflicts` 只看冲突端口） |
+| `prune why <PORT> [--json]` | 端口白话解释：一句话说清谁占着、为什么杀不掉、去哪关 |
 | `prune projects [--days N] [--json]` | 项目依赖账本（按天趋势，默认 30 天） |
 | `prune doctor [--json] [--only disk,mem,port,net] [--timeout N]` | 四域体检：磁盘/内存/端口/网络的结论+证据+下一步 |
 | `prune app <家族名> [--json]` | 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘 |
@@ -130,6 +131,23 @@ prune port --all                     # 含内部 IPC / 系统服务端口
 `--conflicts` 分支 JSON 顶层键：`schemaVersion`, `at`, `conflicts`, `coverage`
 
 退出码特例：`--json` 主输出为空且 `coverage.note` 指明权限不足 → **3**；采集失败 → **4**；差额说明 → 0。
+
+## prune why
+
+端口白话解释（F16）：给一句**可直接转述的结论**而不是原始条目——系统服务（杀掉会复活，附系统设置关闭路径）、项目 dev server（附项目目录）、多持有者冲突、TIME_WAIT 残留、确认空闲。结论只产自 `net::why::why()` 纯函数，与 MCP `prune_why` 同源。
+
+```sh
+prune why 5000                        # AirPlay 占用 → 附关闭路径
+prune why 5173 --json | jq '.headline'
+```
+
+结论类别（`kind`）：`systemService` / `devServer` / `conflict` / `knownService`（L0 静态推断，headline 标「疑似」）/ `timeWait` / `free` / `unknown`。
+
+口径纪律：`free` 必须在 Coverage 无差额时才出现——「没查到」≠「端口空闲」；`unknown` 只报观测事实，不编造用途；本命令只解释、不给任何执行动作。
+
+JSON 顶层键：`schemaVersion`, `port`, `kind`, `headline`, `evidence`, `actionHint`
+
+退出码特例：与 `prune port` 相同（权限不足 → **3**；采集失败 → **4**；差额说明 → 0）。
 
 ## prune projects
 

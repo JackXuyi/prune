@@ -152,5 +152,21 @@
       "type": "object"
     },
     "name": "net_diag"
+  },
+  {
+    "description": "端口白话解释（只读，约 40-140 ms）：直接给一句可转述的结论而不是原始条目——谁占着、是不是系统服务（杀掉会复活，附系统设置关闭路径）、属于哪个项目的 dev server、是否多持有者冲突、TIME_WAIT 残留还是确认空闲。与 port_listeners 的分工：那个给结构化明细，本工具给结论。无监听时严格区分「确认空闲 / 权限盲区 / TIME_WAIT」，不把「没查到」说成空闲；规则推断不出时明说未知，不编造用途。",
+    "inputSchema": {
+      "properties": {
+        "port": {
+          "description": "要解释的端口号（如 5000）",
+          "type": "number"
+        }
+      },
+      "required": [
+        "port"
+      ],
+      "type": "object"
+    },
+    "name": "prune_why"
   }
 ]
