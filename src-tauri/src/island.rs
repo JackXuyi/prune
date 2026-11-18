@@ -18,9 +18,9 @@ use tauri::{AppHandle, Emitter, Manager, WebviewUrl};
 use tauri_nspanel::{tauri_panel, CollectionBehavior, ManagerExt, PanelBuilder, PanelLevel};
 
 use prune_core::island::{
-    CpuAlert, CpuMonitor, CpuThresholds, LanWatchAlert, LanWatchMonitor, MemAlert, MemMonitor,
-    MemThresholds, MemTrigger, PortGuardAlert, PortGuardKind, PortGuardMonitor, RateLimiter,
-    CPU_COOLDOWN_MS, MEM_COOLDOWN_MS,
+    CpuAlert, CpuMonitor, CpuThresholds, IdleServerAlert, IdleServerMonitor, LanWatchAlert,
+    LanWatchMonitor, MemAlert, MemMonitor, MemThresholds, MemTrigger, PortGuardAlert,
+    PortGuardKind, PortGuardMonitor, RateLimiter, CPU_COOLDOWN_MS, MEM_COOLDOWN_MS,
 };
 use prune_core::mem::PressureLevel;
 use prune_core::net::ports as net_ports;
@@ -51,6 +51,9 @@ const K_SWAP_PCT: &str = "island.swap_pct";
 const K_MEM_SUSTAIN: &str = "island.mem_sustain_sec";
 const K_PORT_GUARD: &str = "island.port_guard";
 const K_LAN_WATCH: &str = "island.lan_watch";
+/// F18 闲置 dev server 提报。**默认 false**（opt-in）：f18 方案显式声明与
+/// 路线图「冻结第五类事件」裁决对齐，默认值翻转到 M-B 判定后（门禁见方案 §1）。
+const K_IDLE_SERVER: &str = "island.idle_server";
 const K_MAX_PER_HOUR: &str = "island.max_per_hour";
 
 /// 字节换算：岛上的读数口径用 GiB / MiB（与活动监视器一致）
@@ -105,6 +108,8 @@ struct Cfg {
     mem: MemThresholds,
     port_guard: bool,
     lan_watch: bool,
+    /// F18 闲置 dev server（实验功能，默认关）
+    idle_server: bool,
     max_per_hour: u32,
 }
 
@@ -121,6 +126,7 @@ const DEFAULT_CFG: Cfg = Cfg {
     },
     port_guard: true,
     lan_watch: true,
+    idle_server: false,
     max_per_hour: 6,
 };
 
@@ -150,6 +156,7 @@ fn read_cfg(app: &AppHandle) -> Cfg {
             .clamp(1, 30) as u32,
         port_guard: settings::get_bool(app, K_PORT_GUARD).unwrap_or(DEFAULT_CFG.port_guard),
         lan_watch: settings::get_bool(app, K_LAN_WATCH).unwrap_or(DEFAULT_CFG.lan_watch),
+        idle_server: settings::get_bool(app, K_IDLE_SERVER).unwrap_or(DEFAULT_CFG.idle_server),
     }
 }
 
@@ -612,6 +619,31 @@ fn fire_lan(app: &AppHandle, alert: LanWatchAlert) {
     deliver(app, payload);
 }
 
+/// 闲置 dev server 事件的 payload 组装 + 投递（F18）。
+/// 判定结论全部在核心层算好，这里只做字段搬运与格式转换。
+fn fire_idle_server(app: &AppHandle, alert: IdleServerAlert) {
+    let Some(cached) = cached_place() else {
+        return;
+    };
+    let exposure = match alert.exposure {
+        prune_core::net::BindScope::Any => "any",
+        prune_core::net::BindScope::Interface => "interface",
+        prune_core::net::BindScope::Loopback => "loopback",
+        prune_core::net::BindScope::Unknown => "unknown",
+    };
+    let payload = serde_json::json!({
+        "kind": "idle_server",
+        "port": alert.port,
+        "comm": alert.comm,
+        "pid": alert.pid,
+        "projectLabel": alert.project_label,
+        "exposure": exposure,
+        "idleMinutes": alert.idle_minutes,
+        "notchH": cached.place.notch_h,
+    });
+    deliver(app, payload);
+}
+
 /// 展示 + 广播。岛同时只显示一条：后到的 payload 直接覆盖前一条
 /// （前端收到 island://alert 会重置相位机），这就是 §12.3 的「抢占」——
 /// CPU 展示中内存触发、内存展示中 CPU 触发，都是后触发者覆盖前者。
@@ -894,6 +926,9 @@ async fn port_guard_loop(app: AppHandle) {
     // 立刻到期的，所以循环外不要再 tick 一次——那会把首拍吃掉，基线推迟 30 s。
 
     let mut monitor = PortGuardMonitor::new();
+    // F18 闲置判定搭同一条节拍与快照来源（30 s 一拍，零新增采集）；
+    // 自己的开关（idle_server，默认关）与自己的频控预算。
+    let mut idle_monitor = IdleServerMonitor::new();
     let mut last_cfg = cfg();
     let mut limiter = RateLimiter::new(event_budget(last_cfg.max_per_hour, PORT_MAX_PER_HOUR));
 
@@ -904,10 +939,13 @@ async fn port_guard_loop(app: AppHandle) {
         if current != last_cfg {
             // 配置变化重建基线：重开开关的第一轮当作新起点，不补报中途错过的变化
             monitor.reset();
+            idle_monitor.reset();
             limiter.reconfigure(event_budget(current.max_per_hour, PORT_MAX_PER_HOUR));
             last_cfg = current;
         }
-        if !current.enabled || !current.port_guard {
+        let want_guard = current.enabled && current.port_guard;
+        let want_idle = current.enabled && current.idle_server;
+        if !want_guard && !want_idle {
             continue;
         }
 
@@ -916,13 +954,25 @@ async fn port_guard_loop(app: AppHandle) {
             None => continue,
         };
         let now = now_ms();
-        let alerts = monitor.observe(now, &snap.entries);
-        for alert in alerts {
-            if limiter.allow(now) {
-                fire_port(&app, alert);
-            } else {
-                // 预算吃满：放弃本条（冷却机制保证 10 分钟内同端口不会再攒出一条）
-                eprintln!("[m19-port] 端口事件被频控拦截 port={}", alert.port);
+        if want_guard {
+            let alerts = monitor.observe(now, &snap.entries);
+            for alert in alerts {
+                if limiter.allow(now) {
+                    fire_port(&app, alert);
+                } else {
+                    // 预算吃满：放弃本条（冷却机制保证 10 分钟内同端口不会再攒出一条）
+                    eprintln!("[m19-port] 端口事件被频控拦截 port={}", alert.port);
+                }
+            }
+        }
+        if want_idle {
+            let alerts = idle_monitor.observe(now, &snap.entries);
+            for alert in alerts {
+                if limiter.allow(now) {
+                    fire_idle_server(&app, alert);
+                } else {
+                    eprintln!("[f18-idle] 闲置事件被频控拦截 port={}", alert.port);
+                }
             }
         }
     }
@@ -1039,6 +1089,8 @@ pub struct IslandSettings {
     pub mem_sustain_sec: u64,
     pub port_guard: bool,
     pub lan_watch: bool,
+    /// F18 闲置 dev server（实验功能，默认关）
+    pub idle_server: bool,
     pub max_per_hour: u64,
 }
 
@@ -1054,6 +1106,7 @@ pub fn island_settings_get(app: AppHandle) -> IslandSettings {
         mem_sustain_sec: c.mem.sustain_sec,
         port_guard: c.port_guard,
         lan_watch: c.lan_watch,
+        idle_server: c.idle_server,
         max_per_hour: c.max_per_hour as u64,
     }
 }
@@ -1089,6 +1142,7 @@ pub fn island_settings_set(
             (K_MEM_SUSTAIN, serde_json::json!(mem.sustain_sec)),
             (K_PORT_GUARD, serde_json::json!(settings.port_guard)),
             (K_LAN_WATCH, serde_json::json!(settings.lan_watch)),
+            (K_IDLE_SERVER, serde_json::json!(settings.idle_server)),
             (K_MAX_PER_HOUR, serde_json::json!(max_per_hour)),
         ],
     )?;
@@ -1102,6 +1156,7 @@ pub fn island_settings_set(
             mem,
             port_guard: settings.port_guard,
             lan_watch: settings.lan_watch,
+            idle_server: settings.idle_server,
             max_per_hour: max_per_hour as u32,
         };
     }
@@ -1115,6 +1170,7 @@ pub fn island_settings_set(
         mem_sustain_sec: mem.sustain_sec,
         port_guard: settings.port_guard,
         lan_watch: settings.lan_watch,
+        idle_server: settings.idle_server,
         max_per_hour,
     })
 }

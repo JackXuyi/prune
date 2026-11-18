@@ -214,6 +214,9 @@ pub struct MemState {
     pub last_deep_ms: Mutex<u64>,
     /// 整机 CPU 环形缓冲（60 点 = 10 min）；只在 fast 轮推进，deep 轮复用最近读数
     cpu_hist: Mutex<VecDeque<f32>>,
+    /// F19 自身 CPU 环形缓冲（10 轮均值）。fast 轮从进程表里捞自己的 pid 记账；
+    /// 空环 = 「暂无数据」（self_footprint 命令的消费者），不填 0
+    self_cpu_hist: Mutex<VecDeque<f32>>,
     /// 最近一次整机 CPU 读数。deep 轮重建快照时复用（进程 CPU 本就来自上一 fast 轮，口径一致）
     cpu_last: Mutex<Option<CpuInfo>>,
     /// D3：应用小时历史聚合（fast 轮累加 rss/cpu，net 采样累加流量）
@@ -245,6 +248,7 @@ impl MemState {
             last_fast_ms: Mutex::new(0),
             last_deep_ms: Mutex::new(0),
             cpu_hist: Mutex::new(VecDeque::with_capacity(CPU_HISTORY_CAP)),
+            self_cpu_hist: Mutex::new(VecDeque::with_capacity(10)),
             cpu_last: Mutex::new(None),
             app_history: Mutex::new(AppHistoryAgg::new(now_secs())),
         }
@@ -265,6 +269,16 @@ impl MemState {
             .unwrap_or_else(|e| e.into_inner())
             .cases()
             .to_vec()
+    }
+
+    /// F19：自身 CPU 环形缓冲快照（供 self_footprint 命令取均值）
+    pub fn self_cpu_ring(&self) -> Vec<f32> {
+        self.self_cpu_hist
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .iter()
+            .copied()
+            .collect()
     }
 
     /// 查询序列（无库时返回空表，UI 显示「暂无历史」而不是报错）
@@ -403,6 +417,17 @@ pub async fn fast_round(app: &AppHandle) -> Result<(), String> {
             let mut scanner = state.scanner.lock().unwrap_or_else(|e| e.into_inner());
             scanner.scan()
         };
+        // F19：记自身进程 CPU（10 轮环形缓冲，均值给设置页「自身开销」）。
+        // 首轮差分未就绪 cpu_usage = None → 不记账（那不是 0%）
+        if let Some(me) = scan.procs.iter().find(|p| p.pid == std::process::id() as i32) {
+            if let Some(cpu) = me.cpu {
+                let mut ring = state.self_cpu_hist.lock().unwrap_or_else(|e| e.into_inner());
+                ring.push_back(cpu);
+                while ring.len() > 10 {
+                    ring.pop_front();
+                }
+            }
+        }
         let merged = merge_workspace(merge_deep(scan.procs, &state.lock_deep()), &state.lock_ws());
         let cpu = build_cpu_info(&state, scan.cpu_usage, scan.cores, scan.load);
         let snapshot = assemble(&state, &merged, cpu.clone());

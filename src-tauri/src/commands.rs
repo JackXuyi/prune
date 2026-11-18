@@ -72,6 +72,22 @@ pub async fn mem_refresh(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
+/// F19 自耗透明：Prune 自身的 footprint / CPU 均值 / 线程 / 序列库体积。
+/// 内存口径与内存页同一 probe 函数（S2 一致性）；缺数显「暂无」不显 0。
+/// 打开设置页时拉一次，不轮询——这个数字不需要实时（f19 方案 §3.2）。
+#[tauri::command]
+pub fn self_footprint(
+    app: AppHandle,
+    state: State<'_, Arc<MemState>>,
+) -> Result<prune_core::mem::self_footprint::SelfFootprint, String> {
+    let db_path = app.path().app_data_dir().ok().map(|d| d.join("prune.db"));
+    let ring = state.self_cpu_ring();
+    Ok(prune_core::mem::self_footprint::collect(
+        db_path.as_deref(),
+        &ring,
+    ))
+}
+
 /// 面板点击 → 打开主窗口并选中目标（可选指定 tab，或直接弹设置）。
 /// `focus` 是 W2/D-07 加的可选深链参数（如端口号）：主窗口收到 `ui://focus`
 /// 后预填对应页的定位（端口 tab 的搜索框）。缺省 = 旧行为，向后兼容。
@@ -233,8 +249,46 @@ pub async fn port_probe(
     .map_err(|e| format!("探测线程失败: {e}"))?
 }
 
-// ---------------------------------------------------------------- 应用磁盘（M8）
+/// F16 端口白话解释（docs/f16-port-why-plan.md）：把当前快照的结构化证据翻译成
+/// 一句人话 + 证据行 + 指路。零网络 IO——结论只产自 `net::why::why()` 纯函数，
+/// 对同一快照重放得到同一结论（与 CLI `prune why` / MCP `prune_why` 同源）。
+///
+/// 快照来源：优先用采样器手里的最新一轮（≤30 s 新鲜度，与端口页展示同源，
+/// 点击零扫描开销）；采样器还没跑过（冷启动直接点）才现场扫一轮。
+#[tauri::command]
+pub async fn port_why(
+    app: AppHandle,
+    port: u16,
+) -> Result<prune_core::net::why::WhyVerdict, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let state = app.state::<Arc<PortState>>().inner().clone();
+        let snap = match state.snapshot() {
+            Some(s) => s,
+            None => prune_core::net::ports::scan(None),
+        };
+        Ok(prune_core::net::why::why(port, &snap))
+    })
+    .await
+    .map_err(|e| format!("解释线程失败: {e}"))?
+}
 
+/// F17 暴露面可达实测：对本机默认路由网卡地址发起一次 TCP connect，四态分层。
+///
+/// **用户显式触发**（行内「测一下」按钮）——它发包，且是安全语义，
+/// 绝不进轮询循环、不自动批量探测（f17 方案 §3.2 / S6）。无状态：结果不缓存
+/// （端口随时可能被停掉，缓存「可达」比缓存探针结果更危险）。
+#[tauri::command]
+pub async fn port_reach_test(
+    port: u16,
+) -> Result<prune_core::net::reach::ReachResult, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        Ok(prune_core::net::reach::execute(port, 2000))
+    })
+    .await
+    .map_err(|e| format!("实测线程失败: {e}"))?
+}
+
+// ---------------------------------------------------------------- 应用磁盘（M8）
 /// 家族磁盘测量缓存。放在壳层而不是 core：它是有状态的（TTL），
 /// 生命周期应当与进程一致，跟 mem/disk 的 State 一个模式。
 pub struct AppDiskState {
