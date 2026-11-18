@@ -97,12 +97,15 @@ pnpm check:docs                      # 文档诚信门禁（MCP 工具对账 + �
 ```bash
 prune scan [--json]                 # 全盘扫描：主数字 / A1 明细 / A3 重复 / A6 Docker 提示（并记一行项目账本）
 prune reclaim [--level green]       # 预览零风险清理项（默认 dry-run；--yes 才真删，走废纸篓）
-prune mem [--swapped] [--json]      # 一次性内存读数（footprint 口径，深探 Top 20）
+prune mem [--swapped] [--json] [--csv <PATH>]
+                                    # 一次性内存读数（footprint 口径，深探 Top 20）；--csv 导出 7 天逐进程序列报告（含峰值/均值/空窗）
 prune mem --watch [--interval N]    # 【已弃用】改用 prune watch --only mem（2027-09 移除别名）
 prune watch [--interval N] [--only cpu,mem,port,disk] [--json] [--once] [--fail-on warn]
                                     # 按需守护：前台进程、Ctrl-C 即停、不装后台、不写日志
-prune port [PORT] [--json] [--all] [--conflicts]
-                                    # 谁占着这个端口（--conflicts 只看同端口 ≥2 个持有者）
+prune port [PORT] [--json] [--all] [--conflicts] [--drift [--rebase]]
+                                    # 谁占着这个端口（--conflicts 只看同端口 ≥2 个持有者；--drift 对可信基线报漂移）
+prune why <PORT> [--json]           # 端口白话解释：谁占着、为什么杀掉会复活、去哪关
+prune files <PATH> [--json]         # 反查谁开着这个路径下的普通文件（只读，无任何执行入口）
 prune projects [--days N] [--json]  # 项目依赖账本：按天趋势与变化量（缺失日不补 0）
 prune app <家族名> [--json]         # 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘
 prune lan [--scan] [--json]         # 局域网设备（默认只读缓存；--scan 主动探测网段）
@@ -118,7 +121,7 @@ prune mcp install [--client claude|cursor|vscode|all] [--write] [--json]
 
 ## MCP 服务
 
-**MCP 工具（13 个，全部只读）：** `mem_snapshot`（一次性内存读数）/ `mem_leaks`（读 GUI 序列库的泄漏嫌疑）/ `disk_report`（全盘扫描，约 15 s）/ `disk_scan`（白名单逐条细分 + 可选子目录占比，秒级）/ `port_listeners`（端口反查，`coverage` 说明可见范围）/ `prune_why`（端口白话解释：谁占着、为什么杀掉会复活、去哪关）/ `port_conflicts`（此刻哪些端口有多个持有者）/ `project_deps`（项目依赖账本与趋势，只读历史不触发扫描）/ `swap_report`（swap 明细 + 换出受害者榜）/ `net_sites`（站点五阶段检测，**会发起真实 HTTPS 请求**，单轮 ≤ 20 MB）/ `net_diag`（暴露面诊断结论：谁在对外监听）/ `app_resources`（应用维度五域画像）/ `lan_devices`（局域网设备，只读缓存不发包）。
+**MCP 工具（13 个，全部只读）：** `mem_snapshot`（一次性内存读数）/ `mem_leaks`（读 GUI 序列库的泄漏嫌疑）/ `disk_report`（全盘扫描，约 15 s）/ `disk_scan`（白名单逐条细分 + 可选子目录占比，秒级）/ `port_listeners`（端口反查 + 入站来源摘要，`coverage` 说明可见范围）/ `prune_why`（端口白话解释：谁占着、为什么杀掉会复活、去哪关）/ `port_conflicts`（此刻哪些端口有多个持有者）/ `project_deps`（项目依赖账本与趋势，只读历史不触发扫描）/ `swap_report`（swap 明细 + 换出受害者榜）/ `net_sites`（站点五阶段检测，**会发起真实 HTTPS 请求**，单轮 ≤ 20 MB）/ `net_diag`（暴露面诊断结论：谁在对外监听）/ `app_resources`（应用维度五域画像）/ `lan_devices`（局域网设备，只读缓存不发包）。
 
 接进任何支持 MCP 的 Agent，就能问「这台机器什么在吃磁盘」「我有什么暴露在局域网」「这个进程在漏吗」——Agent 负责读，你负责决定。
 

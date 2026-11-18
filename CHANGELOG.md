@@ -2,7 +2,52 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
-## Unreleased
+## 0.15.0
+
+### 端口行「入站来源」（[方案](./docs/f21-inbound-source-plan.md)）
+
+- **零新增采集**：lsof 早已采到 ESTABLISHED 连接的对端地址，此前在解析层被丢弃，现在接住聚合——只统计「本端是监听端口」的连接（连出去的本端是临时端口，天然过滤），inbound 语义自动成立
+- 四段分类（本机 / 局域网 / 公网 / 未知——解析失败如实标注，不塞进别的段谎报），外部来源 accent 高亮 + 行下明细（≤5 条，余量可算不谎称全部）；loopback-only 只进 tooltip——自己 curl 自己不算新闻
+- 公网连入**不标红**：any 暴露面属正常态，不重复吓人；MCP `port_listeners` 载荷同批透传入站摘要
+
+### 端口可信基线与漂移（[方案](./docs/f22-port-baseline-plan.md)）
+
+- 基线键 (port, proto, comm) **不含 pid**（node 重生 pid 必变，入键则基线废掉）；三类漂移按信息量排序：暴露面变宽（warn 徽标）> 新监听（accent）> 消失（只进 CLI 统计不进 UI）
+- CLI `prune port --drift [--rebase]`，GUI 端口行内徽标——**查询态呈现，不进灵动岛**（对齐「冻结第五类事件」裁决，不新增打扰型事件）
+- 首装 / rebase 后不整表标「新」：seed 行按「天生老住户」落库 + 24 h 新鲜期严格小于判据（两条真机踩坑纪律，均带单测）；CLI 与 GUI 采样轮共享同一张基线表
+
+### 磁盘页「Open Files 占用反查」+ 新子命令 `prune files`（[方案](./docs/f23-open-files-plan.md)）
+
+- 子命令 11 → 12：`prune files <PATH> [--json]` 反查谁开着这个路径下的普通文件；磁盘 tab 顶部同款反查卡（卷下拉 + 手输兜底，TTL 5 min 缓存不反复付 300 ms 的 lsof）
+- 只算普通文件（REG/VREG），目录与 socket 不算占用；**占用者列表无任何执行入口**——只读纪律，反查不做「解除占用/弹出」
+- 盲区说明常驻不折叠：以当前用户权限运行，「没有可见的占用者」≠「没人占用」；macOS tREG 与 GNU tVREG 双兼容、lsof 真实路径（/tmp → /private/tmp）先 canonicalize 再前缀匹配
+
+### 内存历史导出 CSV（[方案](./docs/f20-memory-report-plan.md)）
+
+- `prune mem --csv <PATH>` 与内存页「导出 CSV」按钮走**同一聚合函数**，两侧导出逐字节一致；GUI 导出走原生 save 对话框，取消 = 无事发生
+- (name, family) 聚合维度（进程重生的 pid 噪音不进报告）、峰值取原始样本不降采样、**空窗（gaps）进 CSV**——Prune 没跑的时段不让读者误以为「当时很干净」
+- 窗口为序列库保留期 7 天；导出含峰值/均值/峰值时刻与换算 MB 列，供工单与 issue 附带
+
+### 端口白话解释 `prune why`：GUI + CLI + MCP 三通道（[方案](./docs/f16-port-why-plan.md)）
+
+- **三个通道同一份结论**：CLI `prune why <PORT>`、MCP `prune_why`（工具面 12 → 13）、GUI 端口行 hover「为什么？」——判定收敛在核心纯函数，排版层只搬运，不可能各说各话
+- **(port, comm) 双匹配防误报**：普通进程占 5000 不会被说成 AirPlay；规则不命中走 Unknown 如实报观测事实，不编造用途；已采集证据上的静态推断标「疑似」（KnownService）
+- 无监听严格三态：确认空闲 / Coverage 盲区 / TIME_WAIT，互不冒充；系统服务与冲突结论上色警示——杀掉会复活，指路设置页而不是进程列表
+
+### 端口页「测一下」：暴露面可达实测（[方案](./docs/f17-exposure-reach-plan.md)）
+
+- 对本机默认路由网卡地址发起一次 TCP connect，四态分层；Failed 与 NoIfaceAddr 诚实兜底——未映射的 io 错误不伪装成 Timeout，文案永不写「被拦截」类定因
+- **用户显式触发**（行内按钮），绝不批量；caveat 永久标注「同机回连 ≠ 其他设备可达」；loopback 端口不出按钮——「本机可达」是 loopback 的定义使然，测了没有信息量
+
+### 灵动岛「闲置 dev server 提报」（实验功能，默认关，[方案](./docs/f18-idle-server-plan.md)）
+
+- 主判据 = 项目归属端口 established == 0 持续 30 分钟；conns 缺数宁漏勿误；复用端口守望同一节拍与快照，零新增采集
+- 琥珀色第五类事件 + 点击深链端口页；**默认关闭**——遵守「冻结第五类事件」裁决，设置页标「实验功能」opt-in，默认值翻转以用户访谈为门禁
+
+### 设置页关于区「自耗透明」（[方案](./docs/f19-self-footprint-plan.md)）
+
+- 内存 / CPU / 线程 / 数据库四行读数，与内存页同一 probe 同口径，可实测核对一致性；缺数显「暂无」不显 0（深探失败不回退 RSS 冒充）
+- 只展示数字不做自夸：数值随版本会变，除「不设上限承诺」外不写任何会被打脸的声明
 
 ### 「按应用」网速读数防抖（EWMA 平滑）
 
