@@ -334,6 +334,30 @@ pub async fn mem_export_csv(
     .map_err(|e| format!("导出线程失败: {e}"))?
 }
 
+// ---------------------------------------------------------------- swap 增速（F24）
+
+/// F24 换出增速：读序列库既有 `swapped` 序列差分（零新增采集，不触发扫描）。
+/// 与 CLI `prune swap` / MCP swap_report 的 rates 消费**同一个**核心层聚合
+/// 纯函数（`mem::swap_rate::report`）——三路同一数字是 f24 验收项。
+/// `hours` 钳制 1-168（7 天保留期，再多也没有数据）。
+#[tauri::command]
+pub fn swap_rate_report(
+    app: AppHandle,
+    hours: Option<u32>,
+) -> Result<prune_core::mem::swap_rate::SwapRateReport, String> {
+    let store = app.state::<std::sync::Arc<Store>>().inner().clone();
+    let hours = hours.unwrap_or(24).clamp(1, 168);
+    let now = now_secs();
+    let rows = store
+        .swap_rate_rows(now - (hours as i64) * 3600)
+        .map_err(|e| format!("读序列失败: {e}"))?;
+    #[cfg(windows)]
+    let note = Some("Windows 无每进程换出量口径：增速榜恒为空。".to_string());
+    #[cfg(not(windows))]
+    let note: Option<String> = None;
+    Ok(prune_core::mem::swap_rate::report(&rows, now, hours, note))
+}
+
 // ---------------------------------------------------------------- Open Files（F23）
 
 /// F23 占用反查缓存状态：TTL 5 min（AppDiskState 同款模式——卡片反复切 tab

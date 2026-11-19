@@ -101,6 +101,7 @@ pub fn run() {
             commands::port_probe,
             commands::port_why,
             commands::mem_export_csv,
+            commands::swap_rate_report,
             commands::open_files_scan,
             commands::open_files_volumes,
             commands::port_reach_test,
