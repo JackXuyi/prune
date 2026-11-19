@@ -28,6 +28,7 @@ use prune_core::mem;
 use prune_core::net;
 use prune_core::reclaim::{self, Limits, ReclaimError};
 use prune_core::swap;
+use prune_core::trace;
 
 // ---------------------------------------------------------------- 参数解析
 
@@ -70,6 +71,28 @@ pub enum Command {
     Files {
         path: String,
         json: bool,
+    },
+    /// `prune swap [--hours N] [--all] [--json]`（F24）：swap 明细 + 换出增速榜
+    /// + 系统级双口径。读序列库历史，不触发扫描
+    Swap {
+        json: bool,
+        /// 增速窗口（小时），默认 24，上限 168（= 7 天保留期）
+        hours: u32,
+        /// 人读模式不截断榜单（--json 始终全量）
+        all: bool,
+    },
+    /// `prune trace [--json] [--out <PATH>] [--interval N] [--no-ports] -- <command>`（F25）
+    /// 任务成本核算观测壳（同 `/usr/bin/time`）：执行用户显式命令并出成本单
+    Trace {
+        json: bool,
+        /// `--out`：成本单 JSON 写文件（仅 `--json` 模式），stderr 只留路径回执
+        out: Option<String>,
+        /// 采样间隔（秒），默认 2，钳制 1-60
+        interval: u64,
+        /// 关闭端口轮（默认开——dev server 场景正是端口证据）
+        no_ports: bool,
+        /// `--` 之后的命令与参数（非空，parse 层保证）
+        command: Vec<String>,
     },
     /// `prune app <家族名>`：一个应用的五域资源画像（M8）
     App {
@@ -320,6 +343,99 @@ pub fn parse_args(args: &[String]) -> Result<Command, String> {
                 ));
             };
             Ok(Command::Files { path, json })
+        }
+        "swap" => {
+            let mut json = false;
+            let mut all = false;
+            let mut hours: u32 = 24;
+            let rest: Vec<&str> = it.map(|s| s.as_str()).collect();
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i] {
+                    "--json" => json = true,
+                    "--all" => all = true,
+                    "--hours" => {
+                        i += 1;
+                        let v = rest
+                            .get(i)
+                            .ok_or_else(|| "--hours 需要一个小时数（如 --hours 24）".to_string())?;
+                        let raw = v
+                            .parse::<u32>()
+                            .map_err(|_| format!("--hours 不是数字: {v:?}"))?;
+                        // 钳制而不是报错：上限 168 = 序列库 7 天保留期，再多也没有数据
+                        hours = raw.clamp(1, 168);
+                        if hours != raw {
+                            eprintln!("提示：--hours {raw} 超出范围（1-168 = 7 天保留期），按 {hours} 执行");
+                        }
+                    }
+                    other => return Err(format!("swap 不认识参数 {other:?}\n{}", usage())),
+                }
+                i += 1;
+            }
+            Ok(Command::Swap { json, hours, all })
+        }
+        "trace" => {
+            // `--` 是观测边界：之前是 trace 自己的 flag，之后原样交给被观测命令。
+            // 直接 spawn 不经 shell（无注入面），所以这里不解析 `--` 之后的任何内容
+            let rest: Vec<&str> = it.map(|s| s.as_str()).collect();
+            let Some(pos) = rest.iter().position(|a| *a == "--") else {
+                return Err(format!(
+                    "trace 需要 `--` 分隔要观测的命令，如 prune trace -- pnpm install\n{}",
+                    usage()
+                ));
+            };
+            let (flags, after) = rest.split_at(pos);
+            let command: Vec<String> = after[1..].iter().map(|s| (*s).to_string()).collect();
+            if command.is_empty() {
+                return Err(format!(
+                    "`--` 后面必须是要观测的命令，如 prune trace -- pnpm install\n{}",
+                    usage()
+                ));
+            }
+            let mut json = false;
+            let mut out: Option<String> = None;
+            let mut interval = trace::DEFAULT_INTERVAL_SECS;
+            let mut no_ports = false;
+            let mut i = 0;
+            while i < flags.len() {
+                match flags[i] {
+                    "--json" => json = true,
+                    "--no-ports" => no_ports = true,
+                    "--out" => {
+                        i += 1;
+                        out = Some(
+                            flags
+                                .get(i)
+                                .ok_or_else(|| "--out 需要一个输出路径".to_string())?
+                                .to_string(),
+                        );
+                    }
+                    "--interval" => {
+                        i += 1;
+                        let v = flags
+                            .get(i)
+                            .ok_or_else(|| "--interval 需要一个秒数".to_string())?;
+                        let raw = v
+                            .parse::<u64>()
+                            .map_err(|_| format!("--interval 不是数字: {v:?}"))?;
+                        interval = raw.clamp(1, trace::MAX_INTERVAL_SECS);
+                        if interval != raw {
+                            eprintln!(
+                                "提示：--interval {raw} 超出范围（1-60），按 {interval}s 执行"
+                            );
+                        }
+                    }
+                    other => return Err(format!("trace 不认识参数 {other:?}\n{}", usage())),
+                }
+                i += 1;
+            }
+            Ok(Command::Trace {
+                json,
+                out,
+                interval,
+                no_ports,
+                command,
+            })
         }
         "app" => {
             let mut json = false;
@@ -573,6 +689,13 @@ fn usage() -> String {
                                       --drift 看相对基线的漂移，--rebase 重建基线）
   prune why <PORT> [--json]           端口白话解释：一句话说清谁占着、为什么杀不掉、去哪关
   prune files <PATH> [--json]         占用反查（F23）：这块盘/目录被谁开着文件（只读，不解）
+  prune swap [--hours N] [--all] [--json]
+                                      swap 明细 + 换出增速榜（F24，读序列库历史，不触发扫描；
+                                      --hours 增速窗口 1-168，默认 24）
+  prune trace [--json] [--out <PATH>] [--interval N] [--no-ports] -- <command> [args...]
+                                      任务成本核算（F25）：观测壳同 /usr/bin/time——
+                                      墙钟/CPU/峰值 RSS/换出增量/新绑定端口；退出码透传；
+                                      Ctrl-C 中断也出成本单，二次 Ctrl-C 直接退出
   prune projects [--days N] [--json]  项目依赖账本（按天趋势，默认 30 天）
   prune doctor [--json] [--only disk,mem,port,net] [--timeout N]
                                       四域体检：磁盘/内存/端口/网络的结论+证据+下一步
@@ -661,6 +784,14 @@ fn main() {
         } => cmd_port(port, json, all, conflicts, drift, rebase),
         Command::Why { port, json } => cmd_why(port, json),
         Command::Files { path, json } => cmd_files(&path, json),
+        Command::Swap { json, hours, all } => cmd_swap(json, hours, all),
+        Command::Trace {
+            json,
+            out,
+            interval,
+            no_ports,
+            command,
+        } => cmd_trace(json, out.as_deref(), interval, no_ports, command),
         Command::App { name, json } => cmd_app(&name, json),
         Command::Lan { scan, json } => cmd_lan(scan, json),
         Command::Mcp => cmd_mcp(),
@@ -1154,6 +1285,336 @@ fn cmd_mem(swapped: bool, json: bool) -> i32 {
     println!();
     println!("口径说明：footprint = 物理常驻 + 已压缩 + 已换出；≈ RSS 为未深探进程的下界估算。");
     0
+}
+
+// ---------------------------------------------------------------- swap
+
+/// F24 的平台口径注（Windows 无 per-process swapped —— win.rs 既有纪律）。
+#[cfg(windows)]
+fn swap_platform_note() -> Option<String> {
+    Some("Windows 无每进程换出量口径：增速榜恒为空。系统级 swap 占用读数不受影响。".into())
+}
+#[cfg(not(windows))]
+fn swap_platform_note() -> Option<String> {
+    None
+}
+
+/// `prune swap`（F24，docs/f24-swap-rate-plan.md）：swap 三段读数——
+/// **明细**（与 MCP swap_report 同源）、**增速榜**（序列差分）、**系统级双口径**。
+///
+/// 增速全部来自序列库既有的 7 天 `swapped` 序列差分（零新增采集，不触发扫描）；
+/// 库不存在输出指路文案并正常退出（与 `mem --csv` 同款——不是错误）。
+/// 负差分 = 换回内存 / 退出释放，如实展示不夹 0。
+fn cmd_swap(json: bool, hours: u32, all: bool) -> i32 {
+    let now = swap::now_secs() as i64;
+    let note = swap_platform_note();
+
+    let db_path = mcp::default_db_path();
+    if !db_path.exists() {
+        let msg = format!(
+            "暂无序列数据（{} 不存在）：先跑一次 GUI 采样或 prune scan，之后才有增速。",
+            db_path.display()
+        );
+        if json {
+            println!(
+                "{}",
+                serde_json::to_string_pretty(&docs_json::swap_doc_unavailable(&msg, &note))
+                    .unwrap()
+            );
+        } else {
+            println!("{msg}");
+        }
+        return 0;
+    }
+    let store = match Store::open(&db_path) {
+        Ok(s) => s,
+        Err(e) => {
+            eprintln!("序列库打开失败: {e}");
+            return 4;
+        }
+    };
+    let rows = match store.swap_rate_rows(now - (hours as i64) * 3600) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("读序列失败: {e}");
+            return 4;
+        }
+    };
+    let rep = mem::swap_rate::report(&rows, now, hours, note);
+    let swap_info = swap::collect(None);
+    let pressure = mem::system::read_pressure();
+
+    if json {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&docs_json::swap_doc(&swap_info, pressure, &rep)).unwrap()
+        );
+        return 0;
+    }
+
+    // 一、明细（与 MCP swap_report 同源）
+    let files = match swap_info.file_count {
+        Some(n) => format!(" · {n} 个 swapfile"),
+        None => String::new(),
+    };
+    let new_today = match swap_info.new_today {
+        Some(n) => format!(" · 今日新增 +{n}"),
+        None => String::new(),
+    };
+    let pressure_text = pressure
+        .map(|p| format!("{:?}", p.level))
+        .unwrap_or_else(|| "不可用".into());
+    println!(
+        "swap {}/{}（{:.0}%）{files}{new_today} · 内存压力 {pressure_text}",
+        hb(swap_info.used),
+        hb(swap_info.total),
+        swap_info.used_ratio() * 100.0
+    );
+    println!();
+
+    // 二、增速榜（差分；负值 = 换回内存 / 退出释放）
+    println!("换出增速榜（近 {hours}h，按 Δ 降序）");
+    if rep.rates.is_empty() {
+        println!("  窗口内没有可算增速的进程（样本不足 2，或平台无每进程换出口径）。");
+    } else {
+        println!(
+            "  {:<22}{:>7}{:>11}{:>11}{:>6}",
+            "应用", "pid", "Δ", "MB/h", "样本"
+        );
+        let shown = if all { rep.rates.len() } else { 10 };
+        for p in rep.rates.iter().take(shown) {
+            let delta = if p.delta_bytes > 0 {
+                format!("+{}", hb(p.delta_bytes as u64))
+            } else if p.delta_bytes < 0 {
+                format!("-{}", hb(p.delta_bytes.unsigned_abs()))
+            } else {
+                "持平".into()
+            };
+            println!(
+                "  {:<22}{:>7}{:>11}{:>11.1}{:>6}",
+                p.name, p.pid, delta, p.rate_mb_h, p.samples
+            );
+        }
+        if rep.rates.len() > shown {
+            println!(
+                "  … 另有 {} 个进程（prune swap --json 或 --all 看全量）",
+                rep.rates.len() - shown
+            );
+        }
+    }
+    println!("  口径：Δ = 窗口首末样本差分；负值是换回内存/退出释放，不是脏数据。");
+    println!();
+
+    // 三、系统级双口径（DP-1）：sum 含退出释放的负贡献，active 只算存活
+    let s = &rep.system;
+    let fmt_signed = |b: i64| {
+        if b > 0 {
+            format!("+{}", hb(b as u64))
+        } else if b < 0 {
+            format!("-{}", hb(b.unsigned_abs()))
+        } else {
+            "持平".into()
+        }
+    };
+    println!(
+        "系统级净增速（近 {}h，{} 个进程可差分）",
+        hours, s.processes
+    );
+    println!(
+        "  含退出释放  Δ {} · {:.1} MB/h",
+        fmt_signed(s.sum_delta_bytes),
+        s.rate_mb_h
+    );
+    println!(
+        "  仅存活     Δ {} · {:.1} MB/h",
+        fmt_signed(s.active_delta_bytes),
+        s.active_rate_mb_h
+    );
+    if let Some(r1) = &rep.recent_1h {
+        println!(
+            "  近 1h      Δ {}（当下趋势）",
+            fmt_signed(r1.sum_delta_bytes)
+        );
+    } else {
+        println!("  近 1h      数据不足（1h 内凑不出一对样本）");
+    }
+    println!();
+
+    // 四、覆盖与空窗（F20 gap 语义复用）：没跑的时段不能被当成「没换出」
+    let c = &rep.coverage;
+    if c.actual_to == 0 {
+        println!("覆盖：窗口内一个样本都没有（Prune 没在跑，或库为空）。");
+    } else {
+        let mut cover = format!(
+            "覆盖：实际 {} → {}",
+            ts_full(c.actual_from),
+            ts_full(c.actual_to)
+        );
+        if !c.gaps.is_empty() {
+            let gaps: Vec<String> = c
+                .gaps
+                .iter()
+                .map(|(a, b)| format!("{} → {}", ts_full(*a), ts_full(*b)))
+                .collect();
+            cover.push_str(&format!(
+                " · {} 段空窗（{}）",
+                c.gaps.len(),
+                gaps.join("; ")
+            ));
+        }
+        if c.pid_reused > 0 {
+            cover.push_str(&format!(" · {} 个 pid 复用已剔除", c.pid_reused));
+        }
+        println!("{cover}");
+    }
+    if let Some(n) = &c.note {
+        println!("  ⚠️ {n}");
+    }
+    0
+}
+
+// ---------------------------------------------------------------- trace
+
+/// `prune trace -- <command>`（F25，docs/f25-trace-plan.md）：任务成本核算观测壳。
+///
+/// 与 D-15 `--emit-script` 的边界：那边只打印候选命令（永不执行），这边执行的是
+/// 用户 `--` 后**显式传入**的命令（同 `/usr/bin/time` 的角色）——Prune 自身
+/// 不存在任何「替用户决定执行什么」的清单。
+///
+/// 输出纪律：子进程 stdout/stderr 原样透传，成本单走 **stderr**（JSON 同——
+/// stdout 属于被观测命令）；**退出码透传**（CI 链可直接替换裸命令）。
+fn cmd_trace(
+    json: bool,
+    out: Option<&str>,
+    interval: u64,
+    no_ports: bool,
+    command: Vec<String>,
+) -> i32 {
+    if out.is_some() && !json {
+        eprintln!("--out 需要与 --json 同用（文本成本单直接打 stderr，不落盘）");
+        return 2;
+    }
+    let opts = trace::Opts {
+        command,
+        interval_secs: interval,
+        ports: !no_ports,
+    };
+    eprintln!(
+        "观测中（采样 {}s，stdout/stderr 透传；Ctrl-C 中断也会出成本单）…",
+        opts.interval_secs
+    );
+    match trace::run(&opts) {
+        Ok(rep) => {
+            let child_exit = rep.exit_code;
+            if json {
+                let line = serde_json::to_string(&docs_json::trace_doc(&rep))
+                    .expect("TraceReport 必可序列化");
+                match out {
+                    Some(path) => {
+                        if let Err(e) = std::fs::write(path, format!("{line}\n")) {
+                            eprintln!("写文件失败（{path}）: {e}");
+                            return 4;
+                        }
+                        eprintln!("成本单已写入 {path}");
+                    }
+                    None => eprintln!("{line}"),
+                }
+            } else {
+                print_trace_report(&rep);
+            }
+            // 退出码透传：被信号杀死 = 128 + 信号号（shell 惯例）
+            child_exit
+        }
+        Err(trace::TraceError::NotFound(cmd)) => {
+            eprintln!("命令找不到：{cmd}（trace 不经 shell，PATH 里必须有它）");
+            4
+        }
+        Err(trace::TraceError::Spawn(e)) => {
+            eprintln!("spawn 失败: {e}");
+            4
+        }
+        Err(trace::TraceError::Wait(e)) => {
+            eprintln!("wait 失败: {e}");
+            4
+        }
+    }
+}
+
+/// 成本单文本渲染（全部走 stderr——stdout 属于被观测命令）
+fn print_trace_report(rep: &trace::TraceReport) {
+    eprintln!("—— trace 成本单 ——");
+    eprintln!(
+        "命令 {} · 墙钟 {:.1}s · 退出码 {}",
+        rep.cmd,
+        rep.wall_ms as f64 / 1000.0,
+        rep.exit_code
+    );
+    if rep.interrupted {
+        eprintln!("（Ctrl-C 中断：中断前的消耗也是成本）");
+    }
+    eprintln!(
+        "CPU {:.1}s（{:.0}% 单核口径，>100% = 并行度）",
+        rep.cpu.time_ms as f64 / 1000.0,
+        rep.cpu.util_pct
+    );
+    eprintln!(
+        "峰值 RSS {}（树内合计，采样 {:.1}s）",
+        hb(rep.rss.peak_bytes),
+        rep.interval_ms as f64 / 1000.0
+    );
+    match rep.swap.delta_bytes {
+        Some(d) if d > 0 => eprintln!("换出增量 +{}", hb(d as u64)),
+        Some(d) if d < 0 => eprintln!("换出增量 -{}（发生 swap-in/释放）", hb(d.unsigned_abs())),
+        Some(_) => eprintln!("换出增量 持平"),
+        None => eprintln!("换出增量 未采样（首末深探未成对）"),
+    }
+
+    if rep.ports.enabled {
+        if rep.ports.bound.is_empty() {
+            eprintln!("新绑定端口 无");
+        } else {
+            eprintln!("新绑定端口 {} 个：", rep.ports.bound.len());
+            for b in &rep.ports.bound {
+                let still = rep
+                    .ports
+                    .still_listening
+                    .iter()
+                    .any(|s| s.port == b.port && s.comm == b.comm);
+                let mark = if still { "还在监听" } else { "已释放" };
+                eprintln!(
+                    "  {:>5}/{:<3} {}（{}）",
+                    b.port,
+                    match b.proto {
+                        net::Proto::Tcp => "tcp",
+                        net::Proto::Udp => "udp",
+                    },
+                    b.comm,
+                    mark
+                );
+            }
+        }
+    }
+
+    if !rep.top_descendants.is_empty() {
+        eprintln!("top 后代（按树内 CPU 降序）：");
+        for d in &rep.top_descendants {
+            eprintln!(
+                "  {:<20} pid {:<7} CPU {:>7}s 峰值 RSS {:>9}",
+                d.name,
+                d.pid,
+                format!("{:.1}", d.cpu_time_ms as f64 / 1000.0),
+                hb(d.peak_rss)
+            );
+        }
+    }
+
+    eprintln!(
+        "覆盖：采样 {} 轮 · 树内 {} 进程",
+        rep.coverage.samples, rep.coverage.processes
+    );
+    for n in &rep.coverage.notes {
+        eprintln!("  ⚠️ {n}");
+    }
 }
 
 // ---------------------------------------------------------------- port

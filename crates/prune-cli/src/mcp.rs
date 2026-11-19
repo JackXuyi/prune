@@ -213,7 +213,7 @@ fn tool_defs() -> Value {
         },
         {
             "name": "swap_report",
-            "description": "swap 明细与换出受害者榜（只读，约 1-2 秒）：swap 总量/已用/使用率、swapfile 个数与今日新增、内核内存压力，以及被换出最多的进程（按 swapped 字节降序，含 footprint 口径的真实占用）。用于回答「谁在把机器往磁盘上挤」。换出量读不到时字段为 null，不填 0。",
+            "description": "swap 明细、换出受害者榜与换出增速（只读，约 1-2 秒）：swap 总量/已用/使用率、swapfile 个数与今日新增、内核内存压力、被换出最多的进程（按 swapped 字节降序），以及近 24h 按进程的换出增速差分（rates.top 按 deltaBytes 降序）与系统级双口径净速率（rates.system：sumDeltaBytes 含退出释放、activeDeltaBytes 仅存活）——回答「谁在把机器往磁盘上挤」和「谁在加速挤」。增速来自序列库既有采样差分，零样本时 rates.top 为空数组；负 delta 是换回内存/退出释放，不是脏数据。Windows 无每进程换出口径，增速榜恒为空。换出量读不到时字段为 null，不填 0。",
             "inputSchema": { "type": "object", "properties": {} }
         },
         {
@@ -820,6 +820,10 @@ fn tool_project_deps(args: &Value) -> Value {
 
 /// W2/D-11：swap 明细 + 换出受害者榜。与 `mem_snapshot` 的分工：那边给家族
 /// 全量聚合（payload 大），这边只回答「谁被换出到磁盘」。
+///
+/// F24 追加 rates 摘要（f24 DP-4）：增速来自序列库既有 `swapped` 差分，
+/// **不触发扫描、不新增采集**。读库失败 / 库为空时 rates 缺席（不是空壳 0），
+/// 受害者榜照常返回——两个数据源互不拖累。
 fn tool_swap_report() -> Value {
     let swap = prune_core::swap::collect(None);
     let pressure = prune_core::mem::system::read_pressure();
@@ -827,14 +831,35 @@ fn tool_swap_report() -> Value {
     let mut procs = scanner.scan().procs;
     probe_top(&mut procs, 12);
 
-    json!({
+    let mut doc = json!({
         "schemaVersion": 1,
         "swap": swap,
         "usedRatio": swap.used_ratio(),
         "pressure": pressure,
         "topSwapped": mem::top_swapped(&procs, 5),
         "note": "换出量来自 footprint 深探（macOS）；Windows 只有 Private Bytes 近似口径，缺字段返回 null 而不是 0。",
-    })
+    });
+
+    // rates 摘要：top 5 + 系统级双口径 + 近 1h（f24 DP-4）。库不可用时静默
+    // 不加键——Agent 看不到 rates 就知道增速暂无数据，不编造
+    if let Ok(store) = Store::open(&default_db_path()) {
+        let now = prune_core::swap::now_secs() as i64;
+        if let Ok(rows) = store.swap_rate_rows(now - 24 * 3600) {
+            #[cfg(windows)]
+            let note = Some("Windows 无每进程换出量口径：增速榜恒为空。".to_string());
+            #[cfg(not(windows))]
+            let note: Option<String> = None;
+            let rep = prune_core::mem::swap_rate::report(&rows, now, 24, note);
+            doc["rates"] = json!({
+                "windowHours": 24,
+                "top": rep.rates.iter().take(5).collect::<Vec<_>>(),
+                "system": rep.system,
+                "recent1h": rep.recent_1h,
+                "coverage": rep.coverage,
+            });
+        }
+    }
+    doc
 }
 
 /// W2/D-11：站点五阶段检测。**唯一有外部网络副作用的工具**——描述里已写明，

@@ -125,7 +125,7 @@
     "name": "project_deps"
   },
   {
-    "description": "swap 明细与换出受害者榜（只读，约 1-2 秒）：swap 总量/已用/使用率、swapfile 个数与今日新增、内核内存压力，以及被换出最多的进程（按 swapped 字节降序，含 footprint 口径的真实占用）。用于回答「谁在把机器往磁盘上挤」。换出量读不到时字段为 null，不填 0。",
+    "description": "swap 明细、换出受害者榜与换出增速（只读，约 1-2 秒）：swap 总量/已用/使用率、swapfile 个数与今日新增、内核内存压力、被换出最多的进程（按 swapped 字节降序），以及近 24h 按进程的换出增速差分（rates.top 按 deltaBytes 降序）与系统级双口径净速率（rates.system：sumDeltaBytes 含退出释放、activeDeltaBytes 仅存活）——回答「谁在把机器往磁盘上挤」和「谁在加速挤」。增速来自序列库既有采样差分，零样本时 rates.top 为空数组；负 delta 是换回内存/退出释放，不是脏数据。Windows 无每进程换出口径，增速榜恒为空。换出量读不到时字段为 null，不填 0。",
     "inputSchema": {
       "properties": {},
       "type": "object"

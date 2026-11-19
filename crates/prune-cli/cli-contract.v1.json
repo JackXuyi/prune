@@ -106,6 +106,35 @@
         "volume"
       ]
     },
+    "swap": {
+      "keys": [
+        "coverage",
+        "pressure",
+        "rates",
+        "recent1h",
+        "schemaVersion",
+        "swap",
+        "systemRate",
+        "usedRatio",
+        "windowHours"
+      ]
+    },
+    "trace": {
+      "keys": [
+        "cmd",
+        "coverage",
+        "cpu",
+        "exitCode",
+        "interrupted",
+        "intervalMs",
+        "ports",
+        "rss",
+        "schemaVersion",
+        "swap",
+        "topDescendants",
+        "wallMs"
+      ]
+    },
     "watch_once": {
       "keys": [
         "schemaVersion",

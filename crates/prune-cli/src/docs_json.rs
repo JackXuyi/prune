@@ -108,6 +108,43 @@ pub fn files_doc(report: &prune_core::disk::open_files::OpenFilesReport) -> Valu
     enveloped(serde_json::to_value(report).unwrap_or(Value::Null))
 }
 
+/// `prune swap --json`（F24）：swap 明细 + 增速榜 + 系统级双口径 + 覆盖。
+/// `rates` / `systemRate` / `coverage` 全部来自核心层 `mem::swap_rate` 纯函数
+/// （与 GUI 同一聚合，两路数字一致是 f24 验收项）。
+pub fn swap_doc(
+    swap_info: &SwapInfo,
+    pressure: Option<Pressure>,
+    rep: &prune_core::mem::swap_rate::SwapRateReport,
+) -> Value {
+    enveloped(json!({
+        "swap": swap_info,
+        "usedRatio": swap_info.used_ratio(),
+        "pressure": pressure,
+        "windowHours": rep.window_hours,
+        "rates": rep.rates,
+        "systemRate": rep.system,
+        "recent1h": rep.recent_1h,
+        "coverage": rep.coverage,
+    }))
+}
+
+/// `prune swap --json` 的库不可用形态（与 projects_unavailable_doc 同款语义）。
+pub fn swap_doc_unavailable(note: &str, platform_note: &Option<String>) -> Value {
+    enveloped(json!({
+        "status": "unavailable",
+        "note": note,
+        "platformNote": platform_note,
+        "rates": [],
+    }))
+}
+
+/// `prune trace --json`（F25）：任务成本核算单。形状与 `trace::TraceReport`
+/// 序列化一致（camelCase），只补信封。**JSON 走 stderr**（stdout 属于被观测
+/// 命令——透传纪律优先，`time` 走 stderr 的同款先例）。
+pub fn trace_doc(r: &prune_core::trace::TraceReport) -> Value {
+    enveloped(serde_json::to_value(r).unwrap_or(Value::Null))
+}
+
 /// `prune projects --json`。
 pub fn projects_doc(from: &str, days: u32, projects: &[DiskTrend]) -> Value {
     enveloped(json!({
@@ -281,6 +318,38 @@ pub fn contract_shape() -> Value {
         coverage_note: None,
     });
 
+    let swap_doc = swap_doc(
+        &swap_info,
+        None,
+        &prune_core::mem::swap_rate::report(&[], 0, 24, None),
+    );
+
+    let trace_doc = trace_doc(&prune_core::trace::TraceReport {
+        cmd: String::new(),
+        wall_ms: 0,
+        exit_code: 0,
+        interrupted: false,
+        cpu: prune_core::trace::CpuCost {
+            time_ms: 0,
+            util_pct: 0.0,
+        },
+        rss: prune_core::trace::RssCost { peak_bytes: 0 },
+        swap: prune_core::trace::SwapCost { delta_bytes: None },
+        ports: prune_core::trace::PortsCost {
+            bound: Vec::new(),
+            still_listening: Vec::new(),
+            released: Vec::new(),
+            enabled: true,
+        },
+        top_descendants: Vec::new(),
+        coverage: prune_core::trace::TraceCoverage {
+            samples: 0,
+            processes: 0,
+            notes: Vec::new(),
+        },
+        interval_ms: 0,
+    });
+
     json!({
         "schemaVersion": SCHEMA_VERSION,
         "commands": {
@@ -291,6 +360,8 @@ pub fn contract_shape() -> Value {
             "port_drift":     { "keys": keys_of(&drift_doc) },
             "why":            { "keys": keys_of(&why_doc) },
             "files":          { "keys": keys_of(&files_doc) },
+            "swap":           { "keys": keys_of(&swap_doc) },
+            "trace":          { "keys": keys_of(&trace_doc) },
             "app":            { "keys": keys_of(&app_doc) },
             "lan":            { "keys": keys_of(&lan_doc) },
             "projects":       { "keys": keys_of(&projects_doc) },
