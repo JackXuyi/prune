@@ -219,9 +219,64 @@ export function SearchIcon(props: IconProps) {
 }
 
 /** 内存：云（冷静监控的隐喻，域色 info 蓝） */
-export function MemoryCloudIcon(props: IconProps) {  return (
+export function MemoryCloudIcon(props: IconProps) {
+  return (
     <Svg {...props}>
       <path d="M6 19a3 3 0 1 1 0-6 4 4 0 0 1 7.7-1.6A3.5 3.5 0 1 1 18 19Z" />
+    </Svg>
+  );
+}
+
+/** 内存可用：三条渐弱横线（水位线语义，accent 绿） */
+export function MemoryFreeIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 18h18" />
+      <path d="M3 13h18" opacity=".45" />
+      <path d="M3 8h18" opacity=".22" />
+    </Svg>
+  );
+}
+
+/** 压缩内存：两条横线 + 对向汇聚箭头（info 蓝） */
+export function CompressIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 9h16" />
+      <path d="M4 15h16" />
+      <path d="m9 5 3 4 3-4" />
+      <path d="m9 19 3-4 3 4" />
+    </Svg>
+  );
+}
+
+/** Swap 交换：两根带箭头的反向横线（accent 绿，百分比位套环用） */
+export function SwapIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M4 8h13l-3-3" />
+      <path d="M20 16H7l3 3" />
+    </Svg>
+  );
+}
+
+/** 换页颠簸：上下对向箭头（warn 琥珀） */
+export function ThrashIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M7 4v14m0 0-3-3m3 3 3-3" />
+      <path d="M17 20V6m0 0-3 3m3-3 3 3" />
+    </Svg>
+  );
+}
+
+/** 泄漏嫌疑：三角警示（warn 琥珀；文案永远「疑似」，不说「泄漏了」） */
+export function WarnTriangleIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 3 2.5 20h19L12 3Z" />
+      <path d="M12 9v4.5" />
+      <circle cx="12" cy="17" r="0.7" fill="currentColor" stroke="none" />
     </Svg>
   );
 }

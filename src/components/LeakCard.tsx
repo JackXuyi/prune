@@ -28,7 +28,8 @@ import { Sparkline } from "./Sparkline";
  * 函数内部读全局会让「切语言后已渲染的旧串」不更新。
  */
 
-function windowLabel(secs: number, t: I18n["t"]): string {
+/** 时间窗文案（≥1 h 用小时，否则用分钟）；泄漏带头部统计也用它 */
+export function windowLabel(secs: number, t: I18n["t"]): string {
   if (secs >= 3600) return t("memory.leak.windowHours", { n: Math.round(secs / 3600) });
   return t("memory.leak.windowMinutes", { n: Math.round(secs / 60) });
 }

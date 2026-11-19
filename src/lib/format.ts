@@ -143,6 +143,14 @@ export function formatRate(perSec: number): string {
   return perSec >= 10 ? perSec.toFixed(0) : perSec.toFixed(1);
 }
 
+/** 带符号字节串：+12.3 MB / −4.0 MB / —（null = 数据不足，不冒充 0） */
+export function formatSignedBytes(bytes: number | null, suffix = ""): string | null {
+  if (bytes == null) return null;
+  if (bytes === 0) return "0 B" + suffix;
+  const sign = bytes > 0 ? "+" : "-";
+  return sign + formatBytes(Math.abs(bytes)) + suffix;
+}
+
 /**
  * 本地日期 `YYYY-MM-DD`。
  *

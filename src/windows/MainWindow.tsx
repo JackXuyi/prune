@@ -3,9 +3,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 
 import { AppResourceBoard } from "../components/AppResourceGrid";
+import { AppIcon } from "../components/AppIcon";
 import { AppDetail } from "../components/appdetail/AppDetail";
 import { DeviceBoard } from "../components/DeviceBoard";
-import { LeakCard, LeakEvidence } from "../components/LeakCard";
+import { LeakEvidence } from "../components/LeakCard";
+import { LeakStrip } from "../components/memory/LeakStrip";
+import { MemHero } from "../components/memory/MemHero";
+import { MemRibbon } from "../components/memory/MemRibbon";
+import { MemTiles } from "../components/memory/MemTiles";
+import { VictimsBoard } from "../components/memory/VictimsBoard";
 import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
 import { RailNav } from "../components/RailNav";
@@ -14,17 +20,16 @@ import { MemExportButton } from "../components/MemExportButton";
 import { SettingsBoard } from "../components/SettingsBoard";
 import { Sparkline } from "../components/Sparkline";
 import { StackBar } from "../components/charts/StackBar";
-import { RingGauge } from "../components/charts/RingGauge";
 import { StatsBoard } from "../components/StatsBoard";
 import {
-  ChevronRightIcon,
   RefreshIcon,
 } from "../components/icons";
-import { Badge, CompareBar, PressureDot, Stat, ToastHost } from "../components/primitives";
+import { Badge, CompareBar, ToastHost } from "../components/primitives";
 import type { I18n } from "../i18n";
 import { useI18n } from "../i18n/store";
 import type { NoParamKey } from "../i18n/types";
-import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
+import { formatBytes, formatClock, formatPercent, formatRelative } from "../lib/format";
+import { useAppIcons } from "../lib/useAppIcons";
 import { useDialogA11y } from "../lib/dialogA11y";
 import { isTauri, killProcess, swapRateReport } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
@@ -518,19 +523,18 @@ export function MainWindow() {
           // 硬件低频自轮询、局域网有显式扫描按钮，各段自己负责数据新鲜度
           <DeviceBoard />
         ) : (
-          // 内存页（UX v3 §6.3）：左栏家族列表 + 右栏（默认概况，选中进程后为详情）
+          // 内存页（eul 重设计 · memory-eul-mockup.html）：左栏家族列表 + 右栏
+          //（状态带 → 构成 Hero → 双磁贴 → 泄漏带 → 换出大户；选中进程后为详情）
           <div className="flex min-h-0 flex-1">
-            <aside className="flex w-[350px] shrink-0 flex-col border-r border-hairline bg-surface-sunk">
-              <div className="flex h-10 shrink-0 items-center justify-between border-b border-hairline-soft px-3.5">
-                <span className="text-[11px] font-medium tracking-wide text-ink-dim">
+            <aside className="flex w-[300px] shrink-0 flex-col border-r border-hairline bg-surface-sunk">
+              <div className="flex h-[38px] shrink-0 items-center gap-2 border-b border-hairline-soft px-3">
+                <span className="min-w-0 flex-1 text-[11px] font-medium tracking-wide text-ink-dim">
                   {t("memory.families.title")}
                 </span>
-                <span className="flex items-center gap-2.5">
-                  {/* F20 内存报告导出：读序列库历史，不触发扫描 */}
-                  <MemExportButton />
-                  <span className="text-[10px] text-ink-faint">
-                    {t("memory.families.count", { n: families.length })}
-                  </span>
+                {/* F20 内存报告导出：读序列库历史，不触发扫描 */}
+                <MemExportButton />
+                <span className="shrink-0 font-mono text-[10px] tabular-nums text-ink-faint">
+                  {families.length}
                 </span>
               </div>
               <div className="min-h-0 flex-1 overflow-y-auto p-1.5">
@@ -543,39 +547,24 @@ export function MainWindow() {
                     {t("memory.families.empty")}
                   </p>
                 ) : (
-                  <ul>
-                    {families.map((f) => (
-                      <FamilyRow
-                        key={f.name}
-                        family={f}
-                        open={expanded === f.name}
-                        selectedPid={selectedPid}
-                        processes={processes}
-                        onToggle={() => setExpanded(expanded === f.name ? null : f.name)}
-                        onSelect={select}
-                        onKillMenu={openKillMenu}
-                      />
-                    ))}
-                  </ul>
+                  <FamilyList
+                    families={families}
+                    processes={processes}
+                    expanded={expanded}
+                    selectedPid={selectedPid}
+                    onToggle={(name) => setExpanded(expanded === name ? null : name)}
+                    onSelect={select}
+                    onKillMenu={openKillMenu}
+                  />
                 )}
               </div>
             </aside>
 
-            <main className="min-w-0 flex-1 overflow-y-auto px-5 py-4">
+            <main className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 pb-3.5 pt-3">
               {selected ? (
                 <ProcessInspector proc={selected} onBack={() => select(null)} />
               ) : (
-                <div className="space-y-4">
-                  {/* 泄漏卡置顶（命中或「无法判定」时才出现；没有命中就是沉默即正常） */}
-                  {snapshot?.leaks &&
-                  (snapshot.leaks.items.length > 0 || snapshot.leaks.note) ? (
-                    <LeakCard
-                      report={snapshot.leaks}
-                      onOpen={(pid) => select(pid)}
-                    />
-                  ) : null}
-                  <Overview onKillMenu={openKillMenu} />
-                </div>
+                <Overview onKillMenu={openKillMenu} />
               )}
             </main>
           </div>
@@ -612,8 +601,66 @@ export function MainWindow() {
   );
 }
 
+/**
+ * 家族列表（eul 重设计 · memory-eul-mockup.html 左栏）：
+ * AppIcon 字母徽标（真实图标优先）+ 进程数徽标 + 总量右对齐 + 换出占比细条——
+ * 一眼分清「谁在吃内存」和「谁被换出去了」。图标批量取一次（useAppIcons
+ * 模块级缓存，只增不改），不逐行发 IPC。
+ */
+function FamilyList({
+  families,
+  processes,
+  expanded,
+  selectedPid,
+  onToggle,
+  onSelect,
+  onKillMenu,
+}: {
+  families: FamilyMem[];
+  processes: ProcMem[];
+  expanded: string | null;
+  selectedPid: number | null;
+  onToggle: (name: string) => void;
+  onSelect: (pid: number | null) => void;
+  onKillMenu: (proc: ProcMem, x: number, y: number) => void;
+}) {
+  // 每个家族拿一个「有 exe 的代表进程」去换图标；家族内没有 exe → 字母徽标
+  const icons = useAppIcons(
+    useMemo(
+      () =>
+        families.map((f) => ({
+          family: f.name,
+          exe: processes.find((p) => p.family === f.name && p.exe)?.exe ?? null,
+        })),
+      [families, processes],
+    ),
+  );
+
+  return (
+    <ul>
+      {families.map((f) => (
+        <FamilyRow
+          key={f.name}
+          family={f}
+          icon={icons[f.name]}
+          open={expanded === f.name}
+          selectedPid={selectedPid}
+          processes={processes}
+          onToggle={() => onToggle(f.name)}
+          onSelect={onSelect}
+          onKillMenu={onKillMenu}
+        />
+      ))}
+    </ul>
+  );
+}
+
+/** 进程数徽标：≥20 转琥珀警示（Chrome / Electron 家族的「进程爆炸」信号） */
+const PROC_WARN = 20;
+
 function FamilyRow({
   family,
+  icon,
   open,
   selectedPid,
   processes,
@@ -622,6 +669,8 @@ function FamilyRow({
   onKillMenu,
 }: {
   family: FamilyMem;
+  /** 真实图标（data URL）；缺省落字母徽标（AppIcon 内部处理） */
+  icon?: string;
   open: boolean;
   selectedPid: number | null;
   processes: ProcMem[];
@@ -648,37 +697,59 @@ function FamilyRow({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        className="group flex w-full items-center gap-1.5 rounded-md px-2 py-2 text-left transition-colors hover:bg-chip-hover"
+        title={t("memory.families.expandHint")}
+        className="group flex w-full items-center gap-2 rounded-lg px-1.5 py-[5px] text-left transition-colors hover:bg-chip"
       >
-        <ChevronRightIcon
-          size={12}
-          className={`shrink-0 text-ink-faint transition-transform ${open ? "rotate-90" : ""}`}
-        />
+        <AppIcon family={family.name} icon={icon} size={28} className="shrink-0" />
         <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12.5px] leading-tight text-ink">
-            {family.name}
+          <span className="flex min-w-0 items-center gap-1.5">
+            <span className="min-w-0 truncate text-[12.5px] leading-tight text-ink">
+              {family.name}
+            </span>
+            <span
+              className={`shrink-0 rounded-[4px] px-1 py-[2.5px] font-mono text-[9px] leading-none ${
+                family.processCount >= PROC_WARN
+                  ? "bg-warn/[0.14] text-warn"
+                  : "bg-chip text-ink-faint"
+              }`}
+              title={t("memory.families.procBadgeTip", { n: family.processCount })}
+            >
+              {family.processCount}
+            </span>
           </span>
-          <span className="mt-0.5 block text-[10px] text-ink-faint">
-            {i18n.plural("common.unit.processes", family.processCount)}
-            {family.workspaces.length > 0
-              ? t("memory.families.workspaceCount", { n: family.workspaces.length })
-              : ""}
-            {family.footprint == null ? " · RSS" : exact ? "" : " · ≈"}
+          <span className="mt-[2.5px] flex items-center gap-1 text-[9.5px] text-ink-faint">
+            {family.footprint == null ? (
+              <span title={t("memory.badgeRssTip")}>RSS</span>
+            ) : exact ? null : (
+              <span title={t("memory.families.count", { n: family.processCount })}>≈</span>
+            )}
+            {ratio != null ? (
+              <span
+                className={ratio >= 0.4 ? "text-warn" : undefined}
+                title={t("memory.onDisk", { pct: formatPercent(ratio) })}
+              >
+                {t("memory.families.swapPct", { pct: formatPercent(ratio) })}
+              </span>
+            ) : null}
           </span>
         </span>
         <span className="shrink-0 text-right">
-          <span className="block font-mono text-[12px] leading-tight tabular-nums text-ink">
+          <span className="block font-mono text-[11.5px] leading-none tabular-nums text-ink">
             {exact ? "" : "≈"}
             {formatBytes(total)}
           </span>
-          <span className="mt-0.5 block text-[10px] text-ink-faint">
-            {ratio != null ? t("memory.onDisk", { pct: formatPercent(ratio) }) : "—"}
+          {/* 换出占比细条：46×2.5px，warn 色——「被换出去多少」的量感 */}
+          <span className="mt-[5px] block h-[2.5px] w-[46px] overflow-hidden rounded-[2px] bg-chip">
+            <span
+              className="block h-full rounded-[2px] bg-warn"
+              style={{ width: ratio != null ? `${Math.min(100, ratio * 100)}%` : "0%" }}
+            />
           </span>
         </span>
       </button>
 
       {open ? (
-        <ul className="mb-1 ml-3.5 border-l border-hairline-soft pl-1.5">
+        <ul className="mb-1 ml-[15px] border-l border-hairline-soft pl-1.5">
           {children.map((p) => {
             const isActive = p.pid === selectedPid;
             return (
@@ -692,7 +763,7 @@ function FamilyRow({
                   }}
                   title={t("memory.rowHint")}
                   className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors ${
-                    isActive ? "bg-accent/[0.10] text-ink" : "text-ink-dim hover:bg-chip-hover"
+                    isActive ? "bg-info/[0.12] text-ink" : "text-ink-dim hover:bg-chip-hover"
                   }`}
                 >
                   <span className="min-w-0 flex-1 truncate text-[11.5px]">
@@ -725,207 +796,23 @@ function FamilyRow({
 function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: number) => void }) {
   const snapshot = useMemStore((s) => s.snapshot);
   const swapRates = useSwapRates();
+  const select = useMemStore((s) => s.select);
   const { t } = useI18n();
   if (!snapshot) return null;
 
-  const { swap, pressure, thrash, compressorBytes, freeBytes, physicalTotal, topSwapped } = snapshot;
-  const swapRatio = swap.total > 0 ? swap.used / swap.total : 0;
-  // 换出口径只在有换页计数的平台上存在；Windows 没有 → 整块隐藏，而不是显示「没有换出」
-  const hasSwapMetrics = thrash != null;
-  // F24：Δ 列只在有增速数据时出现（Windows 无每进程换出口径 → 恒无数据，不画空列）
-  const deltaByPid = new Map((swapRates?.rates ?? []).map((r) => [r.pid, r.deltaBytes]));
-  const recent1hRate = formatSignedBytes(swapRates?.recent1h?.sumDeltaBytes ?? null, "/h");
-  const swapHint =
-    swap.fileCount == null
-      ? t("memory.swap.hintPagefile", {
-          used: formatBytes(swap.used),
-          total: formatBytes(swap.total),
-        })
-      : t("memory.swap.hintFiles", {
-          used: formatBytes(swap.used),
-          total: formatBytes(swap.total),
-          n: swap.fileCount,
-        });
-
   return (
-      <div className="space-y-4">
-        {/* 页名在顶栏（spec §1.3）；副标是本页口径说明，保留 */}
-        <p className="text-[11px] text-ink-faint">{t("memory.subtitle")}</p>
-
-      {/* UI v4（§6.3）：左统计 + 右压力环。环比值口径随平台 metrics 不同，
-          caption 写明换算，不冒充「占用率」 */}
-      <div className="flex items-start gap-6 border-b border-hairline-soft pb-5">
-        <div className="grid min-w-0 flex-1 grid-cols-2 gap-x-8 gap-y-5">
-          <Stat
-            label={t("memory.stat.physical")}
-            value={numOf(physicalTotal)}
-            unit={unitOf(physicalTotal)}
-          />
-          <Stat
-            label={t("memory.stat.used")}
-            value={formatBytes(snapshot.physicalUsedBytes ?? 0)}
-            hint={physicalTotal > 0 ? formatPercent((snapshot.physicalUsedBytes ?? 0) / physicalTotal) : undefined}
-          />
-          <Stat
-            label={t("memory.stat.available")}
-            value={formatBytes(freeBytes)}
-            hint={freeBytesHint(compressorBytes, t)}
-          />
-          {compressorBytes != null ? (
-            <Stat
-              label={t("memory.stat.compressed")}
-              value={formatBytes(compressorBytes)}
-              hint={t("memory.stat.compressedHint")}
-            />
-          ) : null}
-          <Stat
-            label={t("memory.stat.swapUsed")}
-            value={formatPercent(swapRatio)}
-            tone={swapRatio >= 0.9 ? "danger" : swapRatio >= 0.75 ? "warn" : "accent"}
-            hint={swapHint}
-          />
-        </div>
-        {pressure ? <PressureRing pressure={pressure} /> : null}
-      </div>
-
-      {swap.total > 0 ? (
-        <div className="border-b border-hairline-soft pb-5" title={t("memory.swap.gaugeTip")}>
-          {/* UI v4 swap 渐变科技条：阈值直接画在轨道色带上（§6.3） */}
-          <div className="flex items-baseline justify-between">
-            <span className="text-[11px] text-ink-dim">{t("memory.swap.title")}</span>
-            <span className="font-mono text-[11px] tabular-nums text-ink-dim">
-              {formatBytes(swap.used)} / {formatBytes(swap.total)}
-              {swap.fileCount != null
-                ? t("memory.swap.files", { n: swap.fileCount })
-                : t("memory.swap.pagefile")}
-            </span>
-          </div>
-          <div className="relative mt-2 h-2.5 overflow-hidden rounded-full bg-chip">
-            {/* 阈值色带：0–75% 绿 → 75–90% 黄 → 90%+ 红，固定铺满轨道 */}
-            <div
-              className="absolute inset-0"
-              style={{
-                background:
-                  "linear-gradient(90deg, var(--color-accent) 0%, var(--color-accent) 75%, var(--color-warn) 75%, var(--color-warn) 90%, var(--color-danger) 90%)",
-                opacity: 0.28,
-              }}
-            />
-            {/* 实际占用填充 */}
-            <div
-              className="prune-anim absolute inset-y-0 left-0 rounded-full transition-[width] duration-500"
-              style={{
-                width: `${Math.min(100, swapRatio * 100)}%`,
-                background:
-                  swapRatio >= 0.9
-                    ? "var(--color-danger)"
-                    : swapRatio >= 0.75
-                      ? "var(--color-warn)"
-                      : "var(--color-accent)",
-                boxShadow:
-                  swapRatio >= 0.75
-                    ? "0 0 8px color-mix(in srgb, var(--color-warn) 45%, transparent)"
-                    : undefined,
-              }}
-            />
-            <div
-              className="absolute -inset-y-0.5 w-px bg-ink-faint/80"
-              style={{ left: "75%" }}
-              title={t("memory.swap.warnMark")}
-            />
-            <div
-              className="absolute -inset-y-0.5 w-px bg-ink-faint/80"
-              style={{ left: "90%" }}
-              title={t("memory.swap.dangerMark")}
-            />
-          </div>
-          <div className="mt-1 flex items-baseline justify-between text-[9.5px] text-ink-faint">
-            <span>{t("memory.swap.usedPct", { pct: formatPercent(swapRatio) })}</span>
-            {recent1hRate ? (
-              <span title={t("memory.swap.recent1hTip")}>
-                {t("memory.swap.recent1h", { rate: recent1hRate })}
-              </span>
-            ) : null}
-            <span>{t("memory.swap.bandTip")}</span>
-          </div>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-2">
+      <MemRibbon snapshot={snapshot} />
+      <MemHero snapshot={snapshot} />
+      <MemTiles snapshot={snapshot} swapRates={swapRates} />
+      {/* 泄漏带：有命中或「无法判定」才出现，沉默即正常 */}
+      <LeakStrip report={snapshot.leaks} onOpen={(pid) => select(pid)} />
+      {/* 换出大户：thrash 缺口径（Windows）→ 整节不画 */}
+      {snapshot.thrash != null ? (
+        <VictimsBoard snapshot={snapshot} swapRates={swapRates} onKillMenu={onKillMenu} />
       ) : null}
-
-      {pressure ? (
-        <section className="border-b border-hairline-soft pb-5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] text-ink-dim">{t("memory.pressure.title")}</span>
-            <PressureDot level={pressure.level} />
-          </div>
-          <div className="mt-2.5 flex items-center justify-between text-[10px] text-ink-faint">
-            <span>{pressureCaption(pressure, t)}</span>
-            {swap.newToday != null ? (
-              <span>
-                {t("memory.pressure.newToday", { n: swap.newToday })}
-              </span>
-            ) : null}
-          </div>
-          {hasSwapMetrics ? (
-            <div className="mt-2 grid grid-cols-2 gap-2 text-[10px] text-ink-faint">
-              <span>
-                {t("memory.pressure.swapin")}{" "}
-                <span className="font-mono tabular-nums text-ink-dim">
-                  {formatRate(thrash.swapinsPerSec)}/s
-                </span>
-              </span>
-              <span>
-                {t("memory.pressure.swapout")}{" "}
-                <span className="font-mono tabular-nums text-ink-dim">
-                  {formatRate(thrash.swapoutsPerSec)}/s
-                </span>
-              </span>
-            </div>
-          ) : null}
-        </section>
-      ) : null}
-
-      {hasSwapMetrics ? (
-        <section>
-          <div className="flex items-baseline justify-between">
-            <span className="text-[11px] text-ink-dim">{t("memory.victims.title")}</span>
-            <span className="text-[10px] text-ink-faint">{t("memory.victims.subtitle")}</span>
-          </div>
-          {topSwapped.length === 0 ? (
-            <p className="mt-2 py-1 text-[11px] text-ink-faint">{t("common.empty.swapped")}</p>
-          ) : (
-            <>
-              {/* F24：Δ24h 列头（有增速数据才画；Windows 无口径 → 恒无数据不画） */}
-              {deltaByPid.size > 0 ? (
-                <div className="mt-1.5 flex items-center">
-                  <span className="min-w-0 flex-1" />
-                  <span
-                    className="w-16 shrink-0 text-right text-[9.5px] text-ink-faint"
-                    title={t("memory.victims.deltaTip", { h: swapRates?.windowHours ?? 24 })}
-                  >
-                    {t("memory.victims.delta24h")}
-                  </span>
-                  <span className="w-14 shrink-0 text-right text-[9.5px] text-ink-faint">
-                    {t("memory.victims.ratioCol")}
-                  </span>
-                </div>
-              ) : null}
-              <ul className="mt-1.5">
-                {topSwapped.map((p) => (
-                  <VictimRow
-                    key={`${p.pid}-${p.startTime}`}
-                    proc={p}
-                    delta={deltaByPid.get(p.pid) ?? null}
-                    deltaHours={swapRates?.windowHours ?? null}
-                    onKillMenu={onKillMenu}
-                  />
-                ))}
-              </ul>
-            </>
-          )}
-        </section>
-      ) : null}
-
       {!snapshot.deepAvailable ? (
-        <p className="mt-4 rounded-lg bg-warn/[0.07] px-3 py-2 text-[11px] leading-relaxed text-warn">
+        <p className="shrink-0 text-[10px] leading-relaxed text-warn">
           {t("memory.deepUnavailable")}
         </p>
       ) : null}
@@ -933,10 +820,6 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
   );
 }
 
-/**
- * F24 换出增速（打开内存页拉一次 + 每 60 s 轻刷新）：读序列库既有 swapped
- * 差分，零新增采集。失败静默——Δ 列不出现，不冒充「没有换出」。
- */
 function useSwapRates(): SwapRateReport | null {
   const [report, setReport] = useState<SwapRateReport | null>(null);
   useEffect(() => {
@@ -958,141 +841,10 @@ function useSwapRates(): SwapRateReport | null {
   return report;
 }
 
-/** 带符号字节串：+12.3 MB / −4.0 MB / —（null = 数据不足，不冒充 0） */
-function formatSignedBytes(bytes: number | null, suffix = ""): string | null {
-  if (bytes == null) return null;
-  if (bytes === 0) return "0 B" + suffix;
-  const sign = bytes > 0 ? "+" : "-";
-  return sign + formatBytes(Math.abs(bytes)) + suffix;
-}
 
-/** 「可用」的补注：macOS 给的是 Pages free，Windows 是 AvailPhys，语义不同别混着说 */
-function freeBytesHint(compressorBytes: number | null, t: I18n["t"]): string {
-  return compressorBytes == null ? t("memory.stat.availableHint") : t("memory.stat.availableHintMac");
-}
 
-/**
- * 内存压力环（UI v4 §6.3）：黄=Warning / 红=Critical 发光弧。
- * 比值口径随平台 metrics 不同：occupancy 是占用率（raw/100），
- * kernel 是 1/2/4 档（raw/4）——caption 写明换算，不冒充占用率。
- */
-function PressureRing({
-  pressure,
-}: {
-  pressure: { raw: number; metric: "kernel" | "occupancy" };
-}) {
-  const ratio = pressure.metric === "occupancy" ? pressure.raw / 100 : pressure.raw / 4;
-  const critical = pressure.metric === "occupancy" ? pressure.raw >= 92 : pressure.raw >= 4;
-  const warning = !critical && (pressure.metric === "occupancy" ? pressure.raw >= 80 : pressure.raw >= 2);
-  const color = critical
-    ? "var(--color-danger)"
-    : warning
-      ? "var(--color-warn)"
-      : "var(--color-accent)";
-  const { t } = useI18n();
-  const caption = pressureCaption(pressure, t);
 
-  return (
-    <div className="shrink-0" title={caption}>
-      <RingGauge
-        segments={[{ value: Math.max(0.04, Math.min(1, ratio)), color }]}
-        size={104}
-        stroke={9}
-        ariaLabel={t("memory.pressure.aria", { caption })}
-      >
-        <div className="text-center">
-          <span
-            className="block font-mono text-[20px] leading-none tabular-nums"
-            style={{ color, textShadow: `0 0 12px color-mix(in srgb, ${color} 45%, transparent)` }}
-          >
-            {Math.round(Math.min(1, ratio) * 100)}
-          </span>
-          <span className="mt-0.5 block text-[9px] text-ink-faint">
-            {pressure.metric === "occupancy"
-              ? t("memory.pressure.occupancyUnit")
-              : t("memory.pressure.kernelUnit")}
-          </span>
-        </div>
-      </RingGauge>
-    </div>
-  );
-}
 
-/** 压力行的原始值说明：两个平台的 raw 含义完全不同 */
-function pressureCaption(
-  pressure: { raw: number; metric: "kernel" | "occupancy" },
-  t: I18n["t"],
-): string {
-  if (pressure.metric === "occupancy") {
-    return t("memory.pressure.captionOccupancy", { raw: pressure.raw });
-  }
-  return t("memory.pressure.captionKernel", { raw: pressure.raw });
-}
-
-function VictimRow({
-  proc,
-  delta,
-  deltaHours,
-  onKillMenu,
-}: {
-  proc: ProcMem;
-  /** F24：窗口首末样本差分（字节）；null = 该进程不在增速榜（样本不足/pid 复用剔除） */
-  delta: number | null;
-  /** Δ 的窗口小时数（表头/提示共用） */
-  deltaHours: number | null;
-  onKillMenu: (proc: ProcMem, x: number, y: number) => void;
-}) {
-  const select = useMemStore((s) => s.select);
-  const ratio = swappedRatio(proc);
-  const { t } = useI18n();
-  const deltaText = formatSignedBytes(delta);
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={() => select(proc.pid)}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          onKillMenu(proc, e.clientX, e.clientY);
-        }}
-        title={t("memory.rowHint")}
-        className="w-full rounded-md px-1 py-1.5 text-left transition-colors hover:bg-chip-hover"
-      >
-        <div className="flex w-full items-center gap-2">
-          <span className="min-w-0 flex-1 truncate text-[11.5px] text-ink">{proc.name}</span>
-          <span className="shrink-0 font-mono text-[11px] tabular-nums text-warn">
-            {formatBytes(proc.swapped ?? 0)}
-          </span>
-          {deltaHours != null ? (
-            <span
-              className={`w-16 shrink-0 text-right font-mono text-[10px] tabular-nums ${
-                (delta ?? 0) > 0 ? "text-warn" : "text-ink-faint"
-              }`}
-              title={t("memory.victims.deltaTip", { h: deltaHours ?? 24 })}
-            >
-              {deltaText ?? "—"}
-            </span>
-          ) : null}
-          <span className="w-14 shrink-0 text-right text-[10px] text-ink-faint">
-            {ratio != null ? formatPercent(ratio) : "—"}
-          </span>
-        </div>
-        {/* UI v4（§6.3）：换出占比红橙渐变条——「大部分在磁盘上」一眼可见 */}
-        {ratio != null && ratio > 0 ? (
-          <div className="mt-1 h-[3px] w-full overflow-hidden rounded-full bg-chip" aria-hidden>
-            <div
-              className="prune-anim h-full rounded-full transition-[width] duration-500"
-              style={{
-                width: `${Math.min(100, ratio * 100)}%`,
-                background: "linear-gradient(90deg, var(--color-warn), var(--color-danger))",
-              }}
-            />
-          </div>
-        ) : null}
-      </button>
-    </li>
-  );
-}
 
 function ProcessInspector({ proc, onBack }: { proc: ProcMem; onBack: () => void }) {
   const points = useMemHistory(proc.pid, 240);
