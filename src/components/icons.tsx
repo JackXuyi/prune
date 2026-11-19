@@ -303,6 +303,39 @@ export function PortJackIcon(props: IconProps) {
   );
 }
 
+/** Wi-Fi 信号（链路结论 / 网络语义位）：两道弧 + 底点，与 rail 网络图标同形 */
+export function WifiIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M5 12a10 10 0 0 1 14 0" />
+      <path d="M8.5 15.5a5.5 5.5 0 0 1 7 0" />
+      <circle cx="12" cy="19" r="1.4" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/** 活动脉冲（响应度 RPM / 速率类读数的心电曲线） */
+export function ActivityIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 12h4l3-7 4 14 3-7h4" />
+    </Svg>
+  );
+}
+
+/** 路由器（网关 / LAN 层语义位）：机身 + 两颗指示灯 + 天线口 */
+export function RouterIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="9" width="18" height="9" rx="2" />
+      <circle cx="7" cy="13.5" r="1.2" fill="currentColor" stroke="none" />
+      <circle cx="11" cy="13.5" r="1.2" fill="currentColor" stroke="none" />
+      <path d="M17 12.5h2" />
+      <path d="M17 15h2" />
+    </Svg>
+  );
+}
+
 /** 设置齿轮（原 MainWindow 内联 svg 提为组件，rail 复用） */
 export function GearIcon(props: IconProps) {
   return (

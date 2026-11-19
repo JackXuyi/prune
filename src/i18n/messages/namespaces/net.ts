@@ -13,9 +13,7 @@ import type { MessageTree } from "../../types";
 const zh = {
   title: "网络",
   subMonitor: "系统口径的下载 / 上传速率 · 只算物理网卡（虚拟接口单列，避免与 VPN 重复计数）",
-  subDiag: "分层定位慢在哪：DNS → 路由器 → 出口 · 手动触发，不常驻",
-  subSites:
-    "按站点测：DNS → TCP → TLS → 首字节 → 传输 · 手动触发，不常驻",
+  subTest: "手动发起的测试：链路诊断 · 带宽测速 · 站点检测",
 
   unavailable: "不可读：{why}。这里不显示 0 —— 读不到和「没有流量」是两件事。",
   unavailableFallback: "系统网卡计数器读不到",
@@ -99,15 +97,11 @@ const zh = {
 
   subpage: {
     monitor: "监测",
-    diag: "诊断",
-    sites: "站点",
+    test: "测试",
     aria: "网络子页",
   },
 
   diag: {
-    oneRound: "一轮约 5 s · 探测失败显示失败，不显示 0",
-    start: "开始诊断",
-    idle: "没跑过诊断。点「开始诊断」探测 DNS、路由器、出口三层，每层画一条横柱（中位数）并标出阈值刻度，最后给出一条主因结论。",
     failed: "无法诊断：{why}。这是探测机制本身失败，与「连不上路由器」是两件事。",
     unknownWhy: "未知原因",
     running: "探测中…（DNS → 网关 → 出口 → portal，全程串行不出中间结论）",
@@ -123,28 +117,58 @@ const zh = {
     captive: "检测到疑似登录页（酒店 / 机场 Wi-Fi）——打开浏览器完成认证后重新诊断。",
     verdict: "→ 主因：{label}",
     verdictRule: "{advice}（规则：{rule}）",
-    scopeNote: "Wi-Fi 信号层 v2 提供，本版未含；阈值是经验值，全部标在柱图刻度上。",
+    scopeNote: "Wi-Fi 信号层 v2 提供，本版未含；阈值是经验值，逐层展示不搞黑盒。",
     copyTitle: "生成 Markdown 报告并复制到系统剪贴板，可粘贴给 AI 分析",
     copy: "复制诊断报告",
     probeFailed: "探测失败",
     failNote: "诊断失败：{err}",
   },
 
-  layer: {
-    noReading: "本层没有可用读数，柱图省略——「没有读数」和「0 ms」是两件事。",
-    thresholdTick: "阈值 {n} ms",
-    sample: "样本 {index}：{n} ms",
-    samplesMedian: "{count} 次样本 · 中位数 {median} ms",
-    thresholdFoot: "阈值 {n} ms（竖刻度）",
+  /**
+   * 测试二级页（诊断 + 测速 + 站点合并，2026-11-19 重设计）：
+   * 速读条 tooltip / 诊断轨道卡 / 测速 Hero 的专用词。
+   */
+  test: {
+    ribbonAria: "测试页速读条",
+    verdictTip:
+      "链路结论（verdict）：出口 − 网关 > 100 ms 判偏慢；判定规则与建议见下方诊断卡右侧结论区",
+    verdictRunning: "诊断中…",
+    verdictUnavailable: "不可用",
+    rpmTip: "响应度 RPM（Apple networkQuality · bufferbloat 官方口径）· 基础 RTT {rtt} ms",
+    rpmSub: "负载下响应度（bufferbloat 官方口径）",
+    sitesTip: "站点检测汇总：{n} 站中 {ok} 站可达 · 上次全量 {time}；未测时显示 —",
+    sitesUnit: "/ {n} 站",
+    gatewayTip: "网关地址（LAN 层探测目标 · ICMP 中位阈值 50 ms）",
+    diagTitle: "链路诊断",
+    diagNote: "DNS → 网关 → 出口 · 中位数 · 手动触发 · 一轮约 5 s",
+    diagRunTip: "重新运行分层探测：DNS 解析、网关 ICMP、公网出口；运行中不可重复发起",
+    diagRunningBtn: "诊断中…",
+    diagRerun: "重新诊断",
+    diagRunningHead: "诊断中…",
+    diagFailedHead: "诊断失败",
+    diagIdleHead: "尚未诊断",
+    diagIdleBody:
+      "点右上角「重新诊断」：逐层探测 DNS / 网关 / 出口，完成后给出主因结论与判定规则",
+    captiveHead: "疑似 captive portal（登录页）",
+    trackTip: "节点读数为样本中位数；超阈值的层是当前瓶颈；原始样本与口径悬停各节点可见",
+    heroRunning: "测速中…（约 1–2 分钟，期间可继续使用其它页面）",
+    heroRunningBtn: "测速中…",
+    heroRunTip: "运行 macOS networkQuality（约 1–2 分钟）；运行中不可重复发起，可离开本页",
+    heroIdle: "尚未测速 · 点右侧「开始测速」",
+    heroIdleLegend: "完成后给出 ↓ / ↑ 与响应度 RPM",
+    heroSource: "系统 networkQuality · 手动触发 · 上次 {time}",
+    heroNoIntermediate: "进行中不显示中间值 · 完成后一次性给出 ↓ / ↑ / RPM",
+    heroRef: "参考 1 Gbps 实测可用（扣协议开销）· 条满 = 不低于参考",
+    stackDownTip: "下行 {speed} · 相对千兆实测可用参考",
+    stackUpTip: "上行 {speed} · 相对千兆实测可用参考",
+    sitesTitle: "站点检测",
+    runAllTip: "按站表顺序逐站检测（单站上限 8 s）；检测中可点「取消」中途停止",
+    runStopTip: "停止本轮检测（已完成的结果保留）",
+    editTip: "编辑站表（可增删至 20 个站点）",
   },
 
   speed: {
-    title: "测速 & 负载响应",
-    hint: "系统 networkQuality · 约 30 s",
     start: "开始测速",
-    runningNote: "测速中…（期间网络会被占满，下载 / 上传 / 负载下延迟各测一段）",
-    barAriaDown: "下载 {speed}，参考千兆带宽",
-    barAriaUp: "上传 {speed}，参考千兆带宽",
     gigabit:
       "条形参考 = 千兆带宽的实际可用值（约 940 Mbps，已扣协议开销）；2.5G / 万兆网卡会顶满，此时以数字为准。",
     rpm: "RPM · 负载下响应度",
@@ -271,10 +295,7 @@ const en: MessageTree<typeof zh> = {
   title: "Network",
   subMonitor:
     "System-level download / upload rates · physical interfaces only (virtual ones are listed separately so VPN traffic isn't counted twice)",
-  subDiag:
-    "Find the slow hop: DNS → router → internet · manual only, nothing runs in the background",
-  subSites:
-    "Per-site check: DNS → TCP → TLS → first byte → transfer · manual only, nothing runs in the background",
+  subTest: "Tests you run yourself: link diagnosis · bandwidth speed test · site checks",
 
   unavailable:
     "Unavailable: {why}. We don't show 0 here — “can't read it” and “no traffic” are two different things.",
@@ -364,15 +385,11 @@ const en: MessageTree<typeof zh> = {
 
   subpage: {
     monitor: "Monitor",
-    diag: "Diagnose",
-    sites: "Sites",
+    test: "Test",
     aria: "Network subpages",
   },
 
   diag: {
-    oneRound: "One round takes ~5 s · a failed probe shows as failed, never as 0",
-    start: "Run diagnosis",
-    idle: "No diagnosis yet. Hit “Run diagnosis” to probe DNS, the router and the internet; each layer gets a bar (median) with its threshold marked, and the result ends with a single root-cause conclusion.",
     failed:
       "Can't diagnose: {why}. The probing mechanism itself failed — that's not the same as “can't reach the router”.",
     unknownWhy: "unknown reason",
@@ -392,30 +409,54 @@ const en: MessageTree<typeof zh> = {
     verdict: "→ Root cause: {label}",
     verdictRule: "{advice} (rule: {rule})",
     scopeNote:
-      "The Wi-Fi signal layer arrives in v2 and isn't included here; thresholds are empirical and all marked on the bars.",
+      "The Wi-Fi signal layer arrives in v2 and isn't included here; thresholds are empirical, shown layer by layer — no black boxes.",
     copyTitle: "Generate a Markdown report and copy it to the system clipboard, ready to paste into an AI",
     copy: "Copy diagnosis report",
     probeFailed: "Probe failed",
     failNote: "Diagnosis failed: {err}",
   },
 
-  layer: {
-    noReading:
-      "No usable reading for this layer, so the bar is omitted — “no reading” and “0 ms” are two different things.",
-    thresholdTick: "threshold {n} ms",
-    sample: "Sample {index}: {n} ms",
-    samplesMedian: "{count} samples · median {median} ms",
-    thresholdFoot: "threshold {n} ms (vertical mark)",
+  test: {
+    ribbonAria: "Test page ribbon",
+    verdictTip:
+      "Link verdict: the internet layer is considered slow when gateway-to-internet exceeds 100 ms; the rule and advice live in the diagnosis card below",
+    verdictRunning: "Diagnosing…",
+    verdictUnavailable: "Unavailable",
+    rpmTip: "Responsiveness RPM (Apple networkQuality · the official bufferbloat measure) · base RTT {rtt} ms",
+    rpmSub: "Responsiveness under load (the official bufferbloat measure)",
+    sitesTip: "Site checks: {ok} of {n} sites reachable · last full run {time}; shows — before the first run",
+    sitesUnit: "/ {n} sites",
+    gatewayTip: "Gateway address (LAN probe target · ICMP median threshold 50 ms)",
+    diagTitle: "Link diagnosis",
+    diagNote: "DNS → gateway → internet · medians · manual trigger · one round ≈ 5 s",
+    diagRunTip: "Re-run the layered probes: DNS, gateway ICMP, internet egress; disabled while running",
+    diagRunningBtn: "Diagnosing…",
+    diagRerun: "Diagnose again",
+    diagRunningHead: "Diagnosing…",
+    diagFailedHead: "Diagnosis failed",
+    diagIdleHead: "Not diagnosed yet",
+    diagIdleBody:
+      "Hit “Diagnose again” above: DNS / gateway / internet are probed layer by layer, ending with a root cause and its rule",
+    captiveHead: "Captive portal suspected (sign-in page)",
+    trackTip: "Node readings are sample medians; the over-threshold layer is the current bottleneck; hover a node for raw samples",
+    heroRunning: "Testing… (~1–2 min, you can keep using other pages meanwhile)",
+    heroRunningBtn: "Testing…",
+    heroRunTip: "Runs macOS networkQuality (~1–2 min); can't be restarted while running, and you can leave this page",
+    heroIdle: "No speed test yet · hit “Run speed test” on the right",
+    heroIdleLegend: "Down / up and responsiveness RPM appear once it finishes",
+    heroSource: "System networkQuality · manual trigger · last run {time}",
+    heroNoIntermediate: "No intermediate values while running · down / up / RPM arrive together at the end",
+    heroRef: "Reference: 1 Gbps practical ceiling (overhead excluded) · a full bar means “at least this”",
+    stackDownTip: "Down {speed} · against the gigabit practical reference",
+    stackUpTip: "Up {speed} · against the gigabit practical reference",
+    sitesTitle: "Site checks",
+    runAllTip: "Checks each site in list order (8 s cap per site); press “Cancel” to stop mid-run",
+    runStopTip: "Stop this round (completed results are kept)",
+    editTip: "Edit the site list (up to 20 sites)",
   },
 
   speed: {
-    title: "Speed & loaded latency",
-    hint: "System networkQuality · ~30 s",
     start: "Run speed test",
-    runningNote:
-      "Testing… (this saturates the link; download, upload and loaded latency are each measured in turn)",
-    barAriaDown: "Download {speed}, referenced to gigabit bandwidth",
-    barAriaUp: "Upload {speed}, referenced to gigabit bandwidth",
     gigabit:
       "The bar reference is gigabit bandwidth's practical ceiling (~940 Mbps, protocol overhead excluded); 2.5G / 10G interfaces will pin the bar — trust the number then.",
     rpm: "RPM · loaded responsiveness",

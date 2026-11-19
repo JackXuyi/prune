@@ -287,3 +287,26 @@ body {
 .prune-fade-in {
   animation: prune-fade-in 160ms ease-out both;
 }
+
+/* 测速 running 态的扫光进度条（测试页 SpeedHero）：进行中不显示中间值，
+   只给一条来回扫的光带表达「在跑」。 */
+@keyframes prune-sweep {
+  from {
+    transform: translateX(-110%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+.prune-sweep {
+  border-radius: 999px;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    color-mix(in srgb, var(--color-domain-net) 75%, transparent),
+    transparent
+  );
+  animation: prune-sweep 1.2s ease-in-out infinite;
+}
+

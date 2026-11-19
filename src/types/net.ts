@@ -630,21 +630,6 @@ export function rpmLevelLabel(level: string, locale: Locale = currentLocale()): 
   }
 }
 
-/** Mbps 展示（networkQuality 的吞吐单位是 bps） */
-export function formatMbps(bps: number): string {
-  const mbps = bps / 1_000_000;
-  return mbps >= 100 ? `${Math.round(mbps)} Mbps` : `${mbps.toFixed(1)} Mbps`;
-}
-
-/** 单层读数行用的语义色：正常 accent / 超 warn / 失败 danger */
-export function probeTone(
-  probe: LayerProbe | null,
-  thresholdMs: number,
-): "accent" | "warn" | "danger" {
-  if (!probe || probe.medianMs == null) return "danger";
-  return probe.medianMs > thresholdMs ? "warn" : "accent";
-}
-
 // ---------------------------------------------------------------- 站点检测（F15，docs/net-sites-plan.md）
 //
 // 与 prune_core::net::sites 一一对应（camelCase）。改这里必须同步 Rust 侧。
