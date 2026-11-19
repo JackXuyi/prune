@@ -17,7 +17,7 @@ import { LanBoard } from "./LanBoard";
  */
 export function DeviceBoard() {
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-3">
+    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 pt-3 pb-3">
       <div className="space-y-2.5">
         <HardwareStrip />
         <DiskHardwareStrip />

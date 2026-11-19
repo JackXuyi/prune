@@ -101,7 +101,7 @@ export function PortBoard({
   const otherN = Math.max(0, allEntries.length - watchedOnly - exposedOnly);
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
       <div className="flex items-center justify-between gap-4">
         <div className="min-w-0">
           {/* 页名在顶栏（spec §1.3）；副标区分「端口 / 局域网」两个子页 */}

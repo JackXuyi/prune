@@ -203,7 +203,7 @@ export function AppDetail({
     <div className="flex min-h-0 flex-1 flex-col">
       <TopBar onBack={onBack} onRefresh={() => void measureDisk(true)} busy={diskBusy} />
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-3">
         <div className="prune-anim space-y-3">
           {/* Hero */}
           <section className="flex items-start gap-3">

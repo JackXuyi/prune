@@ -583,7 +583,7 @@ export function MainWindow() {
               </div>
             </aside>
 
-            <main className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 pb-3.5 pt-3">
+            <main className="flex min-w-0 flex-1 flex-col overflow-x-hidden overflow-y-auto px-4 pb-3.5 pt-3">
               {selected ? (
                 <ProcessInspector proc={selected} onBack={() => select(null)} />
               ) : selectedFamilyMem ? (

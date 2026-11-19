@@ -62,7 +62,7 @@ export function VictimsBoard({
         <span>{t("memory.victims.ratioCol")}</span>
       </div>
 
-      <ul className="min-h-0 flex-1 overflow-y-auto">
+      <ul className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
         {topSwapped.map((p) => (
           <VictimRow
             key={`${p.pid}-${p.startTime}`}

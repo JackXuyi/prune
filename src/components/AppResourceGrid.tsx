@@ -478,7 +478,7 @@ export function AppResourceBoard({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-2.5 pb-3">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 pt-2.5 pb-3">
         {/* 自适应列数：卡片更窄、一屏更多；240px 是「图标 + 名称 + 三枚小簇」的下限 */}
         <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-2.5">
           {visible.map((r) => (
