@@ -215,7 +215,9 @@ pub fn run() {
 
             app.manage(Arc::new(sampler::MemState::new(store.clone())));
             // M21：store 同时注册为独立状态，清理落库（cut_log）与成绩单命令直接访问，
-            // 不再借道 MemState/TotalNetState
+            // 不再借道 MemState/TotalNetState。注意注册类型是 `Option<Arc<Store>>`
+            // （库打不开时为 None，纯内存模式）——消费方一律 try_state::<Option<..>>，
+            // 不要 state::<Arc<Store>>() 硬取（状态不存在会主线程 panic，f26 修过一次）
             app.manage(store.clone());
             app.manage(Arc::new(scan::DiskState::new()));
             app.manage(Arc::new(port_sampler::PortState::new()));

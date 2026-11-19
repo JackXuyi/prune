@@ -190,7 +190,12 @@ pub async fn port_round(app: &AppHandle, force: bool) -> Result<(), String> {
 
         // F22 基线漂移（docs/f22-port-baseline-plan.md）：diff 判定在核心层，
         // 这里只搬运。基线失败/缺失不阻塞快照（徽标缺失的代价远小于扫描失败）。
-        if let Some(store) = handle.try_state::<Arc<prune_core::db::Store>>() {
+        // 注册类型是 `Option<Arc<Store>>`（lib.rs）：库打不开时跳过基线判定，
+        // 不能用 state::<Arc<Store>>() 硬取（会在主线程 panic）
+        if let Some(store) = handle
+            .try_state::<Option<Arc<prune_core::db::Store>>>()
+            .and_then(|s| s.inner().clone())
+        {
             let now = snap.at;
             let baseline = match store.port_baseline_all() {
                 Ok(b) => b,

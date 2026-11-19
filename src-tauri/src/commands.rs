@@ -299,7 +299,14 @@ pub async fn mem_export_csv(
 ) -> Result<Option<String>, String> {
     use tauri_plugin_dialog::DialogExt;
 
-    let store = app.state::<std::sync::Arc<Store>>().inner().clone();
+    // 注册类型是 `Option<Arc<Store>>`（lib.rs）：库打不开时是 None（纯内存模式），
+    // 此时导出无事可做——返回友好错误而不是 panic（state::<Arc<Store>>() 会崩）
+    let Some(store) = app
+        .try_state::<Option<std::sync::Arc<Store>>>()
+        .and_then(|s| s.inner().clone())
+    else {
+        return Err("序列库不可用（本次启动运行在纯内存模式）".to_string());
+    };
     tauri::async_runtime::spawn_blocking(move || {
         let now = prune_core::swap::now_secs() as i64;
         let since = match since_hours {
@@ -345,7 +352,13 @@ pub fn swap_rate_report(
     app: AppHandle,
     hours: Option<u32>,
 ) -> Result<prune_core::mem::swap_rate::SwapRateReport, String> {
-    let store = app.state::<std::sync::Arc<Store>>().inner().clone();
+    // 同 mem_export_csv：store 可能是 None（纯内存模式），别用 state() 硬取
+    let Some(store) = app
+        .try_state::<Option<std::sync::Arc<Store>>>()
+        .and_then(|s| s.inner().clone())
+    else {
+        return Err("序列库不可用（本次启动运行在纯内存模式）".to_string());
+    };
     let hours = hours.unwrap_or(24).clamp(1, 168);
     let now = now_secs();
     let rows = store
