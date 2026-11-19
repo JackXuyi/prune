@@ -42,6 +42,10 @@ pub mod pet;
 pub mod prune_toml;
 pub mod reclaim;
 pub mod swap;
+/// 任务成本核算（F25，docs/f25-trace-plan.md）：观测壳同 `/usr/bin/time`，
+/// spawn 用户显式命令 + 逐轮采样出成本单。唯一有执行面的模块——
+/// 执行的是用户 `--` 后显式传入的命令，Prune 自身没有任何任务清单。
+pub mod trace;
 /// Windows 系统调用封装（GlobalMemoryStatusEx / Private Bytes），仅 Windows 编译
 #[cfg(windows)]
 pub mod win;

@@ -14,6 +14,9 @@ pub mod report;
 /// 自耗透明（F19）：Prune 自身的 footprint / CPU / 线程 / 库体积读数，
 /// 口径与内存页同源；缺数显「暂无」不显 0。
 pub mod self_footprint;
+/// swap 增速量化（F24，docs/f24-swap-rate-plan.md）：既有序列差分出
+/// 按进程增速榜与系统级双口径净速率；负差分不夹 0，pid 复用整组丢弃。
+pub mod swap_rate;
 pub mod system;
 pub mod workspace;
 

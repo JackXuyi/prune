@@ -36,6 +36,19 @@ pub struct MemReportRow {
     pub swapped: Option<u64>,
 }
 
+/// F24 swap 增速的原始行（`swap_rate_rows` 的产出，差分输入）。
+/// 与 `MemReportRow` 的差异：带上 `start_time` —— pid 复用校验（增速只算
+/// 同一次进程实例的首末差分）与「存活至今」判定都靠它。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SwapRateRow {
+    pub ts: i64,
+    pub pid: i32,
+    pub start_time: u64,
+    pub name: String,
+    pub family: String,
+    pub swapped: u64,
+}
+
 /// 应用小时聚合的**增量**（写入用）。
 ///
 /// 语义与 `net_daily` 一致：`sum` 类字段是「加上去」，`peak` 类字段取最大值。
@@ -318,6 +331,32 @@ impl Store {
                     family: r.get(3)?,
                     rss: r.get::<_, i64>(4)?.max(0) as u64,
                     swapped: r.get::<_, Option<i64>>(5)?.map(|s| s.max(0) as u64),
+                })
+            })?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(rows)
+    }
+
+    /// F24 swap 增速的全量行：只取 swapped 非空的样本（Windows 该列恒 NULL，
+    /// 查出来就是空集——口径缺失在核心层如实体现为「没有增速」，不是 0）。
+    /// 排序按 (pid, start_time, ts)：同 pid 的序列在核心层按首末差分消费。
+    pub fn swap_rate_rows(&self, since: i64) -> rusqlite::Result<Vec<SwapRateRow>> {
+        let conn = self.lock();
+        let mut stmt = conn.prepare(
+            "SELECT ts, pid, start_time, name, family, swapped
+             FROM mem_process
+             WHERE ts >= ?1 AND swapped IS NOT NULL
+             ORDER BY pid, start_time, ts",
+        )?;
+        let rows = stmt
+            .query_map(params![since], |r| {
+                Ok(SwapRateRow {
+                    ts: r.get(0)?,
+                    pid: r.get(1)?,
+                    start_time: r.get::<_, i64>(2)?.max(0) as u64,
+                    name: r.get(3)?,
+                    family: r.get(4)?,
+                    swapped: r.get::<_, i64>(5)?.max(0) as u64,
                 })
             })?
             .collect::<Result<Vec<_>, _>>()?;
