@@ -72,7 +72,8 @@ export function AppIcon({
           fontSize: size >= 64 ? 26 : 13,
           fontWeight: 650,
           letterSpacing: "-0.02em",
-          color: "#0b0e11",
+          // 徽标渐变两主题同色（固定材质），前景走独立令牌，不随主题翻转
+          color: "var(--color-badge-ink)",
         }}
       >
         {badge.letter}

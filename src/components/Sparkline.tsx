@@ -60,7 +60,9 @@ export function Sparkline({
     .join(" ");
   const area = `${line} L${W} ${H} L0 ${H} Z`;
 
-  const stroke = tone === "warn" ? "#f5b74a" : tone === "info" ? "#6aa9ff" : "#34d399";
+  // 走主题令牌：硬编码深色值会让浅色主题下线条停在浅色（对比度不足）
+  const stroke =
+    tone === "warn" ? "var(--color-warn)" : tone === "info" ? "var(--color-info)" : "var(--color-accent)";
 
   return (
     <svg
@@ -73,15 +75,15 @@ export function Sparkline({
     >
       <defs>
         <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={stroke} stopOpacity="0.28" />
-          <stop offset="100%" stopColor={stroke} stopOpacity="0" />
+          <stop offset="0%" style={{ stopColor: stroke, stopOpacity: 0.28 }} />
+          <stop offset="100%" style={{ stopColor: stroke, stopOpacity: 0 }} />
         </linearGradient>
       </defs>
       <path d={area} fill={`url(#${gradientId})`} />
       <path
         d={line}
         fill="none"
-        stroke={stroke}
+        style={{ stroke }}
         strokeWidth={1.5}
         strokeLinejoin="round"
         strokeLinecap="round"
