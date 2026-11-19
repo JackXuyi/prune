@@ -68,6 +68,9 @@ const zh = {
     dangerMark: "危险阈值 90%",
     usedPct: "{pct} 已用",
     bandTip: "色带阈值 75% / 90%（竖刻度）",
+    /** F24：近 1h 净增速（序列差分；负值 = 换回内存/释放） */
+    recent1h: "近 1h 净增速 {rate}",
+    recent1hTip: "近 1 小时系统级换出净变化（序列差分）；负值 = 换回内存/退出释放，不是脏数据",
   },
   pressure: {
     title: "内存压力",
@@ -83,6 +86,10 @@ const zh = {
   victims: {
     title: "换出受害者",
     subtitle: "存活但大部分在磁盘上",
+    /** F24：Δ 列（窗口首末样本差分） */
+    delta24h: "Δ24h",
+    deltaTip: "近 {h} 小时换出变化；负值 = 换回内存/退出释放，不是脏数据",
+    ratioCol: "占比",
   },
   deepUnavailable:
     "深探不可用：当前全部为 RSS 口径。macOS 请确认 /usr/bin/footprint 可执行；Windows 通常是该进程受保护或权限不足。",
@@ -231,6 +238,10 @@ const en: MessageTree<typeof zh> = {
     dangerMark: "Danger threshold 90%",
     usedPct: "{pct} used",
     bandTip: "Band thresholds 75% / 90% (tick marks)",
+    /** F24: 1h net swap rate (series diff; negative = swapped back in / released) */
+    recent1h: "1h net {rate}",
+    recent1hTip:
+      "Net system-level swap change over the last hour (series diff); negative = swapped back in / released, not dirty data",
   },
   pressure: {
     title: "Memory pressure",
@@ -246,6 +257,11 @@ const en: MessageTree<typeof zh> = {
   victims: {
     title: "Swap victims",
     subtitle: "Alive, but mostly on disk",
+    /** F24: delta column (first/last sample diff over the window) */
+    delta24h: "Δ24h",
+    deltaTip:
+      "Swap change over the last {h} h; negative = swapped back in / released, not dirty data",
+    ratioCol: "share",
   },
   deepUnavailable:
     "Deep scan unavailable: everything is on the RSS basis right now. On macOS check that /usr/bin/footprint is executable; on Windows the process is usually protected or you lack permission.",

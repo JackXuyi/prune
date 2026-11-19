@@ -18,7 +18,13 @@ import type {
 import type { LanSnapshot } from "../types/lan";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { DailyBucket, HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
-import type { LeakCase, MemSnapshot, Point, ProcMem } from "../types/mem";
+import type {
+  LeakCase,
+  MemSnapshot,
+  Point,
+  ProcMem,
+  SwapRateReport,
+} from "../types/mem";
 import type {
   DayTraffic,
   NetDiag,
@@ -326,6 +332,15 @@ export function memExportCsv(sinceHours?: number): Promise<string | null> {
   return invoke<string | null>("mem_export_csv", {
     sinceHours: sinceHours ?? null,
   });
+}
+
+/**
+ * F24 换出增速：读序列库既有 swapped 序列差分（零新增采集，不触发扫描）。
+ * 与 CLI `prune swap` / MCP swap_report 的 rates 同一聚合函数——三路同一数字
+ * 是 f24 验收项。打开内存页拉一次 + 每 60 s 轻刷新（24h 趋势不需要实时）。
+ */
+export function swapRateReport(hours?: number): Promise<SwapRateReport> {
+  return invoke<SwapRateReport>("swap_rate_report", { hours: hours ?? 24 });
 }
 
 // ---------------------------------------------------------------- 应用磁盘（M8）

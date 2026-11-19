@@ -240,3 +240,50 @@ export function swappedRatio(p: {
 export function isExact(f: FamilyMem): boolean {
   return f.footprint != null && f.deepCovered === f.processCount;
 }
+
+// ---------------------------------------------------------------- F24 换出增速
+
+/** 按进程的换出增速一行（窗口首末样本差分；负 delta = 换回内存/退出释放） */
+export interface ProcSwapRate {
+  pid: number;
+  name: string;
+  family: string;
+  firstSwapped: number;
+  lastSwapped: number;
+  deltaBytes: number;
+  rateMbH: number;
+  samples: number;
+  startConsistent: boolean;
+  firstTs: number;
+  lastTs: number;
+}
+
+/** 系统级净换出速率（双口径：sum 含退出释放、active 仅存活进程） */
+export interface SystemSwapRate {
+  sumDeltaBytes: number;
+  activeDeltaBytes: number;
+  rateMbH: number;
+  activeRateMbH: number;
+  processes: number;
+}
+
+/** 窗口覆盖情况（F20 gap 语义）：没跑的时段如实标注，不当成「没换出」 */
+export interface SwapCoverage {
+  requestedFrom: number;
+  actualFrom: number;
+  actualTo: number;
+  gaps: [number, number][];
+  pidReused: number;
+  /** 平台口径缺口说明（Windows 恒有值） */
+  note: string | null;
+}
+
+/** F24 换出增速报告（Rust `mem::swap_rate::SwapRateReport` 的镜像） */
+export interface SwapRateReport {
+  windowHours: number;
+  rates: ProcSwapRate[];
+  system: SystemSwapRate;
+  /** 近 1h 短窗；null = 1h 内凑不出一对样本（不是 0 增速） */
+  recent1h: SystemSwapRate | null;
+  coverage: SwapCoverage;
+}

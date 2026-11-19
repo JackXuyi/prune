@@ -25,7 +25,7 @@ import { useI18n } from "../i18n/store";
 import type { NoParamKey } from "../i18n/types";
 import { formatBytes, formatClock, formatPercent, formatRate, formatRelative, numOf, unitOf } from "../lib/format";
 import { useDialogA11y } from "../lib/dialogA11y";
-import { isTauri, killProcess } from "../lib/ipc";
+import { isTauri, killProcess, swapRateReport } from "../lib/ipc";
 import { useDiskStore } from "../stores/diskStore";
 import { useMemHistory, useMemStore } from "../stores/memStore";
 import { useNetDiagStore } from "../stores/netDiagStore";
@@ -39,6 +39,7 @@ import {
   totalOf,
   type FamilyMem,
   type ProcMem,
+  type SwapRateReport,
   type WorkspaceSource,
 } from "../types/mem";
 import { exposureMeta, portsOfPid } from "../types/net";
@@ -717,6 +718,7 @@ function FamilyRow({
 
 function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: number) => void }) {
   const snapshot = useMemStore((s) => s.snapshot);
+  const swapRates = useSwapRates();
   const { t } = useI18n();
   if (!snapshot) return null;
 
@@ -724,6 +726,9 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
   const swapRatio = swap.total > 0 ? swap.used / swap.total : 0;
   // 换出口径只在有换页计数的平台上存在；Windows 没有 → 整块隐藏，而不是显示「没有换出」
   const hasSwapMetrics = thrash != null;
+  // F24：Δ 列只在有增速数据时出现（Windows 无每进程换出口径 → 恒无数据，不画空列）
+  const deltaByPid = new Map((swapRates?.rates ?? []).map((r) => [r.pid, r.deltaBytes]));
+  const recent1hRate = formatSignedBytes(swapRates?.recent1h?.sumDeltaBytes ?? null, "/h");
   const swapHint =
     swap.fileCount == null
       ? t("memory.swap.hintPagefile", {
@@ -829,6 +834,11 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
           </div>
           <div className="mt-1 flex items-baseline justify-between text-[9.5px] text-ink-faint">
             <span>{t("memory.swap.usedPct", { pct: formatPercent(swapRatio) })}</span>
+            {recent1hRate ? (
+              <span title={t("memory.swap.recent1hTip")}>
+                {t("memory.swap.recent1h", { rate: recent1hRate })}
+              </span>
+            ) : null}
             <span>{t("memory.swap.bandTip")}</span>
           </div>
         </div>
@@ -876,15 +886,34 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
           {topSwapped.length === 0 ? (
             <p className="mt-2 py-1 text-[11px] text-ink-faint">{t("common.empty.swapped")}</p>
           ) : (
-            <ul className="mt-1.5">
-              {topSwapped.map((p) => (
-                <VictimRow
-                  key={`${p.pid}-${p.startTime}`}
-                  proc={p}
-                  onKillMenu={onKillMenu}
-                />
-              ))}
-            </ul>
+            <>
+              {/* F24：Δ24h 列头（有增速数据才画；Windows 无口径 → 恒无数据不画） */}
+              {deltaByPid.size > 0 ? (
+                <div className="mt-1.5 flex items-center">
+                  <span className="min-w-0 flex-1" />
+                  <span
+                    className="w-16 shrink-0 text-right text-[9.5px] text-ink-faint"
+                    title={t("memory.victims.deltaTip", { h: swapRates?.windowHours ?? 24 })}
+                  >
+                    {t("memory.victims.delta24h")}
+                  </span>
+                  <span className="w-14 shrink-0 text-right text-[9.5px] text-ink-faint">
+                    {t("memory.victims.ratioCol")}
+                  </span>
+                </div>
+              ) : null}
+              <ul className="mt-1.5">
+                {topSwapped.map((p) => (
+                  <VictimRow
+                    key={`${p.pid}-${p.startTime}`}
+                    proc={p}
+                    delta={deltaByPid.get(p.pid) ?? null}
+                    deltaHours={swapRates?.windowHours ?? null}
+                    onKillMenu={onKillMenu}
+                  />
+                ))}
+              </ul>
+            </>
           )}
         </section>
       ) : null}
@@ -896,6 +925,39 @@ function Overview({ onKillMenu }: { onKillMenu: (proc: ProcMem, x: number, y: nu
       ) : null}
     </div>
   );
+}
+
+/**
+ * F24 换出增速（打开内存页拉一次 + 每 60 s 轻刷新）：读序列库既有 swapped
+ * 差分，零新增采集。失败静默——Δ 列不出现，不冒充「没有换出」。
+ */
+function useSwapRates(): SwapRateReport | null {
+  const [report, setReport] = useState<SwapRateReport | null>(null);
+  useEffect(() => {
+    if (!isTauri()) return;
+    let alive = true;
+    const load = () =>
+      swapRateReport(24)
+        .then((r) => {
+          if (alive) setReport(r);
+        })
+        .catch(() => {});
+    load();
+    const id = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(id);
+    };
+  }, []);
+  return report;
+}
+
+/** 带符号字节串：+12.3 MB / −4.0 MB / —（null = 数据不足，不冒充 0） */
+function formatSignedBytes(bytes: number | null, suffix = ""): string | null {
+  if (bytes == null) return null;
+  if (bytes === 0) return "0 B" + suffix;
+  const sign = bytes > 0 ? "+" : "-";
+  return sign + formatBytes(Math.abs(bytes)) + suffix;
 }
 
 /** 「可用」的补注：macOS 给的是 Pages free，Windows 是 AvailPhys，语义不同别混着说 */
@@ -963,14 +1025,21 @@ function pressureCaption(
 
 function VictimRow({
   proc,
+  delta,
+  deltaHours,
   onKillMenu,
 }: {
   proc: ProcMem;
+  /** F24：窗口首末样本差分（字节）；null = 该进程不在增速榜（样本不足/pid 复用剔除） */
+  delta: number | null;
+  /** Δ 的窗口小时数（表头/提示共用） */
+  deltaHours: number | null;
   onKillMenu: (proc: ProcMem, x: number, y: number) => void;
 }) {
   const select = useMemStore((s) => s.select);
   const ratio = swappedRatio(proc);
   const { t } = useI18n();
+  const deltaText = formatSignedBytes(delta);
   return (
     <li>
       <button
@@ -988,6 +1057,16 @@ function VictimRow({
           <span className="shrink-0 font-mono text-[11px] tabular-nums text-warn">
             {formatBytes(proc.swapped ?? 0)}
           </span>
+          {deltaHours != null ? (
+            <span
+              className={`w-16 shrink-0 text-right font-mono text-[10px] tabular-nums ${
+                (delta ?? 0) > 0 ? "text-warn" : "text-ink-faint"
+              }`}
+              title={t("memory.victims.deltaTip", { h: deltaHours ?? 24 })}
+            >
+              {deltaText ?? "—"}
+            </span>
+          ) : null}
           <span className="w-14 shrink-0 text-right text-[10px] text-ink-faint">
             {ratio != null ? formatPercent(ratio) : "—"}
           </span>
