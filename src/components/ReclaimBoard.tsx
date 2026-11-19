@@ -11,6 +11,7 @@ import { StackBar } from "./charts/StackBar";
 import { BarList } from "./charts/BarList";
 import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
+import { DiskHardwareStrip } from "./DiskHardwareStrip";
 import { ProjectHealthCard } from "./ProjectHealthCard";
 import { OpenFilesCard } from "./OpenFilesCard";
 import {
@@ -264,6 +265,8 @@ export function ReclaimBoard() {
   return (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-3">
+        {/* f26 硬件读数条：磁盘 I/O（门控差分）+ SMART 状态灯（1 h 缓存） */}
+        <DiskHardwareStrip />
         {/* F23 占用反查卡：与分级清理链路正交——那是「可以删什么」，这是「谁占着」 */}
         <OpenFilesCard />
         {/* 头部：可回收总额（顶栏承担页名，这里只放这一页的核心事实） */}

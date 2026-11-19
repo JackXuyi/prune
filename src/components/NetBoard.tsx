@@ -4,6 +4,7 @@ import type { DayTraffic, IfaceRate, LayerProbe, NetTotalSample, NetTotalStatus 
 import { formatBytes, formatClock, recentDays } from "../lib/format";
 import { i18nFor } from "../i18n";
 import { useI18n } from "../i18n/store";
+import { isTauri, pubIpGet } from "../lib/ipc";
 import type { Locale } from "../i18n/types";
 import { useMemStore } from "../stores/memStore";
 import { useNetDiagStore } from "../stores/netDiagStore";
@@ -114,6 +115,8 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
       </div>
 
       <Aggregates sample={sample} avgDown={avg.downBps} avgUp={avg.upBps} />
+
+      <PublicIp />
 
       <section className="mt-4 border-b border-hairline-soft pb-4">
         <SectionHead title={t("net.days.title")} hint={t("net.days.hint")} />
@@ -308,6 +311,62 @@ function MiniStat({
       </div>
       <div className="mt-1 font-mono text-[14px] leading-none tabular-nums text-ink">{main}</div>
       <div className="mt-1 text-[10px] leading-snug text-ink-faint">{sub}</div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- 公网 IP（f26 G-08）
+
+/**
+ * 公网 IP 读数行：进监测页拉一次（后端 10 min 缓存），失败显「不可用 + 重试」。
+ * 隐私口径（方案 D5）：只发一个无参数 GET，不携带用户数据；设置页可关。
+ */
+function PublicIp() {
+  const { t } = useI18n();
+  const [ip, setIp] = useState<{ ip: string; source: string } | null>(null);
+  const [failed, setFailed] = useState(false);
+
+  const load = (force: boolean) => {
+    if (!isTauri()) return;
+    void pubIpGet(force)
+      .then((r) => {
+        setIp(r);
+        setFailed(r == null);
+      })
+      .catch(() => setFailed(true));
+  };
+
+  useEffect(() => {
+    load(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  return (
+    <div className="flex items-baseline justify-between border-b border-hairline-soft py-3">
+      <span className="text-[10px] tracking-wide text-ink-faint" title={ip ? t("net.pubip.title", { source: ip.source }) : undefined}>
+        {t("net.pubip.label")}
+      </span>
+      {ip ? (
+        <button
+          type="button"
+          onClick={() => load(true)}
+          title={t("net.pubip.refreshTitle")}
+          className="font-mono text-[13px] tabular-nums text-ink transition-opacity hover:opacity-70"
+        >
+          {ip.ip}
+        </button>
+      ) : (
+        <span className="flex items-center gap-2 text-[11px] text-ink-faint">
+          {failed ? t("net.pubip.unavailable") : t("common.progress.sampling")}
+          <button
+            type="button"
+            onClick={() => load(true)}
+            className="text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
+          >
+            {t("common.action.retry")}
+          </button>
+        </span>
+      )}
     </div>
   );
 }

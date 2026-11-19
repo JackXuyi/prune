@@ -14,20 +14,32 @@ use tauri::Manager;
 
 mod autostart;
 mod commands;
+mod disk_io_sampler;
 mod dock;
+mod hw;
 mod i18n;
 mod lan;
 mod net_diag;
 mod net_sampler;
 mod net_sites;
 mod port_sampler;
+mod ps_sampler;
+mod pubip;
 mod report;
 mod sampler;
 mod scan;
 mod settings;
+mod smc_sampler;
 mod tray;
 mod tray_icon;
 mod updater;
+
+// SMC 私有接口（f26 阶段三）：非 macOS 走 stub 空实现，保证命令注册一致
+#[cfg(target_os = "macos")]
+mod smc;
+#[cfg(not(target_os = "macos"))]
+#[path = "smc_stub.rs"]
+mod smc;
 
 // NSPopover 原生菜单栏面板（M3，docs/ns-popover-plan.md）
 #[cfg(target_os = "macos")]
@@ -144,7 +156,18 @@ pub fn run() {
             island::island_ready,
             island::island_settings_get,
             island::island_settings_set,
-            island::island_status
+            island::island_status,
+            // f26 硬件模块（docs/f26-hardware-modules-plan.md）
+            commands::disk_smart,
+            pubip::pub_ip_get,
+            ps_sampler::power_snapshot,
+            ps_sampler::power_set_active,
+            disk_io_sampler::disk_io_snapshot,
+            disk_io_sampler::disk_io_set_active,
+            smc_sampler::cpu_temp_snapshot,
+            smc_sampler::cpu_temp_set_active,
+            hw::hw_flags,
+            hw::hw_flag_set
         ])
         .setup(|app| {
             // 资源守门员形态：常驻菜单栏，不占 Dock（主窗口打开期间会临时
@@ -208,6 +231,12 @@ pub fn run() {
             app.manage(net_sites::SiteState::new());
             // 局域网设备（docs/m18-lan-devices-spec.md §10）：同上，外加 scanning 门
             app.manage(lan::LanState::new());
+            // f26 硬件模块：电源 / 磁盘 I/O / SMC 温度 / SMART 缓存 / 公网 IP
+            app.manage(Arc::new(ps_sampler::PowerState::new()));
+            app.manage(Arc::new(disk_io_sampler::DiskIoState::new()));
+            app.manage(Arc::new(smc_sampler::CpuTempState::new()));
+            app.manage(Arc::new(commands::DiskSmartState::new()));
+            app.manage(Arc::new(pubip::PubIpState::new()));
             app.manage(Arc::new(updater::UpdateState::new()));
             app.manage(Arc::new(updater::UpdateDialogState::new()));
 
@@ -246,6 +275,22 @@ pub fn run() {
             let total_net_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 net_sampler::run_total_speed(total_net_handle).await;
+            });
+
+            // f26：电源（30 s 低频，概览 tab 可见时）与 CPU 温度（30 s，同门控）
+            let power_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                ps_sampler::run_power(power_handle).await;
+            });
+            let temp_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                smc_sampler::run_cpu_temp(temp_handle).await;
+            });
+
+            // f26：磁盘 I/O（2 s，存储 tab 可见时才跑 iostat，切走即停）
+            let disk_io_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                disk_io_sampler::run_disk_io(disk_io_handle).await;
             });
 
             // 磁盘侧：启动 30 s 后首扫，此后每周静默刷新

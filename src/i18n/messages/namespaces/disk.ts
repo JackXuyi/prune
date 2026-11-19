@@ -19,6 +19,17 @@ const zh = {
   scanning: "正在扫描…",
   scanningWith: "正在扫描…（{done}/{total}）",
   progressLine: "扫描中 {done}/{total} · {phase} · 已统计 {bytes}",
+  /** f26 硬件读数条：磁盘 I/O（按物理盘差分，真读写拆分）+ SMART 状态灯 */
+  hw: {
+    title: "硬件读数",
+    hint: "本 tab 可见时采样 · 切走即停",
+    ioUnavailable: "磁盘 I/O 暂不可读",
+    smart: {
+      verified: "已验证",
+      failing: "警告",
+      unsupported: "不支持",
+    },
+  },
   /** F23 占用反查：谁占着这块盘（只查不解） */
   openFiles: {
     title: "占用反查",
@@ -377,6 +388,16 @@ const en: MessageTree<typeof zh> = {
   scanning: "Scanning…",
   scanningWith: "Scanning… ({done}/{total})",
   progressLine: "Scanning {done}/{total} · {phase} · {bytes} counted so far",
+  hw: {
+    title: "Hardware readings",
+    hint: "sampled while this tab is visible · stops when you leave",
+    ioUnavailable: "Disk I/O is temporarily unavailable",
+    smart: {
+      verified: "Verified",
+      failing: "Failing",
+      unsupported: "Unsupported",
+    },
+  },
   /** F23 Open Files holders lookup (read-only, never resolves) */
   openFiles: {
     title: "Holders lookup",

@@ -1166,6 +1166,117 @@ pub fn archive_cancel() -> bool {
     ARCHIVE_BUSY.load(Ordering::SeqCst)
 }
 
+// ---------------------------------------------------------------- SMART（f26 G-03）
+
+/// 内置盘 SMART 状态。口径（方案 D3）：只做状态灯，不做属性表——
+/// macOS 上详细属性无公开 API，诚实降级比假数据好。
+#[derive(Debug, Clone, serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DiskSmart {
+    /// 磁盘节点（disk0）
+    pub bsd: String,
+    /// "verified" | "failing" | "unsupported"（外置盘 / 虚拟盘通常无 SMART）
+    pub status: String,
+}
+
+pub struct DiskSmartState {
+    /// 1 h 内存缓存（方案 §五 阶段二）：SMART 状态不会分钟级变化
+    cache: Mutex<Option<(Vec<DiskSmart>, std::time::Instant)>>,
+}
+
+impl Default for DiskSmartState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl DiskSmartState {
+    pub fn new() -> Self {
+        Self {
+            cache: Mutex::new(None),
+        }
+    }
+}
+
+/// diskutil info -plist 的 SMARTStatus 字段抓取：XML 最小解析（不引 plist 库），
+/// 找到 `<key>SMARTStatus</key>` 后面的下一个 `<string>…</string>`。
+fn parse_smart_status(plist: &str) -> Option<&str> {
+    const KEY: &str = "<key>SMARTStatus</key>";
+    let key_pos = plist.find(KEY)? + KEY.len();
+    let rest = &plist[key_pos..];
+    let tag_start = rest.find("<string>")? + "<string>".len();
+    let end = rest[tag_start..].find("</string>")? + tag_start;
+    Some(rest[tag_start..end].trim())
+}
+
+/// 枚举物理磁盘节点（disk0/disk1…）：从 sysinfo 的挂载点反推，去重排序。
+fn physical_bsd_names() -> Vec<String> {
+    let mut out = Vec::new();
+    for d in sysinfo::Disks::new_with_refreshed_list().list() {
+        let mp = d.mount_point().to_string_lossy();
+        // 挂载点形如 /dev/disk3s1 → 取 diskN 前缀；容器卷共享同一物理盘，天然去重
+        if let Some(rest) = mp.strip_prefix("/dev/disk") {
+            if let Some(n) = rest.split(['s', 'p']).next() {
+                if !n.is_empty() && n.chars().all(|c| c.is_ascii_digit()) {
+                    out.push(format!("disk{n}"));
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+#[tauri::command]
+pub async fn disk_smart(
+    state: State<'_, Arc<DiskSmartState>>,
+    handle: tauri::AppHandle,
+) -> Result<Vec<DiskSmart>, String> {
+    if !crate::settings::get_bool(&handle, "hw.smart.enabled").unwrap_or(true) {
+        return Ok(Vec::new());
+    }
+    // 1 h 缓存命中直接回
+    {
+        let cache = state.cache.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((v, at)) = cache.as_ref() {
+            if at.elapsed() < std::time::Duration::from_secs(3600) {
+                return Ok(v.clone());
+            }
+        }
+    }
+
+    let bsds = physical_bsd_names();
+    let mut out = Vec::new();
+    for bsd in bsds {
+        let out_text = tokio::process::Command::new("diskutil")
+            .args(["info", "-plist", &format!("/dev/{bsd}")])
+            .stdin(std::process::Stdio::null())
+            .output()
+            .await
+            .map_err(|e| format!("diskutil: {e}"))?;
+        if !out_text.status.success() {
+            continue;
+        }
+        let text = String::from_utf8_lossy(&out_text.stdout);
+        let status = match parse_smart_status(&text) {
+            Some("Verified") => "verified",
+            Some("Failing") | Some("Failed") => "failing",
+            _ => "unsupported",
+        };
+        out.push(DiskSmart {
+            bsd,
+            status: status.to_string(),
+        });
+    }
+    // 结果非空才写缓存（枚举失败时允许下次重试）
+    if !out.is_empty() {
+        *state.cache.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((out.clone(), std::time::Instant::now()));
+    }
+    Ok(out)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1202,5 +1313,19 @@ mod tests {
         let items = vec![item("/c/a", "npm 缓存", 100)];
         let cuts = cut_entries(&items, &HashSet::new(), &HashSet::new());
         assert!(cuts.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod smart_tests {
+    use super::parse_smart_status;
+
+    #[test]
+    fn smart_status_parses_real_plist_shape() {
+        let plist = "<dict><key>SMARTStatus</key>\n\t<string>Verified</string>\n</dict>";
+        assert_eq!(parse_smart_status(plist), Some("Verified"));
+        let plist2 = "<key>SMARTStatus</key><string>Failing</string><key>Other</key>";
+        assert_eq!(parse_smart_status(plist2), Some("Failing"));
+        assert_eq!(parse_smart_status("<key>Other</key>"), None);
     }
 }

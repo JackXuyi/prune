@@ -27,6 +27,7 @@ import { cutReport, isTauri, type CutReport } from "../lib/ipc";
 import { devCutReport } from "../lib/devFixture";
 import { NetDirectionReading } from "./stats/NetReading";
 import { DomainCard } from "./stats/DomainCard";
+import { HardwareStrip } from "./stats/HardwareStrip";
 
 import { useEffect, useState } from "react";
 
@@ -353,6 +354,9 @@ export function StatsBoard({
       {/* W2/D-07 本地服务卡：关注层 + 冲突的常驻读数。复用 30 s 轮的同一份快照，
           零新增采样；冲突判定与 island 同口径（TCP 且 ≥2 个不同 pid） */}
       <LocalServiceCard ports={ports} onOpenPort={(port) => { onFocusPort?.(port); onDrill("ports"); }} />
+
+      {/* f26 硬件读数条（电池/蓝牙配件电量 + CPU 温度）：门控采样，失败即隐藏 */}
+      <HardwareStrip />
 
       {/* 剪除成绩单（M21）：只统计你亲手剪掉的，本地 SQLite append-only。
           左：累计 + 换算；右：Top3。横排是为了在 700 高的窗口里和上面几段一起首屏读完。 */}

@@ -87,6 +87,13 @@ const zh = {
     degradedOther: "按应用暂时不可读",
   },
 
+  pubip: {
+    label: "公网 IP",
+    title: "出口 IP（来源 {source}）；点击刷新",
+    refreshTitle: "立即刷新（绕过 10 分钟缓存）",
+    unavailable: "不可用",
+  },
+
   footnote:
     "口径：网卡计数器差分，排除回环与虚拟接口；「今日」为 Prune 运行期间累计（本地日期，每分钟落库），未运行时段无法回填。按应用来自 nettop，与网卡口径不必相等 ——一份按网卡、一份按进程，差几个百分点属正常。",
 
@@ -343,6 +350,13 @@ const en: MessageTree<typeof zh> = {
     degradedUnavailable: "Per-app data unavailable: {why} (the main numbers and today are unaffected)",
     nettopMissing: "nettop unavailable",
     degradedOther: "Per-app data is temporarily unavailable",
+  },
+
+  pubip: {
+    label: "Public IP",
+    title: "Egress IP (source: {source}); click to refresh",
+    refreshTitle: "Refresh now (bypass the 10-minute cache)",
+    unavailable: "Unavailable",
   },
 
   footnote:

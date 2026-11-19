@@ -16,9 +16,9 @@ import { invoke } from "@tauri-apps/api/core";
 import { AboutSection } from "./AboutSection";
 import { LanguageSection } from "./LanguageSection";
 import { ReportSection } from "./ReportSection";
-import { Badge } from "../components/primitives";
+import { Badge, toast } from "../components/primitives";
 import { useI18n } from "../i18n/store";
-import { isTauri, pruneTomlTemplate, autostartGet, autostartSet } from "../lib/ipc";
+import { isTauri, pruneTomlTemplate, autostartGet, autostartSet, hwFlags, hwFlagSet } from "../lib/ipc";
 import { writeClipboard } from "../lib/clipboard";
 import { getTheme, setTheme, subscribeTheme, type ThemeMode } from "../lib/theme";
 import { usePortStore } from "../stores/portStore";
@@ -47,6 +47,15 @@ interface IslandStatus {
 
 const SAVE_DEBOUNCE_MS = 400;
 
+/** f26 硬件模块：UI 呈现顺序与文案键（键名即 settings.json 键） */
+const HW_SECTIONS = [
+  { key: "hw.diskIo.enabled", titleKey: "settings.hw.diskIo.title", descKey: "settings.hw.diskIo.desc", enableKey: "settings.hw.diskIo.enable" },
+  { key: "hw.smart.enabled", titleKey: "settings.hw.smart.title", descKey: "settings.hw.smart.desc", enableKey: "settings.hw.smart.enable" },
+  { key: "hw.power.enabled", titleKey: "settings.hw.power.title", descKey: "settings.hw.power.desc", enableKey: "settings.hw.power.enable" },
+  { key: "hw.cpuTemp.enabled", titleKey: "settings.hw.cpuTemp.title", descKey: "settings.hw.cpuTemp.desc", enableKey: "settings.hw.cpuTemp.enable" },
+  { key: "net.publicIp.enabled", titleKey: "settings.hw.pubIp.title", descKey: "settings.hw.pubIp.desc", enableKey: "settings.hw.pubIp.enable" },
+] as const;
+
 const DEFAULTS: IslandSettings = {
   enabled: true,
   cpuPct: 90,
@@ -69,6 +78,8 @@ export function SettingsBoard() {
 
   const [cfg, setCfg] = useState<IslandSettings | null>(null);
   const [status, setStatus] = useState<IslandStatus | null>(null);
+  // f26 硬件模块开关：settings.json 布尔键（hwFlags/hwFlagSet），乐观更新
+  const [hwFlagsMap, setHwFlagsMap] = useState<Map<string, boolean> | null>(null);
   // 开机自启动（docs/autostart-plan.md）：与灵动岛设置不同源——状态直接问系统
   // （LaunchAgent plist），不落 settings.json；null = 还没读到
   const [autostartOn, setAutostartOn] = useState<boolean | null>(null);
@@ -125,6 +136,30 @@ export function SettingsBoard() {
   const update = (patch: Partial<IslandSettings>) => {
     dirty.current = true;
     setCfg((prev) => (prev ? { ...prev, ...patch } : prev));
+  };
+
+  // f26 硬件模块开关：mount 读全量；写失败回滚 + toast
+  useEffect(() => {
+    if (!isTauri()) return;
+    hwFlags()
+      .then((fs) => setHwFlagsMap(new Map(fs.map((f) => [f.key, f.enabled]))))
+      .catch(() => setHwFlagsMap(new Map()));
+  }, []);
+
+  const setHwFlag = (key: string, v: boolean) => {
+    setHwFlagsMap((prev) => {
+      const m = new Map(prev ?? []);
+      m.set(key, v);
+      return m;
+    });
+    hwFlagSet(key, v).catch(() => {
+      setHwFlagsMap((prev) => {
+        const m = new Map(prev ?? []);
+        m.set(key, !v);
+        return m;
+      });
+      toast(t("settings.hw.saveFailed"), "error");
+    });
   };
 
   /**
@@ -313,6 +348,34 @@ export function SettingsBoard() {
               label={t("settings.portsProbe.enable")}
             />
           </div>
+        </section>
+
+        {/* f26 硬件模块开关（D7）：settings.json 布尔键，默认全开。
+            乐观更新 + 失败回滚：开关拨下去 UI 立即翻转，写盘失败回拨并提示 */}
+        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
+          <div className="mb-2 flex items-baseline justify-between">
+            <span className="text-[12px] font-medium">{t("settings.hw.title")}</span>
+            <span className="text-[10px] text-ink-faint">{t("settings.hw.tag")}</span>
+          </div>
+          {hwFlagsMap == null ? (
+            <p className="text-[11px] text-ink-faint">{t("settings.loading")}</p>
+          ) : (
+            <ul className="space-y-2.5">
+              {HW_SECTIONS.map((s) => (
+                <li key={s.key} className="flex items-start justify-between gap-4">
+                  <div className="min-w-0">
+                    <div className="text-[11.5px] text-ink">{t(s.titleKey)}</div>
+                    <p className="mt-0.5 text-[10px] leading-4 text-ink-faint">{t(s.descKey)}</p>
+                  </div>
+                  <Switch
+                    checked={hwFlagsMap.get(s.key) ?? true}
+                    onChange={(v) => setHwFlag(s.key, v)}
+                    label={t(s.enableKey)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         <section

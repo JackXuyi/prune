@@ -16,6 +16,7 @@ import { panel } from "./namespaces/panel";
 import { ports } from "./namespaces/ports";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
+import { hw } from "./namespaces/hw";
 import { stats } from "./namespaces/stats";
 import { update } from "./namespaces/update";
 
@@ -23,6 +24,7 @@ export const zh = {
   chart: chart.zh,
   common: common.zh,
   disk: disk.zh,
+  hw: hw.zh,
   island: island.zh,
   lan: lan.zh,
   memory: memory.zh,

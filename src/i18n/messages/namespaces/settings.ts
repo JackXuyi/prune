@@ -61,6 +61,36 @@ const zh = {
     desc: "开启后端口页每轮扫描会对关注层端口发一次本机握手（Web / MCP / 数据库协议），把「推断」升级为「确认」。只连 127.0.0.1，结果按进程缓存——对 MCP server 不会重复建会话。",
     enable: "启用自动探测",
   },
+  hw: {
+    title: "硬件模块",
+    tag: "默认全开 · 关闭即停采",
+    saveFailed: "开关保存失败，已回拨",
+    diskIo: {
+      title: "磁盘 I/O",
+      desc: "存储页按物理盘显示读 / 写速率。本 tab 可见时每 2 秒差分一次，切走即停。",
+      enable: "启用磁盘 I/O",
+    },
+    smart: {
+      title: "SMART 状态灯",
+      desc: "内置盘健康状态（已验证 / 警告 / 不支持）。每小时最多查一次 diskutil，外置盘通常不支持。",
+      enable: "启用 SMART 状态灯",
+    },
+    power: {
+      title: "电池与配件电量",
+      desc: "概览页显示内置电池（电量 / 充电 / 剩余时间）与蓝牙键盘、鼠标、耳机的电量。30 秒低频采样。",
+      enable: "启用电池与配件电量",
+    },
+    cpuTemp: {
+      title: "CPU 温度",
+      desc: "通过 SMC 读取温度候选键取中位数。读不到的机器上对应卡片自动隐藏，不影响其他功能。",
+      enable: "启用 CPU 温度",
+    },
+    pubIp: {
+      title: "公网 IP",
+      desc: "网络页显示出口 IP。只发一个无参数请求到公共服务，不携带任何数据，结果缓存 10 分钟。",
+      enable: "显示公网 IP",
+    },
+  },
   cpu: {
     title: "CPU 暴走",
     tag: "判定逻辑在 prune-core，可单测",
@@ -198,6 +228,36 @@ const en: MessageTree<typeof zh> = {
     tag: "Focus-layer TCP ports · local handshake",
     desc: "When on, each port scan handshakes once with focus-layer ports (Web / MCP / database protocols), upgrading \"inferred\" to \"confirmed\". Only 127.0.0.1 is contacted, and results are cached per process — MCP servers never get duplicate sessions.",
     enable: "Enable auto-probe",
+  },
+  hw: {
+    title: "Hardware modules",
+    tag: "all on by default · off means no sampling",
+    saveFailed: "Failed to save the switch; reverted",
+    diskIo: {
+      title: "Disk I/O",
+      desc: "Per-physical-disk read / write rates on the storage page. Diffs every 2 s while the tab is visible and stops when you leave.",
+      enable: "Enable disk I/O",
+    },
+    smart: {
+      title: "SMART status light",
+      desc: "Internal-disk health (verified / failing / unsupported). Queries diskutil at most once per hour; external drives usually have none.",
+      enable: "Enable SMART status light",
+    },
+    power: {
+      title: "Battery & accessories",
+      desc: "Internal battery (level / charging / time left) and Bluetooth keyboard, mouse, headphone levels on the overview. 30 s low-frequency sampling.",
+      enable: "Enable battery & accessories",
+    },
+    cpuTemp: {
+      title: "CPU temperature",
+      desc: "Reads candidate SMC keys and takes the median. On machines where it can't be read, the card simply hides — nothing else is affected.",
+      enable: "Enable CPU temperature",
+    },
+    pubIp: {
+      title: "Public IP",
+      desc: "Shows your egress IP on the network page. Sends one parameter-free request to a public service, carries no data, cached for 10 minutes.",
+      enable: "Show public IP",
+    },
   },
   cpu: {
     title: "CPU runaway",

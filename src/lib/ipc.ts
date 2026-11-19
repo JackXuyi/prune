@@ -16,6 +16,14 @@ import type {
   OpenFilesReport,
 } from "../types/disk";
 import type { LanSnapshot } from "../types/lan";
+import type {
+  CpuTempSnapshot,
+  DiskIoSnapshot,
+  DiskSmart,
+  HwFlag,
+  PowerSnapshot,
+  PubIp,
+} from "../types/hardware";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
 import type { DailyBucket, HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
 import type {
@@ -592,4 +600,57 @@ export function netSitesCancel(): Promise<void> {
 /** 生成 Markdown 结果并写入系统剪贴板，返回字符数（Rust 侧原生写） */
 export function netSitesCopyReport(): Promise<number> {
   return invoke<number>("net_sites_copy_report");
+}
+
+// ---------------------------------------------------------------- f26 硬件模块
+// 契约见 docs/f26-hardware-modules-plan.md §五。全部「读最新快照」语义：
+// 采样由 Rust 侧门控循环推进，前端只负责 set_active + 轮询快照。
+
+/** 电源快照（电池 + 蓝牙配件电量）；未采集 = null */
+export function powerSnapshot(): Promise<PowerSnapshot | null> {
+  return invoke<PowerSnapshot | null>("power_snapshot");
+}
+
+/** 概览 tab 可见性门控：true 时 30 s 低频采样，false 时完全不采 */
+export function powerSetActive(active: boolean): Promise<void> {
+  return invoke<void>("power_set_active", { active });
+}
+
+/** CPU 温度快照（SMC 候选键中位数）；不可用 = null（前端整卡隐藏） */
+export function cpuTempSnapshot(): Promise<CpuTempSnapshot | null> {
+  return invoke<CpuTempSnapshot | null>("cpu_temp_snapshot");
+}
+
+export function cpuTempSetActive(active: boolean): Promise<void> {
+  return invoke<void>("cpu_temp_set_active", { active });
+}
+
+/** 磁盘 I/O 快照（按物理盘差分）；warmup/不可用 = null */
+export function diskIoSnapshot(): Promise<DiskIoSnapshot | null> {
+  return invoke<DiskIoSnapshot | null>("disk_io_snapshot");
+}
+
+/** 存储 tab 可见性门控 */
+export function diskIoSetActive(active: boolean): Promise<void> {
+  return invoke<void>("disk_io_set_active", { active });
+}
+
+/** SMART 状态灯；开关关闭时返回空数组（前端不渲染） */
+export function diskSmart(): Promise<DiskSmart[]> {
+  return invoke<DiskSmart[]>("disk_smart");
+}
+
+/** 公网 IP；force 只由用户点「刷新」触发（绕过 10 min 缓存） */
+export function pubIpGet(force = false): Promise<PubIp | null> {
+  return invoke<PubIp | null>("pub_ip_get", { force });
+}
+
+/** 硬件模块开关：读全量 */
+export function hwFlags(): Promise<HwFlag[]> {
+  return invoke<HwFlag[]>("hw_flags");
+}
+
+/** 硬件模块开关：写单个（白名单键，未知键后端报错） */
+export function hwFlagSet(key: string, enabled: boolean): Promise<void> {
+  return invoke<void>("hw_flag_set", { key, enabled });
 }
