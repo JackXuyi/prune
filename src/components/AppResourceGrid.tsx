@@ -4,7 +4,18 @@ import { CellBar } from "./CellBar";
 import { EmptyState } from "./EmptyArt";
 import { Btn } from "./primitives";
 import { AppIcon } from "./AppIcon";
-import { ChevronRightIcon } from "./icons";
+import {
+  ChipIcon,
+  ChevronRightIcon,
+  DatabaseIcon,
+  DownloadIcon,
+  LinkIcon,
+  MemoryCloudIcon,
+  PortJackIcon,
+  SearchIcon,
+  StackIcon,
+} from "./icons";
+import { AppSummaryRibbon } from "./resources/AppSummaryRibbon";
 import { useI18n } from "../i18n/store";
 import type { NoParamKey } from "../i18n/types";
 import { devBundles } from "../lib/devFixture";
@@ -12,6 +23,7 @@ import { formatBytes } from "../lib/format";
 import { appBundles, isTauri } from "../lib/ipc";
 import { useAppIcons } from "../lib/useAppIcons";
 import { type BundleMap, type BundleSize } from "../types/appdisk";
+import type { SortKey } from "../types/appsort";
 import { isExact, totalOf, type FamilyMem, type ProcMem } from "../types/mem";
 import {
   connsOfPids,
@@ -30,16 +42,18 @@ const DEFAULT_VISIBLE = 12;
 /** 进程数到这个量级就标警示色：Chrome / Electron 家族的典型「进程爆炸」信号 */
 const PROC_WARN = 20;
 
-type SortKey = "mem" | "cpu" | "procs" | "disk" | "ports" | "down";
-
-/** UI v4：排序 chip 带域色点——颜色即语义（§3.2），mem 蓝 / cpu 紫 / net 青 */
-const SORTS: { key: SortKey; labelKey: NoParamKey; dot?: string }[] = [
-  { key: "mem", labelKey: "resources.sort.mem", dot: "var(--color-info)" },
-  { key: "cpu", labelKey: "resources.sort.cpu", dot: "var(--color-domain-cpu)" },
-  { key: "procs", labelKey: "resources.sort.procs" },
-  { key: "disk", labelKey: "resources.sort.disk" },
-  { key: "ports", labelKey: "resources.sort.ports" },
-  { key: "down", labelKey: "resources.sort.down", dot: "var(--color-domain-net)" },
+/**
+ * 排序维度（eul 式图标化）：每个 chip = 域色图标 + 短标签，
+ * 颜色即语义（mem 蓝 / cpu 紫 / 端口琥珀 / 网速青），与卡内指标同一套配色。
+ * 同时作为页面「透镜」：卡片顶缘洗光跟随当前排序的域色。
+ */
+const SORTS: { key: SortKey; labelKey: NoParamKey; icon: typeof MemoryCloudIcon; color: string }[] = [
+  { key: "mem", labelKey: "resources.sort.mem", icon: MemoryCloudIcon, color: "var(--color-info)" },
+  { key: "cpu", labelKey: "resources.sort.cpu", icon: ChipIcon, color: "var(--color-domain-cpu)" },
+  { key: "procs", labelKey: "resources.sort.procs", icon: StackIcon, color: "var(--color-ink-dim)" },
+  { key: "disk", labelKey: "resources.sort.disk", icon: DatabaseIcon, color: "var(--color-accent)" },
+  { key: "ports", labelKey: "resources.sort.ports", icon: PortJackIcon, color: "var(--color-domain-port)" },
+  { key: "down", labelKey: "resources.sort.down", icon: DownloadIcon, color: "var(--color-domain-net)" },
 ];
 
 /** 大户 spotlight 的四个维度：顺序固定，点一下就切到对应排序 */
@@ -189,6 +203,8 @@ export function AppResourceBoard({
   const [sortKey, setSortKey] = useState<SortKey>("mem");
   const { t } = useI18n();
   const sortDef = SORTS.find((s) => s.key === sortKey) ?? SORTS[0];
+  /** 透镜色：卡片洗光/底缘与激活指标跟随当前排序——一眼看出「现在按什么看」 */
+  const lensColor = sortDef.color;
   const sortLabel = t(sortDef.labelKey);
   const [desc, setDesc] = useState(true);
   const [query, setQuery] = useState("");
@@ -281,9 +297,20 @@ export function AppResourceBoard({
     };
   }, [rows, filtered, query]);
 
-  const totalProcs = useMemo(() => rows.reduce((n, r) => n + r.procs, 0), [rows]);
-  const totalDown = net?.status === "ok" ? net.totalDownBps : null;
-  const totalUp = net?.status === "ok" ? net.totalUpBps : null;
+  /**
+   * 摘要带口径：跟随当前筛选（搜索时只统计筛出来的），与列表计数一致。
+   * 内存是各家族 footprint 求和——共享页会重复计入，tooltip 里已注明。
+   */
+  const agg = useMemo(() => {
+    const sum = (pick: (r: Row) => number | null) => filtered.reduce((n, r) => n + (pick(r) ?? 0), 0);
+    return {
+      mem: sum((r) => r.mem),
+      procs: sum((r) => r.procs),
+      exposed: sum((r) => r.exposed),
+      ports: ports ? sum((r) => r.ports.length) : null,
+      conns: ports ? sum((r) => r.conns?.established ?? null) : null,
+    };
+  }, [filtered, ports]);
 
   const searching = query.trim().length > 0;
   const visible = searching || showAll ? filtered : filtered.slice(0, DEFAULT_VISIBLE);
@@ -341,102 +368,108 @@ export function AppResourceBoard({
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="shrink-0 border-b border-hairline-soft px-5 py-2.5">
-        <div className="flex flex-wrap items-center gap-2">
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(e) => {
-              setQuery(e.target.value);
-            }}
-            placeholder={t("resources.searchPlaceholder")}
-            className="w-[168px] rounded-md border border-hairline bg-chip-soft px-2 py-1 text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
-          />
-          <span className="ml-1 text-[10px] text-ink-faint">{t("resources.sortLabel")}</span>
-          {SORTS.map((s) => {
-            const active = s.key === sortKey;
-            const label = t(s.labelKey);
-            return (
-              <button
-                key={s.key}
-                type="button"
-                onClick={() => pickSort(s.key)}
-                className={`rounded-md px-2 py-1 text-[10.5px] transition-colors ${
-                  active
-                    ? "bg-chip-hover text-ink"
-                    : "text-ink-dim hover:bg-chip-hover hover:text-ink"
-                }`}
-                title={active ? t("resources.sortTipToggle", { label }) : t("resources.sortTip", { label })}
-              >
-                {s.dot ? (
+      {/* ① 摘要带：与首页状态带同形——图标 + mono 读数，口径全进 tooltip */}
+      <div className="shrink-0 px-5 pt-2">
+        <AppSummaryRibbon
+          apps={filtered.length}
+          procs={agg.procs}
+          memBytes={agg.mem}
+          net={net}
+          ports={agg.ports}
+          exposed={agg.exposed}
+          conns={agg.conns}
+          searching={searching}
+          onSort={pickSort}
+        />
+
+        {/* ② 工具条：搜索 + 排序（域色图标 + 短标签）+ 显示计数 */}
+        <div className="mt-2 flex flex-wrap items-center gap-1.5">
+          <div className="relative">
+            <SearchIcon
+              size={11}
+              className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-ink-faint"
+            />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => {
+                setQuery(e.target.value);
+              }}
+              placeholder={t("resources.searchPlaceholder")}
+              className="w-[156px] rounded-md border border-hairline bg-chip-soft py-1 pr-2 pl-[26px] text-[11px] text-ink placeholder:text-ink-faint focus:border-accent/60 focus:outline-none"
+            />
+          </div>
+          <div className="ml-1 flex items-center gap-0.5 rounded-lg border border-hairline-soft bg-surface-raised p-0.5">
+            {SORTS.map((s) => {
+              const active = s.key === sortKey;
+              const label = t(s.labelKey);
+              const Icon = s.icon;
+              return (
+                <button
+                  key={s.key}
+                  type="button"
+                  onClick={() => pickSort(s.key)}
+                  className={`flex items-center gap-1 rounded-[7px] px-1.5 py-1 text-[10.5px] transition-colors ${
+                    active ? "bg-chip-hover text-ink" : "text-ink-dim hover:bg-chip hover:text-ink"
+                  }`}
+                  title={active ? t("resources.sortTipToggle", { label }) : t("resources.sortTip", { label })}
+                >
                   <span
                     aria-hidden
-                    className="mr-1 inline-block size-[6px] rounded-full align-middle"
-                    style={{
-                      background: s.dot,
-                      opacity: active ? 1 : 0.35,
-                      boxShadow: active ? `0 0 6px color-mix(in srgb, ${s.dot} 60%, transparent)` : undefined,
-                    }}
-                  />
-                ) : null}
-                {label}
-                {active ? <span className="ml-0.5 text-[9px]">{desc ? "▾" : "▴"}</span> : null}
-              </button>
-            );
-          })}
+                    className="inline-flex"
+                    style={{ color: s.color, opacity: active ? 1 : 0.5 }}
+                  >
+                    <Icon size={11} />
+                  </span>
+                  {label}
+                  {active ? <span className="ml-0.5 text-[9px]">{desc ? "▾" : "▴"}</span> : null}
+                </button>
+              );
+            })}
+          </div>
           <div className="flex-1" />
           <span className="font-mono text-[10px] tabular-nums text-ink-faint">
             {t("resources.showing", { shown: visible.length, total: filtered.length })}
           </span>
         </div>
 
-        <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-ink-faint">
-          <span>
-            {t("resources.appsCount", { n: filtered.length })} ·{" "}
-            <span className="font-mono tabular-nums text-ink-dim">
-              {t("resources.procsShort", { n: totalProcs })}
-            </span>
-          </span>
-          <span className="font-mono tabular-nums">
-            ↓ {totalDown == null ? "—" : formatSpeed(totalDown)} · ↑{" "}
-            {totalUp == null ? "—" : formatSpeed(totalUp)}
-          </span>
-          <span>
-            {net == null
-              ? t("resources.netNotSampled")
-              : net.status === "warmup"
-                ? t("resources.netSampling")
-                : net.status === "unavailable"
-                  ? t("resources.netUnreadable")
-                  : t("resources.netDiff", { ms: Math.round(net.intervalMs) })}
-          </span>
-          {benchText ? (
-            <span title={t("resources.benchTip")}>
-              {t("resources.bench", { label: sortLabel })}{" "}
-              <span className="font-mono tabular-nums text-ink-dim">{benchText}</span>
-            </span>
-          ) : null}
-          {spotlight ? (
-            <>
-              <span className="text-ink-faint/70">{t("resources.spotlight")}</span>
-              {SPOTS.map(({ key, labelKey }) => {
-                const r = top((x) => sortValue(key, x));
-                const label = t(labelKey);
-                return r ? (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => pickSort(key)}
-                    className="rounded bg-chip px-1.5 py-0.5 text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
-                    title={t("resources.spotlightTip", { label })}
-                  >
-                    {label} <span className="text-ink">{r.family.name}</span>
-                  </button>
-                ) : null;
-              })}
-            </>
-          ) : null}
-        </div>
+        {/* ③ 口径行：条形基准用小图形代替文字；大户 = 域色图标 + 应用名 */}
+        {benchText || spotlight ? (
+          <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[10px] text-ink-faint">
+            {benchText ? (
+              <span
+                className="flex items-center gap-1"
+                title={t("resources.benchTip")}
+                aria-label={t("resources.bench", { label: sortLabel })}
+              >
+                <BenchGlyph />
+                <span className="font-mono tabular-nums text-ink-dim">{benchText}</span>
+              </span>
+            ) : null}
+            {spotlight
+              ? SPOTS.map(({ key, labelKey }) => {
+                  const r = top((x) => sortValue(key, x));
+                  const label = t(labelKey);
+                  const def = SORTS.find((s) => s.key === key);
+                  const Icon = def?.icon ?? MemoryCloudIcon;
+                  return r ? (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => pickSort(key)}
+                      className="flex items-center gap-1 rounded bg-chip px-1.5 py-0.5 text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
+                      title={t("resources.spotlightTip", { label })}
+                    >
+                      <span aria-hidden className="inline-flex" style={{ color: def?.color }}>
+                        <Icon size={9} />
+                      </span>
+                      <span className="text-ink">{r.family.name}</span>
+                    </button>
+                  ) : null;
+                })
+              : null}
+          </div>
+        ) : null}
       </div>
 
       {net?.status === "unavailable" ? (
@@ -445,8 +478,9 @@ export function AppResourceBoard({
         </div>
       ) : null}
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-3">
-        <div className="grid grid-cols-2 gap-2.5">
+      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-2.5 pb-3">
+        {/* 自适应列数：卡片更窄、一屏更多；240px 是「图标 + 名称 + 三枚小簇」的下限 */}
+        <div className="grid grid-cols-[repeat(auto-fill,minmax(240px,1fr))] gap-2.5">
           {visible.map((r) => (
             <ResourceCard
               key={r.family.name}
@@ -457,6 +491,8 @@ export function AppResourceBoard({
               netStatus={net?.status ?? null}
               bundleReady={bundles != null}
               portsReady={ports != null}
+              lensKey={sortKey}
+              lensColor={lensColor}
             />
           ))}
         </div>
@@ -509,7 +545,13 @@ export function AppResourceBoard({
   );
 }
 
-/** 一张卡：图标 + 名称 + 四行指标；**整卡点击进入详情**（D2，取消卡内展开） */
+/**
+ * 一张卡（eul 式）：应用图标 + 名称 + 三枚「图标 + 数字」小簇（进程 / 端口 / 连接）
+ * + 2×2 指标网格（域色图标 + 比例条 + mono 读数）。
+ *
+ * 纪律：卡内零文字标签（口径全进 tooltip）；顶缘洗光与底缘发丝线跟随当前排序
+ * 的域色（透镜），激活指标数值同色加粗——「现在按什么看」不用读字。
+ */
 function ResourceCard({
   row,
   icon,
@@ -518,8 +560,8 @@ function ResourceCard({
   netStatus,
   bundleReady,
   portsReady,
-  showNet = true,
-  dense = false,
+  lensKey,
+  lensColor,
 }: {
   row: Row;
   /** 真实图标（data URL）；缺省落字母徽标 */
@@ -530,26 +572,37 @@ function ResourceCard({
   netStatus: NetSpeedSample["status"] | null;
   bundleReady: boolean;
   portsReady: boolean;
-  /** 面板不采样网速：隐藏整行比显示「尚未采样」诚实（后者像坏了） */
-  showNet?: boolean;
-  /** 面板紧凑规格：收紧内边距与行距，3 张卡 + 入口必须在一屏内装下、不滚动 */
-  dense?: boolean;
+  /** 当前排序维度：对应指标高亮 */
+  lensKey: SortKey;
+  /** 当前排序的域色：洗光 / 底缘 / 激活读数 */
+  lensColor: string;
 }) {
   const { family, mem, cpu, procs, disk, ports, exposed, conns, net } = row;
   const exact = isExact(family);
   const { t } = useI18n();
 
+  // 读数只放数字与短单位；「为什么是 —」进 tooltip（零文字纪律 + 假事实红线）
   const netText =
+    netStatus == null || netStatus === "warmup" || netStatus === "unavailable"
+      ? "—"
+      : net == null
+        ? "—"
+        : // 双向合并为一个短串：/s 只留一个尾缀（`↓3.8k ↑120/s`），完整读数在 hover 里
+          `↓${compactSpeed(net.downBps)} ↑${compactSpeed(net.upBps)}/s`;
+
+  const netTitle =
     netStatus == null
       ? t("resources.netShort.notSampled")
       : netStatus === "warmup"
         ? t("resources.netShort.sampling")
         : netStatus === "unavailable"
           ? t("resources.netShort.unreadable")
-          : net == null
-            ? "—"
-            : // 双向合并为一个短串：/s 只留一个尾缀（`↓3.8k ↑120 B/s`），完整读数在 hover 里
-              `↓${compactSpeed(net.downBps)} ↑${compactSpeed(net.upBps)}/s`;
+          : net
+            ? t("resources.mesh.netHintWith", {
+                down: formatSpeed(net.downBps),
+                up: formatSpeed(net.upBps),
+              })
+            : t("resources.mesh.netHint");
 
   const diskText = disk
     ? `${disk.partial ? "≥ " : ""}${formatBytes(disk.bytes)}`
@@ -564,173 +617,215 @@ function ResourceCard({
       onClick={onOpen}
       disabled={!onOpen}
       aria-label={onOpen ? t("resources.ariaOpen", { name: family.name }) : undefined}
-      className={`group col-span-1 flex w-full flex-col rounded-card border border-hairline-soft bg-surface-raised text-left transition-[border-color,transform] duration-150 hover:-translate-y-px hover:border-hairline disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-hairline-soft ${
-        dense ? "px-2.5 pt-1.5 pb-1.5" : "px-3 pt-2 pb-2"
-      }`}
+      className="group relative col-span-1 flex w-full flex-col overflow-hidden rounded-card border border-hairline-soft bg-surface-raised px-3 pt-2 pb-2.5 text-left transition-[border-color,transform,box-shadow] duration-150 hover:-translate-y-px hover:border-hairline hover:shadow-lg hover:shadow-black/10 disabled:cursor-default disabled:hover:translate-y-0 disabled:hover:border-hairline-soft disabled:hover:shadow-none"
     >
+      {/* 透镜：顶缘域色洗光 + 底缘发丝线（跟当前排序），与首页磁贴同一套皮 */}
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundImage: `linear-gradient(180deg, color-mix(in srgb, ${lensColor} 6%, transparent), transparent 60%)`,
+        }}
+      />
+      <span
+        aria-hidden
+        className="pointer-events-none absolute inset-x-0 bottom-0 h-[2px]"
+        style={{
+          background: `linear-gradient(90deg, transparent, color-mix(in srgb, ${lensColor} 40%, transparent) 30%, color-mix(in srgb, ${lensColor} 40%, transparent) 70%, transparent)`,
+        }}
+      />
+
       {/* w-full：WKWebView 里 button 作 flex 容器时交叉轴 stretch 不生效（同 DomainCard） */}
-      <div className="flex w-full items-start gap-2">
+      <div className="relative flex w-full items-center gap-2">
         <AppIcon
           family={family.name}
           icon={icon}
           size={28}
-          className="mt-0.5 transition-transform group-hover:scale-[1.03]"
+          className="shrink-0 transition-transform group-hover:scale-[1.03]"
         />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <div className="flex items-baseline gap-2">
-            <span
-              className={`min-w-0 flex-1 truncate leading-tight text-ink ${
-                dense ? "text-[12px]" : "text-[12.5px]"
-              }`}
-            >
-              {family.name}
-            </span>
-            <span
-              className={`shrink-0 font-mono text-[10.5px] tabular-nums ${
-                procs >= PROC_WARN ? "text-warn" : "text-ink-dim"
-              }`}
-              title={
-                procs >= PROC_WARN
-                  ? t("resources.procsTitleWarn", { n: procs })
-                  : t("resources.procsTitle", { n: procs })
-              }
-            >
-              {t("resources.procsShort", { n: procs })}
-            </span>
-          </div>
-
-          <div
-            className={`flex items-center gap-x-2 text-ink-faint ${
-              dense ? "mt-0.5 text-[9.5px]" : "mt-0.5 text-[10px]"
-            }`}
-          >
-            {/* CPU% 已由下方紫色 mini-bar 行承担，副标题不再重复（去冗余） */}
-            <span
-              title={
-                portsReady
-                  ? t("resources.portsTip")
-                  : t("resources.portsUnscannedTip")
-              }
-            >
-              {!portsReady
-                ? t("resources.portsNotScanned")
-                : ports.length === 0
-                  ? t("resources.portsNone")
-                  : t("resources.portsShort", { n: ports.length })}
-              {exposed > 0 ? <span className="ml-0.5 text-warn">●</span> : null}
-            </span>
-            <span>·</span>
-            <span title={portsReady ? t("resources.connsTip") : t("resources.connsUnscannedTip")}>
-              {conns == null
-                ? t("resources.connsNone")
-                : t("resources.connsShort", { n: conns.established })}
-            </span>
-          </div>
-        </div>
+        <span className="min-w-0 flex-1 truncate text-[12.5px] leading-tight text-ink">
+          {family.name}
+        </span>
+        {/* 三枚小簇：图标 + 数字，零文字（进程标警色只是提示，tooltip 里有明文） */}
+        <Cluster
+          icon={<StackIcon size={10} />}
+          value={String(procs)}
+          tone={procs >= PROC_WARN ? "warn" : undefined}
+          title={
+            procs >= PROC_WARN
+              ? t("resources.procsTitleWarn", { n: procs })
+              : t("resources.procsTitle", { n: procs })
+          }
+        />
+        <Cluster
+          icon={<PortJackIcon size={10} />}
+          value={portsReady ? String(ports.length) : "—"}
+          dot={exposed > 0}
+          title={portsReady ? t("resources.portsTip") : t("resources.portsUnscannedTip")}
+        />
+        <Cluster
+          icon={<LinkIcon size={10} />}
+          value={conns == null ? "—" : String(conns.established)}
+          title={portsReady ? t("resources.connsTip") : t("resources.connsUnscannedTip")}
+        />
         <ChevronRightIcon
-          size={12}
-          className="mt-1 shrink-0 text-ink-faint opacity-0 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100"
+          size={11}
+          className="shrink-0 text-ink-faint opacity-0 transition-[opacity,transform] group-hover:translate-x-0.5 group-hover:opacity-100"
         />
       </div>
 
-      <div className={dense ? "mt-1 w-full space-y-[3px]" : "mt-1 w-full space-y-[2px]"}>
-          {/* UI v4 排行榜条：CPU 紫 + 内存蓝双 mini-bar，域色即语义（§3.2） */}
-          <MetricRow
-            dense={dense}
-            label={t("resources.metric.cpu")}
-            text={cpuShort(cpu)}
-            hint={t("resources.mesh.cpuHint")}
-            textClass={cpu != null && cpu >= 100 ? "text-danger" : ""}
-            bar={
-              <CellBar
-                ratio={denom.cpu > 0 && cpu != null ? cpu / denom.cpu : 0}
-                tone="cpu"
-                show={denom.cpu > 0 && cpu != null}
-              />
-            }
-          />
-          <MetricRow
-            dense={dense}
-            label={t("resources.metric.mem")}
-            text={`${exact ? "" : "≈"}${formatBytes(mem)}`}
-            hint={t("resources.mesh.memHint")}
-            bar={<CellBar ratio={denom.mem > 0 ? mem / denom.mem : 0} tone="mem" show={denom.mem > 0} />}
-          />
-          <MetricRow
-            dense={dense}
-            label={t("resources.metric.disk")}
-            text={diskText}
-            hint={t("resources.mesh.diskHint")}
-            bar={
-              <CellBar
-                ratio={denom.disk > 0 && disk ? disk.bytes / denom.disk : 0}
-                tone={disk?.partial ? "warn" : "neutral"}
-                show={denom.disk > 0 && !!disk}
-              />
-            }
-          />
-          {showNet ? (
-            <MetricRow
-              label={t("resources.metric.net")}
-              text={netText ?? "—"}
-              hint={
-                net
-                  ? t("resources.mesh.netHintWith", {
-                      down: formatSpeed(net.downBps),
-                      up: formatSpeed(net.upBps),
-                    })
-                  : t("resources.mesh.netHint")
-              }
-              textClass="text-[10px]"
-              bar={
-                <CellBar
-                  ratio={denom.down > 0 && net ? net.downBps / denom.down : 0}
-                  tone="net"
-                  show={denom.down > 0 && !!net && net.downBps > 0}
-                />
-              }
+      {/* 指标区：窄卡单列四行（图标 + 条 + 读数）——2×2 在 240px 卡里会把条压成 20px，
+          量感全失；单列让条始终有足够长度，卡片宽度自适应时也不用改布局 */}
+      <div className="relative mt-2 grid w-full grid-cols-1 gap-y-[5px]">
+        <MetricCell
+          icon={<ChipIcon size={11} />}
+          color="var(--color-domain-cpu)"
+          label={t("resources.metric.cpu")}
+          hint={t("resources.mesh.cpuHint")}
+          value={cpuShort(cpu)}
+          danger={cpu != null && cpu >= 100}
+          active={lensKey === "cpu"}
+          lensColor={lensColor}
+          bar={
+            <CellBar
+              ratio={denom.cpu > 0 && cpu != null ? cpu / denom.cpu : 0}
+              tone="cpu"
+              show={denom.cpu > 0 && cpu != null}
             />
-          ) : null}
-        </div>
+          }
+        />
+        <MetricCell
+          icon={<MemoryCloudIcon size={11} />}
+          color="var(--color-info)"
+          label={t("resources.metric.mem")}
+          hint={t("resources.mesh.memHint")}
+          value={`${exact ? "" : "≈"}${formatBytes(mem)}`}
+          active={lensKey === "mem"}
+          lensColor={lensColor}
+          bar={<CellBar ratio={denom.mem > 0 ? mem / denom.mem : 0} tone="mem" show={denom.mem > 0} />}
+        />
+        <MetricCell
+          icon={<DatabaseIcon size={11} />}
+          color="var(--color-accent)"
+          label={t("resources.metric.disk")}
+          hint={t("resources.mesh.diskHint")}
+          value={diskText}
+          active={lensKey === "disk"}
+          lensColor={lensColor}
+          bar={
+            <CellBar
+              ratio={denom.disk > 0 && disk ? disk.bytes / denom.disk : 0}
+              tone={disk?.partial ? "warn" : "neutral"}
+              show={denom.disk > 0 && !!disk}
+            />
+          }
+        />
+        <MetricCell
+          icon={<DownloadIcon size={11} />}
+          color="var(--color-domain-net)"
+          label={t("resources.metric.net")}
+          hint={netTitle}
+          value={netText}
+          active={lensKey === "down"}
+          lensColor={lensColor}
+          bar={
+            <CellBar
+              ratio={denom.down > 0 && net ? net.downBps / denom.down : 0}
+              tone="net"
+              show={denom.down > 0 && !!net && net.downBps > 0}
+            />
+          }
+        />
+      </div>
     </button>
   );
 }
 
-function MetricRow({
-  label,
-  text,
-  hint,
-  bar,
-  textClass = "",
-  dense = false,
+/** 卡头小簇：域色淡图标 + mono 数字（语义全在图表与 tooltip 里，不占字） */
+function Cluster({
+  icon,
+  value,
+  title,
+  tone,
+  dot = false,
 }: {
-  label: string;
-  text: string;
-  hint: string;
-  bar: ReactNode;
-  textClass?: string;
-  dense?: boolean;
+  icon: ReactNode;
+  value: string;
+  title: string;
+  tone?: "warn";
+  /** 对外暴露端口标记点（琥珀） */
+  dot?: boolean;
 }) {
   return (
-    <div
-      className={
-        dense
-          ? "grid grid-cols-[24px_minmax(0,1fr)_78px] items-center gap-1.5"
-          : "grid grid-cols-[34px_minmax(0,1fr)_minmax(62px,auto)] items-center gap-2"
-      }
-      title={hint}
-    >
-      <span className={dense ? "text-[9.5px] text-ink-faint" : "text-[10px] text-ink-faint"}>
-        {label}
+    <span className="flex shrink-0 items-center gap-1" title={title}>
+      <span aria-hidden className="inline-flex text-ink-faint">
+        {icon}
       </span>
-      <span className="min-w-0">{bar}</span>
       <span
-        className={`truncate text-right font-mono tabular-nums text-ink-dim ${textClass} ${
-          dense ? "text-[11px]" : ""
+        className={`font-mono text-[10px] tabular-nums ${
+          tone === "warn" ? "text-warn" : "text-ink-dim"
         }`}
       >
-        {text}
+        {value}
+      </span>
+      {dot ? <i aria-hidden className="size-[3px] rounded-full bg-warn" /> : null}
+    </span>
+  );
+}
+
+/**
+ * 卡内一格指标：域色图标（语义）+ 比例条（量感）+ mono 读数（精度）。
+ * 激活维度（当前排序）读数同色加粗——透镜一眼可辨；超 100% CPU 用 danger 覆盖。
+ */
+function MetricCell({
+  icon,
+  color,
+  label,
+  hint,
+  value,
+  bar,
+  active = false,
+  lensColor,
+  danger = false,
+}: {
+  icon: ReactNode;
+  color: string;
+  /** 无障碍名（图标无文字，读屏需要） */
+  label: string;
+  hint: string;
+  value: string;
+  bar: ReactNode;
+  active?: boolean;
+  lensColor: string;
+  danger?: boolean;
+}) {
+  return (
+    <div className="flex min-w-0 items-center gap-1.5" title={`${label} · ${hint}`}>
+      <span aria-hidden className="inline-flex shrink-0" style={{ color }}>
+        {icon}
+      </span>
+      <span className="min-w-0 flex-1" aria-hidden>
+        {bar}
+      </span>
+      <span
+        aria-label={`${label}: ${value}`}
+        className={`shrink-0 font-mono text-[10.5px] tabular-nums ${
+          danger ? "text-danger" : active ? "font-semibold" : "text-ink-dim"
+        }`}
+        style={!danger && active ? { color: lensColor } : undefined}
+      >
+        {value}
       </span>
     </div>
+  );
+}
+
+/** 条形基准的小图形（两根等比横条）：代替「XX 条形基准」五个字，口径留在 tooltip */
+function BenchGlyph() {
+  return (
+    <span aria-hidden className="flex h-[9px] w-[9px] flex-col justify-between">
+      <i className="h-[2px] w-full rounded-full bg-current" />
+      <i className="h-[2px] w-2/3 rounded-full bg-current" />
+    </span>
   );
 }

@@ -1,10 +1,9 @@
-import type { ReactNode } from "react";
-
-import { useI18n } from "../../i18n/store";
 import type { NetDirectionReadout, Readout } from "../../lib/statsReadout";
 import { formatPercent } from "../../lib/format";
 import type { PowerSource } from "../../types/hardware";
+import { useI18n } from "../../i18n/store";
 import { BatteryIcon, ChipIcon, DatabaseIcon, DownloadIcon, MemoryCloudIcon, PortJackIcon, UploadIcon } from "../icons";
+import { RibbonChip, RibbonSeg, RibbonShell, RibbonValue } from "../Ribbon";
 import type { DrillTab } from "../../types/drill";
 import { MiniGauge } from "./MiniGauge";
 
@@ -41,57 +40,66 @@ export function StatusRibbon({
 }) {
   const { t } = useI18n();
 
-  const seg =
-    "group/seg flex min-w-0 flex-1 cursor-pointer items-center justify-center gap-2.5 rounded-none px-2 transition-colors hover:bg-chip first:rounded-l-[14px] last:rounded-r-[14px]";
-
   return (
-    <div
-      className="flex h-[62px] shrink-0 items-stretch overflow-hidden rounded-[14px] border border-hairline-soft bg-gradient-to-b from-chip-soft to-transparent bg-surface-raised divide-x divide-hairline-soft"
-      role="group"
-      aria-label={t("nav.stats")}
-    >
+    <RibbonShell ariaLabel={t("nav.stats")}>
       {/* CPU → 应用页（按 CPU 排序） */}
-      <button type="button" className={seg} title={`${t("stats.caption.cpu")}${cpu.sub[0] ? ` · ${cpu.sub[0]}` : ""}`} onClick={() => onDrill("resources")}>
+      <RibbonSeg
+        title={`${t("stats.caption.cpu")}${cpu.sub[0] ? ` · ${cpu.sub[0]}` : ""}`}
+        onClick={() => onDrill("resources")}
+      >
         <MiniGauge ratio={cpu.ratio} color="var(--color-domain-cpu)" icon={<ChipIcon size={12} />} ariaLabel={t("stats.caption.cpu")} />
-        <Value v={cpu.main} unit={cpu.unit} />
-      </button>
+        <RibbonValue value={cpu.main} unit={cpu.unit} />
+      </RibbonSeg>
 
       {/* 内存（主读数是字节，占比才是百分比——读数取 ratio） */}
-      <button type="button" className={seg} title={`${t("stats.caption.memory")}${mem.sub[0] ? ` · ${mem.sub[0]}` : ""}`} onClick={() => onDrill("memory")}>
+      <RibbonSeg
+        title={`${t("stats.caption.memory")}${mem.sub[0] ? ` · ${mem.sub[0]}` : ""}`}
+        onClick={() => onDrill("memory")}
+      >
         <MiniGauge ratio={mem.ratio} color="var(--color-info)" icon={<MemoryCloudIcon size={12} />} ariaLabel={t("stats.caption.memory")} />
-        <Value v={mem.ratio != null ? formatPercent(mem.ratio) : "—"} />
-      </button>
+        <RibbonValue value={mem.ratio != null ? formatPercent(mem.ratio) : "—"} />
+      </RibbonSeg>
 
       {/* 磁盘（同上：读数取占比；可回收口径在 tooltip） */}
-      <button type="button" className={seg} title={`${t("stats.caption.disk")}${disk.sub[0] ? ` · ${disk.sub[0]}` : ""}`} onClick={() => onDrill("disk")}>
+      <RibbonSeg
+        title={`${t("stats.caption.disk")}${disk.sub[0] ? ` · ${disk.sub[0]}` : ""}`}
+        onClick={() => onDrill("disk")}
+      >
         <MiniGauge ratio={disk.ratio} color="var(--color-accent)" icon={<DatabaseIcon size={12} />} ariaLabel={t("stats.caption.disk")} />
-        <Value v={disk.ratio != null ? formatPercent(disk.ratio) : "—"} />
-      </button>
+        <RibbonValue value={disk.ratio != null ? formatPercent(disk.ratio) : "—"} />
+      </RibbonSeg>
 
       {/* 下载 / 上传：各自读数，非百分比 → 图标芯片 */}
-      <button type="button" className={seg} title={`${t("stats.caption.down")} · ${t("stats.net.m5", { value: netDown.avgText })}`} onClick={() => onDrill("net")}>
-        <Chip color="var(--color-domain-net)" icon={<DownloadIcon size={13} />} />
-        <Value v={netDown.main} unit={netDown.unit} />
-      </button>
-      <button type="button" className={seg} title={`${t("stats.caption.up")} · ${t("stats.net.m5", { value: netUp.avgText })}`} onClick={() => onDrill("net")}>
-        <Chip color="var(--color-domain-net)" icon={<UploadIcon size={13} />} />
-        <Value v={netUp.main} unit={netUp.unit} />
-      </button>
+      <RibbonSeg
+        title={`${t("stats.caption.down")} · ${t("stats.net.m5", { value: netDown.avgText })}`}
+        onClick={() => onDrill("net")}
+      >
+        <RibbonChip color="var(--color-domain-net)" icon={<DownloadIcon size={13} />} />
+        <RibbonValue value={netDown.main} unit={netDown.unit} />
+      </RibbonSeg>
+      <RibbonSeg
+        title={`${t("stats.caption.up")} · ${t("stats.net.m5", { value: netUp.avgText })}`}
+        onClick={() => onDrill("net")}
+      >
+        <RibbonChip color="var(--color-domain-net)" icon={<UploadIcon size={13} />} />
+        <RibbonValue value={netUp.main} unit={netUp.unit} />
+      </RibbonSeg>
 
       {/* 端口：非百分比 → 图标芯片；有对外暴露时数值转警示色（颜色不是唯一载体，tooltip 里有明文） */}
-      <button type="button" className={seg} title={`${t("stats.caption.ports")}${port.sub[0] ? ` · ${port.sub[0]}` : ""}`} onClick={() => onDrill("ports")}>
-        <Chip color="var(--color-domain-port)" icon={<PortJackIcon size={13} />} />
-        <Value
-          v={port.status === "ok" ? port.main : "—"}
+      <RibbonSeg
+        title={`${t("stats.caption.ports")}${port.sub[0] ? ` · ${port.sub[0]}` : ""}`}
+        onClick={() => onDrill("ports")}
+      >
+        <RibbonChip color="var(--color-domain-port)" icon={<PortJackIcon size={13} />} />
+        <RibbonValue
+          value={port.status === "ok" ? port.main : "—"}
           tone={exposedCount != null && exposedCount > 0 ? "warn" : undefined}
         />
-      </button>
+      </RibbonSeg>
 
       {/* 电池：台式机整段隐藏 */}
       {battery?.percent != null ? (
-        <button
-          type="button"
-          className={seg}
+        <RibbonSeg
           title={t("hw.strip.batteryAria", { pct: battery.percent.toFixed(0) })}
           onClick={() => onDrill("device")}
         >
@@ -101,41 +109,9 @@ export function StatusRibbon({
             icon={<BatteryIcon size={12} />}
             ariaLabel={t("hw.strip.batteryAria", { pct: battery.percent.toFixed(0) })}
           />
-          <Value v={battery.percent.toFixed(0)} unit="%" />
-        </button>
+          <RibbonValue value={battery.percent.toFixed(0)} unit="%" />
+        </RibbonSeg>
       ) : null}
-    </div>
-  );
-}
-
-/** 段内图标芯片（非百分比位） */
-function Chip({ color, icon }: { color: string; icon: ReactNode }) {
-  return (
-    <span
-      className="grid size-[26px] shrink-0 place-items-center rounded-[8px]"
-      style={{
-        background: `color-mix(in srgb, ${color} 14%, transparent)`,
-        color,
-      }}
-      aria-hidden
-    >
-      {icon}
-    </span>
-  );
-}
-
-/** 段内读数：mono 17px + 弱化单位 */
-function Value({ v, unit, tone }: { v: string; unit?: string; tone?: "warn" | "danger" }) {
-  return (
-    <span className="min-w-0 whitespace-nowrap">
-      <span
-        className={`font-mono text-[17px] leading-none font-semibold tabular-nums ${
-          tone === "warn" ? "text-warn" : tone === "danger" ? "text-danger" : "text-ink"
-        }`}
-      >
-        {v}
-      </span>
-      {unit ? <span className="ml-0.5 text-[10.5px] font-medium text-ink-faint">{unit}</span> : null}
-    </span>
+    </RibbonShell>
   );
 }

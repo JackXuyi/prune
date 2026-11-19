@@ -187,9 +187,39 @@ export function AppsIcon(props: IconProps) {
   );
 }
 
-/** 内存：云（冷静监控的隐喻，域色 info 蓝） */
-export function MemoryCloudIcon(props: IconProps) {
+/** 进程：层叠（家族 = 主进程 + 子进程；列表页头部进程数用） */
+export function StackIcon(props: IconProps) {
   return (
+    <Svg {...props}>
+      <path d="M12 3 3 7.5l9 4.5 9-4.5L12 3Z" />
+      <path d="m3 12.5 9 4.5 9-4.5" />
+      <path d="m3 17 9 4.5 9-4.5" />
+    </Svg>
+  );
+}
+
+/** 连接：链环（ESTABLISHED 连接数用） */
+export function LinkIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7" />
+      <path d="M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7" />
+    </Svg>
+  );
+}
+
+/** 搜索 */
+export function SearchIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <circle cx="11" cy="11" r="7" />
+      <path d="m21 21-4.3-4.3" />
+    </Svg>
+  );
+}
+
+/** 内存：云（冷静监控的隐喻，域色 info 蓝） */
+export function MemoryCloudIcon(props: IconProps) {  return (
     <Svg {...props}>
       <path d="M6 19a3 3 0 1 1 0-6 4 4 0 0 1 7.7-1.6A3.5 3.5 0 1 1 18 19Z" />
     </Svg>
