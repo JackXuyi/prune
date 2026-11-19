@@ -334,9 +334,10 @@ The full milestone history lives in [CHANGELOG.md](./CHANGELOG.md); the forward 
 ## Docs
 
 - [CLI reference](./docs/cli-reference.md) — per-command syntax / JSON contract / exit codes (auto-reconciled with usage)
-- [CLI reference](./docs/cli-reference.md) — per-command syntax / JSON contract / exit codes (auto-reconciled with usage)
 - [Product spec v2](./docs/prune-feature-spec-v2.md) — positioning, modules, safety levels
 - [Tauri technical plan](./docs/prune-tauri-technical-plan.md) — architecture, dependencies, milestones
+- [UI design language](./docs/ui-eul-design-language.md) — icon-first rules, 1000×700 layout budget, component contracts, honesty red lines (enforced by `npm run check:design`)
+- [UI v5 implementation spec](./docs/ui-v5-implementation-spec.md) — design tokens, type scale, component library (the base layer the style guide builds on)
 - [Roadmap 2027 H1](./docs/prune-roadmap-2027h1.md) — milestones, metric gates, what is explicitly not being built
 - [Network diagnosis plan](./docs/net-diag-plan.md) — layered probes, verdict rules, dual-platform adaptation
 - [Site checks plan](./docs/net-sites-plan.md) — five per-site stages, curl scope, editable site list

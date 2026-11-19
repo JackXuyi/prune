@@ -118,11 +118,17 @@ dist
 # Rust / Cargo
 target/
 
+# macOS 目录元数据
+.DS_Store
+
 # Tauri 生成物
 src-tauri/gen/schemas/
 
 
-.workbuddy/
+# WorkBuddy 本地数据（会话缓存 m0/、本地 MCP 配置、工作记忆）不入库；
+# 但 skills/ 是可复用的设计资产，需要随仓库共享给团队
+.workbuddy/*
+!.workbuddy/skills/
 
 # playwright-cli 会话产物
 .playwright-cli/

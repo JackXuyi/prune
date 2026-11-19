@@ -5,13 +5,14 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc && node scripts/check-i18n.mjs && node scripts/check-docs-honesty.mjs && vite build",
+    "build": "tsc && node scripts/check-i18n.mjs && node scripts/check-docs-honesty.mjs && node scripts/check-design.mjs && vite build",
     "preview": "vite preview",
     "bump": "node scripts/bump-version.mjs",
     "release": "node scripts/release.mjs",
     "tauri": "tauri",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:docs": "node scripts/check-docs-honesty.mjs",
+    "check:design": "node scripts/check-design.mjs",
     "report:sample": "node scripts/report-sample/main.mjs"
   },
   "dependencies": {

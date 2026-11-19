@@ -1,0 +1,398 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Prune 设计稿模板 · eul 式图标优先</title>
+<!--
+  用法：
+  1. 复制到 output/design/<page>-eul-mockup.html，改标题与「」占位内容
+  2. 按 docs/ui-eul-design-language.md §2 算高度总账（660 = Ribbon + Hero + 内容 + gaps）
+  3. 类名带页面前缀（模板里用 pg- 前缀）
+  4. 双主题截图验证后再交付
+-->
+<style>
+  /* ============ 主题令牌（与 src/index.css 同源） ============ */
+  :root, [data-theme="dark"] {
+    --surface: #0e1114;
+    --surface-raised: #14181d;
+    --surface-sunk: #0b0e11;
+    --hairline-soft: #1c2128;
+    --hairline: #242a32;
+    --ink: #e8ebee;
+    --ink-dim: #99a1aa;
+    --ink-faint: #656d77;
+    --accent: #34d399;
+    --warn: #f5b74a;
+    --danger: #f0705f;
+    --info: #6aa9ff;
+    --domain-cpu: #a78bfa;
+    --domain-net: #22d3ee;
+    --domain-port: #f2a35c;
+    --domain-device: #f072a8;
+    --chip: rgba(255,255,255,0.045);
+    --chip-soft: rgba(255,255,255,0.028);
+    --hatch: rgba(255,255,255,0.1);
+    --titlebar: #12161a;
+    --rail-bg: rgba(0,0,0,0.18);
+    --shadow-tile: 0 10px 24px rgba(0,0,0,0.35);
+  }
+  [data-theme="light"] {
+    --surface: #f4f6f8;
+    --surface-raised: #ffffff;
+    --surface-sunk: #eef1f4;
+    --hairline-soft: #e8edf1;
+    --hairline: #dfe5ea;
+    --ink: #171c21;
+    --ink-dim: #5b656f;
+    --ink-faint: #8b949e;
+    --accent: #0e9e6e;
+    --warn: #b97a12;
+    --danger: #c94f40;
+    --info: #2273cc;
+    --domain-cpu: #7c5cd6;
+    --domain-net: #0e9cba;
+    --domain-port: #b87333;
+    --domain-device: #bf4f87;
+    --chip: rgba(0,0,0,0.045);
+    --chip-soft: rgba(0,0,0,0.028);
+    --hatch: rgba(0,0,0,0.14);
+    --titlebar: #eef1f4;
+    --rail-bg: rgba(0,0,0,0.03);
+    --shadow-tile: 0 10px 24px rgba(30,40,50,0.10);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  button { font: inherit; border: none; background: none; cursor: pointer; }
+  body {
+    background: #22262b; color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "PingFang SC", "Helvetica Neue", sans-serif;
+    display: flex; flex-direction: column; align-items: center; gap: 18px; padding: 28px 0 48px;
+  }
+  .toolbar { display: flex; gap: 10px; align-items: center; }
+  .toolbar button {
+    font: 12px/1 -apple-system; padding: 7px 14px; border-radius: 999px;
+    border: 1px solid rgba(255,255,255,0.14); background: rgba(255,255,255,0.06); color: #cfd4da;
+  }
+  .toolbar button.on { background: rgba(52,211,153,0.18); border-color: rgba(52,211,153,0.4); color: #7be3b6; }
+  .stage-note { font-size: 12px; color: #8f97a0; }
+
+  /* ============ 窗口 ============ */
+  .window {
+    width: 1000px; height: 700px; border-radius: 12px; overflow: hidden; background: var(--surface);
+    box-shadow: 0 30px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,255,255,0.06);
+    display: flex; flex-direction: column;
+  }
+  .titlebar {
+    height: 40px; flex-shrink: 0; display: flex; align-items: center; padding: 0 14px;
+    background: var(--titlebar); border-bottom: 1px solid var(--hairline-soft);
+  }
+  .lights { display: flex; gap: 8px; width: 54px; }
+  .lights i { width: 12px; height: 12px; border-radius: 50%; }
+  .lights i:nth-child(1) { background: #ff5f57; }
+  .lights i:nth-child(2) { background: #febc2e; }
+  .lights i:nth-child(3) { background: #28c840; }
+  .titlebar .title { flex: 1; text-align: center; font-size: 13px; font-weight: 600; color: var(--ink-dim); }
+  .titlebar .spacer { width: 54px; }
+  .body { flex: 1; display: flex; min-height: 0; }
+
+  /* ============ rail 58px ============ */
+  .rail {
+    width: 58px; flex-shrink: 0; display: flex; flex-direction: column; align-items: center; gap: 3px;
+    padding: 11px 0 9px; background: var(--rail-bg); border-right: 1px solid var(--hairline-soft);
+  }
+  .rail .logo { width: 30px; height: 30px; display: grid; place-items: center; margin-bottom: 8px; color: var(--accent); }
+  .ril {
+    position: relative; width: 36px; height: 36px; border-radius: 9px;
+    display: grid; place-items: center; color: var(--ink-faint);
+  }
+  .ril.on { color: var(--info); background: color-mix(in srgb, var(--info) 12%, transparent); }
+  .ril.on::before {
+    content: ""; position: absolute; left: -11px; top: 9px; width: 2.5px; height: 18px;
+    border-radius: 2px; background: var(--info);
+    box-shadow: 0 0 8px color-mix(in srgb, var(--info) 70%, transparent);
+  }
+
+  /* ============ 主区 ============ */
+  .main { flex: 1; min-width: 0; padding: 13px 16px 14px; display: flex; flex-direction: column; gap: 9px; overflow: hidden; }
+
+  /* ① Ribbon 62px：3–7 段，段内不放名词标签 */
+  .pg-ribbon {
+    display: flex; align-items: stretch; flex-shrink: 0; height: 62px;
+    border: 1px solid var(--hairline-soft); border-radius: 14px;
+    background: linear-gradient(180deg, var(--chip-soft), transparent 70%), var(--surface-raised);
+  }
+  .pg-seg { flex: 1; display: flex; align-items: center; justify-content: center; gap: 8px; }
+  .pg-seg + .pg-seg { border-left: 1px solid var(--hairline-soft); }
+  .pg-seg .ico { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; }
+  .pg-seg .val { font: 600 17px/1 ui-monospace, "SF Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+  .pg-seg .val small { font-size: 10.5px; font-weight: 500; color: var(--ink-faint); margin-left: 2px; }
+  .pg-seg .val.warn { color: var(--warn); }
+
+  /* ② Hero：核心量（环 / 构成条 / 主表），一个版面只有一个主角数字 */
+  .pg-hero {
+    flex-shrink: 0; height: 118px; border-radius: 16px; padding: 11px 18px;
+    border: 1px solid color-mix(in srgb, var(--info) 26%, transparent);
+    background:
+      linear-gradient(120deg, color-mix(in srgb, var(--info) 9%, transparent), transparent 76%),
+      var(--surface-raised);
+    display: grid; grid-template-columns: minmax(0,1fr) 112px; gap: 18px; align-items: center;
+  }
+  .pg-hero .lead { display: flex; align-items: baseline; gap: 9px; }
+  .pg-hero .lead b { font: 600 25px/1 ui-monospace, "SF Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink); }
+  .pg-hero .lead .pct { font: 600 12px/1 ui-monospace, monospace; color: var(--info); }
+  .pg-hero .lead span { font-size: 10px; color: var(--ink-faint); }
+  /* 构成堆叠条：实测段实色，推导段斜纹 */
+  .pg-stack { display: flex; gap: 2px; height: 11px; margin-top: 11px; border-radius: 6px; overflow: hidden; background: var(--chip); }
+  .pg-stack i { display: block; height: 100%; }
+  .pg-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: 9px; }
+  .pg-lg { display: flex; align-items: center; gap: 5px; font-size: 9.5px; color: var(--ink-faint); }
+  .pg-lg em { width: 7px; height: 7px; border-radius: 2px; }
+  .pg-lg b { font: 500 10.5px/1 ui-monospace, monospace; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+  .pg-ring { position: relative; display: grid; place-items: center; }
+  .pg-ring .center { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; }
+  .pg-ring .center b { font: 600 20px/1 ui-monospace, monospace; color: var(--accent); }
+  .pg-ring .center span { font-size: 8.5px; color: var(--ink-faint); }
+
+  /* ③ 磁贴：图标/环 + 标题 + 读数 + 一行口径 + 微图表 */
+  .pg-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 9px; flex-shrink: 0; height: 104px; }
+  .pg-tile {
+    position: relative; overflow: hidden; border-radius: 13px; padding: 9px 14px;
+    border: 1px solid var(--hairline-soft);
+    background: linear-gradient(180deg, var(--chip-soft), transparent 62%), var(--surface-raised);
+    display: flex; flex-direction: column;
+  }
+  .pg-tile::after {
+    content: ""; position: absolute; inset: auto 0 0 0; height: 1px;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--tc) 55%, transparent) 28%, color-mix(in srgb, var(--tc) 55%, transparent) 72%, transparent);
+  }
+  .pg-tile .head { display: flex; align-items: center; gap: 8px; }
+  .pg-tile .ico {
+    width: 22px; height: 22px; border-radius: 7px; display: grid; place-items: center; flex-shrink: 0;
+    background: color-mix(in srgb, var(--tc) 15%, transparent); color: var(--tc);
+  }
+  .pg-tile .ttl { flex: 1; min-width: 0; font-size: 11px; font-weight: 600; color: var(--ink-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pg-tile .readout { margin-top: 5px; font: 600 20px/1 ui-monospace, "SF Mono", monospace; font-variant-numeric: tabular-nums; color: var(--ink); white-space: nowrap; }
+  .pg-tile .readout small { font-size: 10px; font-weight: 500; color: var(--ink-faint); margin-left: 2px; }
+  .pg-tile .sub { margin-top: 4px; font-size: 10px; color: var(--ink-faint); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; flex-shrink: 0; }
+  .pg-tile .viz { margin-top: auto; flex-shrink: 0; padding-top: 4px; }
+  .pg-band { position: relative; height: 8px; border-radius: 4px; overflow: hidden; background: var(--chip); }
+  .pg-band .zone { position: absolute; inset: 0; opacity: .3; background: linear-gradient(90deg, var(--info) 0 75%, var(--warn) 75% 90%, var(--danger) 90%); }
+  .pg-band .fill { position: absolute; inset: 0 auto 0 0; border-radius: 4px; background: var(--info); }
+  .pg-band .tick { position: absolute; top: -1px; bottom: -1px; width: 1px; background: var(--ink-faint); opacity: .8; }
+  .pg-tile .foot { margin-top: 5px; display: flex; justify-content: space-between; font-size: 9px; color: var(--ink-faint); }
+
+  /* ④ 列表（唯一 flex:1 区） */
+  .pg-list { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .pg-sec-head { display: flex; align-items: baseline; gap: 8px; flex-shrink: 0; }
+  .pg-sec-head .ttl { font-size: 11px; font-weight: 600; color: var(--ink-dim); }
+  .pg-sec-head .note { flex: 1; font-size: 9.5px; color: var(--ink-faint); }
+  .pg-cols {
+    display: grid; grid-template-columns: minmax(0,1fr) 58px 62px 66px 46px; gap: 8px;
+    padding: 0 6px; margin-top: 5px; font-size: 9px; color: var(--ink-faint); text-align: right;
+  }
+  .pg-cols span:first-child { text-align: left; }
+  .pg-row {
+    display: grid; grid-template-columns: minmax(0,1fr) 58px 62px 66px 46px; gap: 8px;
+    align-items: center; padding: 5.5px 6px; border-radius: 7px; text-align: right;
+  }
+  .pg-row:hover { background: var(--chip); }
+  .pg-row .who { display: flex; align-items: center; gap: 6px; min-width: 0; text-align: left; }
+  .pg-row .who b { font-size: 11.5px; font-weight: 500; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .pg-row .num { font: 500 10.5px/1 ui-monospace, monospace; font-variant-numeric: tabular-nums; color: var(--ink-dim); }
+  .pg-bar { height: 3px; border-radius: 2px; background: var(--chip); overflow: hidden; }
+  .pg-bar i { display: block; height: 100%; border-radius: 2px; background: var(--warn); }
+
+  /* ============ 注解区 ============ */
+  .notes { width: 1000px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px; font-size: 12px; color: #9aa2ab; line-height: 1.7; }
+  .notes .card { background: rgba(255,255,255,0.04); border: 1px solid rgba(255,255,255,0.09); border-radius: 10px; padding: 12px 16px; }
+  .notes b { color: #c9d0d7; }
+  .notes code { font: 11px ui-monospace, monospace; color: #7be3b6; background: rgba(52,211,153,0.08); padding: 1px 5px; border-radius: 4px; }
+</style>
+</head>
+<body data-theme="dark">
+
+<div class="toolbar">
+  <button id="btnDark" class="on">深色</button>
+  <button id="btnLight">浅色</button>
+  <span class="stage-note">「页面名」· eul 式图标优先 · 1000×700 · 值为示意数据</span>
+</div>
+
+<div class="window">
+  <div class="titlebar">
+    <div class="lights"><i></i><i></i><i></i></div>
+    <div class="title">「页面名」</div>
+    <div class="spacer"></div>
+  </div>
+
+  <div class="body">
+    <nav class="rail">
+      <span class="logo">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="6" cy="6" r="3"/><circle cx="6" cy="18" r="3"/><path d="M20 4L8.12 15.88M14.47 14.48L20 20M8.12 8.12L12 12"/></svg>
+      </span>
+      <!-- 「rail 项：当前页加 .on；图标 17px，域色在 .on 时生效」 -->
+      <button class="ril on" title="「当前页」">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/></svg>
+      </button>
+      <button class="ril" title="「其它页」">
+        <svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="3" y="3" width="18" height="18" rx="3"/></svg>
+      </button>
+    </nav>
+
+    <main class="main">
+
+      <!-- ① Ribbon：百分比套环，非百分比用芯片；段数 3–7 -->
+      <div class="pg-ribbon">
+        <div class="pg-seg" title="「口径：数值 + 换算 + 时间窗」">
+          <svg width="26" height="26" viewBox="0 0 24 24" aria-hidden>
+            <circle cx="12" cy="12" r="10.5" fill="none" stroke="var(--chip)" stroke-width="2.2"/>
+            <!-- C=65.97；64% → dash 42.2 / gap 23.8 -->
+            <circle cx="12" cy="12" r="10.5" fill="none" stroke="var(--info)" stroke-width="2.2" stroke-linecap="round"
+                    stroke-dasharray="42.2 23.8" transform="rotate(-90 12 12)"/>
+            <g transform="translate(6.9 6.9) scale(0.42)" fill="none" stroke="var(--info)" stroke-width="2.6" stroke-linecap="round">
+              <circle cx="12" cy="12" r="9"/>
+            </g>
+          </svg>
+          <span class="val">64<small>%</small></span>
+        </div>
+        <div class="pg-seg" title="「非百分比位：芯片 + 读数」">
+          <span class="ico" style="background:color-mix(in srgb,var(--accent) 13%,transparent)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2" stroke-linecap="round"><path d="M3 18h18M3 13h18M3 8h18"/></svg>
+          </span>
+          <span class="val">6.1<small>GB</small></span>
+        </div>
+        <div class="pg-seg" title="「告警位用 warn，tooltip 必须有明文」">
+          <span class="ico" style="background:color-mix(in srgb,var(--warn) 13%,transparent)">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2" stroke-linecap="round"><path d="M12 3 2.5 20h19L12 3Z"/><path d="M12 9v4.5"/></svg>
+          </span>
+          <span class="val warn">12<small>/s</small></span>
+        </div>
+      </div>
+
+      <!-- ② Hero：一个主角数字 + 构成/趋势；右侧可放环 -->
+      <div class="pg-hero" title="「Hero 的口径说明」">
+        <div style="min-width:0">
+          <div class="lead">
+            <b>「20.5 GB」</b>
+            <span class="pct">「64%」</span>
+            <span>「已用 / 物理 32 GB · 采样时刻」</span>
+          </div>
+          <div class="pg-stack">
+            <i style="width:64.1%;background:linear-gradient(90deg,color-mix(in srgb,var(--info) 92%,transparent),color-mix(in srgb,var(--info) 62%,transparent))"></i>
+            <!-- 推导值用斜纹，tooltip 写明公式 -->
+            <i style="width:16.9%;background:repeating-linear-gradient(45deg,var(--hatch) 0 3px,transparent 3px 6px)" title="「推导值：总量 − 已用 − 可用」"></i>
+            <i style="width:19%;background:linear-gradient(90deg,color-mix(in srgb,var(--accent) 30%,transparent),color-mix(in srgb,var(--accent) 12%,transparent))"></i>
+          </div>
+          <div class="pg-legend">
+            <span class="pg-lg"><em style="background:var(--info)"></em>「实测项」<b>「20.5 GB」</b></span>
+            <span class="pg-lg"><em style="background:repeating-linear-gradient(45deg,var(--hatch) 0 2px,transparent 2px 4px)"></em>「推导项」<b>「5.4 GB」</b></span>
+            <span class="pg-lg"><em style="background:var(--accent)"></em>「可用」<b>「6.1 GB」</b></span>
+          </div>
+        </div>
+
+        <div class="pg-ring" title="「环的口径」">
+          <!-- r=48 → C≈301.6；25% → dash 75.4 -->
+          <svg width="104" height="104" viewBox="0 0 112 112">
+            <circle cx="56" cy="56" r="48" fill="none" stroke="var(--chip)" stroke-width="9"/>
+            <circle cx="56" cy="56" r="48" fill="none" stroke="var(--accent)" stroke-width="9" stroke-linecap="round"
+                    stroke-dasharray="75.4 226.2" transform="rotate(-90 56 56)"
+                    style="filter:drop-shadow(0 0 9px color-mix(in srgb,var(--accent) 45%,transparent))"/>
+          </svg>
+          <div class="center"><b>25</b><span>「口径」</span></div>
+        </div>
+      </div>
+
+      <!-- ③ 磁贴：图标 + 标题 + 读数 + 一行口径 + 微图表（四层缺一即空卡） -->
+      <div class="pg-tiles">
+        <div class="pg-tile" style="--tc:var(--info)" title="「完整口径」">
+          <div class="head">
+            <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/></svg></span>
+            <span class="ttl">「标题」</span>
+          </div>
+          <div class="readout">30<small>%</small></div>
+          <div class="sub">「一行口径：分母 / 时间窗 / 阈值」</div>
+          <div class="viz">
+            <div class="pg-band">
+              <div class="zone"></div><div class="fill" style="width:30%"></div>
+              <div class="tick" style="left:75%"></div><div class="tick" style="left:90%"></div>
+            </div>
+            <div class="foot"><span>「脚注左」</span><span>「脚注右」</span></div>
+          </div>
+        </div>
+
+        <div class="pg-tile" style="--tc:var(--warn)" title="「完整口径」">
+          <div class="head">
+            <span class="ico"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 4v14m0 0-3-3m3 3 3-3"/><path d="M17 20V6m0 0-3 3m3-3 3 3"/></svg></span>
+            <span class="ttl">「标题」</span>
+          </div>
+          <div class="readout">12<small>/s</small></div>
+          <div class="sub">「一行口径」</div>
+          <div class="viz">
+            <svg width="100%" height="22" viewBox="0 0 260 22" preserveAspectRatio="none" aria-hidden>
+              <polyline points="0,18 20,16 40,19 60,12 80,15 100,9 120,14 140,7 160,12 180,10 200,14 220,8 240,12 260,9"
+                        fill="none" stroke="var(--warn)" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round"/>
+            </svg>
+            <div class="foot"><span>「10 s 一个点」</span><span>「右注」</span></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ④ 列表：唯一 flex:1；无内容时整块不渲染，不占位 -->
+      <section class="pg-list">
+        <div class="pg-sec-head">
+          <span class="ttl">「列表标题」</span>
+          <span class="note">「排序口径 / 数据来源」</span>
+        </div>
+        <div class="pg-cols">
+          <span>「名称」</span><span>「比例」</span><span>「数值」</span><span>「Δ」</span><span>「占比」</span>
+        </div>
+        <div class="pg-row">
+          <span class="who"><b>「行名称」</b></span>
+          <span class="pg-bar"><i style="width:51%"></i></span>
+          <span class="num">「2.1 GB」</span>
+          <span class="num">「+180 MB」</span>
+          <span class="num">「51%」</span>
+        </div>
+        <div class="pg-row">
+          <span class="who"><b>「行名称」</b></span>
+          <span class="pg-bar"><i style="width:38%"></i></span>
+          <span class="num">「1.1 GB」</span>
+          <span class="num">「—」</span>
+          <span class="num">「38%」</span>
+        </div>
+      </section>
+
+    </main>
+  </div>
+</div>
+
+<div class="notes">
+  <div class="card">
+    <b>设计要点</b><br/>
+    ① Ribbon：3–7 段「图标 + mono 读数」，百分比套环、容量/速率用芯片，段内不放名词标签。<br/>
+    ② Hero：一个主角数字（25px+），构成关系用堆叠条而不是并列数字。<br/>
+    ③ 磁贴：图标/环 + 标题 + 读数 + 一行口径 + 微图表，四层缺一即空卡。<br/>
+    ④ 列表：唯一可滚动区，数值列右对齐 + <code>tabular-nums</code>。
+  </div>
+  <div class="card">
+    <b>纪律</b><br/>
+    · 读不到写 <code>—</code> 或原因，不画 0；平台无口径整段隐藏。<br/>
+    · 推导值用斜纹 + tooltip 写明公式，不伪装实测。<br/>
+    · 只用域色令牌；浅色主题有覆盖且 ≥ 4.5:1。<br/>
+    · 高度总账 ≤ 660，不引入滚动。
+  </div>
+</div>
+
+<script>
+  const dark = document.getElementById("btnDark");
+  const light = document.getElementById("btnLight");
+  function setTheme(t) {
+    document.body.dataset.theme = t;
+    dark.classList.toggle("on", t === "dark");
+    light.classList.toggle("on", t === "light");
+  }
+  dark.onclick = () => setTheme("dark");
+  light.onclick = () => setTheme("light");
+</script>
+</body>
+</html>

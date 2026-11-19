@@ -319,6 +319,8 @@ Prune 不要 root、不要全盘访问、不要辅助功能。macOS 唯一一次
 - [CLI 参考](./docs/cli-reference.md) —— 每命令语法 / JSON 契约 / 退出码（与 usage 自动对账）
 - [产品功能方案 v2](./docs/prune-feature-spec-v2.md) —— 定位、模块、安全分级
 - [Tauri 技术方案](./docs/prune-tauri-technical-plan.md) —— 架构、依赖、里程碑
+- [UI 设计语言](./docs/ui-eul-design-language.md) —— eul 式图标优先：版式预算、组件契约、诚实红线（`npm run check:design` 强制）
+- [UI v5 实现规格](./docs/ui-v5-implementation-spec.md) —— 设计令牌、字号阶梯、组件库（设计语言所依托的底座）
 - [产品 Roadmap 2027 H1](./docs/prune-roadmap-2027h1.md) —— 里程碑、指标门禁、明确不做
 - [网络诊断方案](./docs/net-diag-plan.md) —— 分层探测、判定规则、双平台适配
 - [站点检测方案](./docs/net-sites-plan.md) —— 按站点测五阶段、curl 口径、站表可编辑
