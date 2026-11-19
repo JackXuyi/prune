@@ -76,7 +76,7 @@ export function SitesSection() {
   // curl 缺失：整区换成说明，不渲染带 0 的空表（W2 先例：无等价物就隐藏）
   if (capability && !capability.curl) {
     return (
-      <section className="flex min-h-0 flex-1 flex-col rounded-card border border-hairline-soft bg-surface-raised px-4 py-3.5">
+      <section className="rounded-card border border-hairline-soft bg-surface-raised px-4 py-3.5">
         <p className="text-[11px] leading-relaxed text-warn">{t("net.sites.unavailable")}</p>
         <p className="mt-1 text-[10.5px] leading-relaxed text-ink-faint">
           {t("net.sites.unavailableHint")}
@@ -117,7 +117,7 @@ export function SitesSection() {
         : t("net.sites.empty");
 
   return (
-    <section className="flex min-h-0 flex-1 flex-col">
+    <section className="flex flex-col">
       {/* 头：区块名 + 口径行 + 主操作 */}
       <div className="flex shrink-0 items-center gap-2">
         <span className="shrink-0 text-[11px] font-semibold text-ink-dim">
@@ -181,7 +181,7 @@ export function SitesSection() {
         <>
           {summary.total > 0 ? <SummaryBar summary={summary} /> : null}
           <div
-            className="mt-2 grid min-h-0 flex-1 content-start gap-2 overflow-y-auto"
+            className="mt-2 grid content-start gap-2"
             style={{ gridTemplateColumns: "repeat(auto-fill, minmax(238px, 1fr))" }}
           >
             {sites.map((s) => (
@@ -280,8 +280,8 @@ function SiteEditor({
     onChange(draft.map((s, idx) => (idx === i ? { ...s, ...patch } : s)));
 
   return (
-    <div className="mt-2 flex min-h-0 flex-1 flex-col">
-      <ul className="min-h-0 flex-1 space-y-1.5 overflow-y-auto">
+    <div className="mt-2 flex flex-col">
+      <ul className="space-y-1.5">
         {draft.map((s, i) => (
           // 编辑态按索引做 key：行没有稳定身份（新站的 id 由 Rust 生成），
           // 而输入框都是受控的，删中间一行不会串值

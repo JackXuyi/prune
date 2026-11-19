@@ -8,13 +8,12 @@ import { TestRibbon } from "./TestRibbon";
  * 链路诊断 + 带宽测速 + 站点检测三件事合并——它们都是**手动发起的主动测试**，
  * 回答的是同一个三层问题：链路通吗（诊断）→ 带宽多少（测速）→ 站点快吗（检测）。
  *
- * 结构自上而下：速读条（62）→ 测速 Hero（128）→ 诊断轨道卡（84）→ 站点区（flex）。
- * 24+62+128+84+gaps 40 ≈ 338px 固定，站点区吃剩余高度，一屏不滚动（卡片多时
- * 网格内部滚）。监测页维持现状，见 MonitorPage。
+ * 结构自上而下：速读条（62）→ 测速 Hero（128）→ 诊断轨道卡（84）→ 站点区。
+ * 卡片多时**页面整体滚动**（NetBoard 外层统一滚动，站点区不内部滚）。监测页维持现状，见 MonitorPage。
  */
 export function TestPage() {
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-2.5 pt-3">
+    <div className="flex flex-col gap-2.5 pt-3">
       <TestRibbon />
       <SpeedHero />
       <DiagTrackCard />

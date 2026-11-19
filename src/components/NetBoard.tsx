@@ -19,12 +19,8 @@ export function NetBoard({ onOpenResources }: { onOpenResources: () => void }) {
   const [page, setPage] = useState<NetSubPage>("monitor");
 
   return (
-    /* 测试页是固定高度账（62+128+84+站点 flex），不滚动；监测页保持原有滚动 */
-    <div
-      className={`min-h-0 flex-1 px-5 py-4 ${
-        page === "test" ? "flex flex-col overflow-hidden" : "overflow-x-hidden overflow-y-auto"
-      }`}
-    >
+    /* 两个二级页都整页滚动（用户反馈：站点区不允许内部滚动） */
+    <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
       <div className="flex shrink-0 items-center justify-between">
         <p className="text-[11px] text-ink-faint">
           {page === "monitor" ? t("net.subMonitor") : t("net.subTest")}
