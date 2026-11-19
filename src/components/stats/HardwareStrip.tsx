@@ -1,66 +1,18 @@
-import { useEffect, useState } from "react";
-
 import { useI18n } from "../../i18n/store";
-import {
-  cpuTempSnapshot,
-  cpuTempSetActive,
-  hwFlags,
-  isTauri,
-  powerSnapshot,
-  powerSetActive,
-} from "../../lib/ipc";
-import type { CpuTempSnapshot, PowerSnapshot } from "../../types/hardware";
+import { useHardwareReadouts } from "./useHardwareReadouts";
 import { MeterBar } from "../charts/MeterBar";
 
 /**
  * 概览页硬件读数条（f26 G-05 电池 + G-06 蓝牙配件 + G-07 CPU 温度）。
+ * 设备页（DeviceBoard）复用同一块。
  *
- * 纪律（方案 §四 D4/D6）：
- * - **失败即隐藏**：任一模块读不到（无电池的台式机 / SMC 不可用）就不渲染
- *   对应行，绝不显示 0 或「不可用」占位；
- * - **谁可见谁负责**：挂载时 set_active(true)，卸载时 false——后端门控循环
- *   随之停止采样，常驻开销 0；
- * - 快照轮询 15 s：后端 30 s 一轮，前端半频轮询只是取最新值（纯内存读）。
+ * 采样 / 门控 / 失败即隐藏纪律已抽到 `useHardwareReadouts`（状态带电池段
+ * 与设备磁贴共用），这里只管排版。
  */
 export function HardwareStrip() {
   const { t } = useI18n();
-  const [flags, setFlags] = useState<Map<string, boolean> | null>(null);
-  const [power, setPower] = useState<PowerSnapshot | null>(null);
-  const [temp, setTemp] = useState<CpuTempSnapshot | null>(null);
+  const { battery, accessories, temp } = useHardwareReadouts();
 
-  const powerEnabled = flags?.get("hw.power.enabled") ?? true;
-  const tempEnabled = flags?.get("hw.cpuTemp.enabled") ?? true;
-
-  useEffect(() => {
-    if (!isTauri()) return;
-    hwFlags()
-      .then((fs) => setFlags(new Map(fs.map((f) => [f.key, f.enabled]))))
-      .catch(() => setFlags(new Map()));
-  }, []);
-
-  // 电源 + CPU 温度：同一套可见性门控与轮询节奏
-  useEffect(() => {
-    if (!isTauri()) return;
-    const wanted = powerEnabled || tempEnabled;
-    if (!wanted) return;
-    void powerSetActive(powerEnabled);
-    void cpuTempSetActive(tempEnabled);
-
-    const tick = () => {
-      if (powerEnabled) void powerSnapshot().then(setPower).catch(() => setPower(null));
-      if (tempEnabled) void cpuTempSnapshot().then(setTemp).catch(() => setTemp(null));
-    };
-    tick();
-    const timer = setInterval(tick, 15_000);
-    return () => {
-      clearInterval(timer);
-      void powerSetActive(false);
-      void cpuTempSetActive(false);
-    };
-  }, [powerEnabled, tempEnabled]);
-
-  const battery = power?.sources.find((s) => s.kind === "battery" && s.percent != null);
-  const accessories = power?.sources.filter((s) => s.kind === "accessory" && s.percent != null) ?? [];
   const hasAny = battery != null || accessories.length > 0 || temp != null;
 
   if (!hasAny) return null;

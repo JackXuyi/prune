@@ -54,13 +54,33 @@ export function RefreshIcon(props: IconProps) {
   );
 }
 
-/** Lucide download：更新卡片用 */
+/** 电池（状态带/设备磁贴）：机身 + 极耳 + 内芯电量块 */
+export function BatteryIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="2" y="8" width="17" height="9" rx="2.5" />
+      <path d="M22 11v3" />
+      <rect x="4.5" y="10.5" width="10" height="4" rx="1" fill="currentColor" stroke="none" />
+    </Svg>
+  );
+}
+
+/** 统一的下载箭头（无横杠）：更新卡片与下载卡共用；上传走 UploadIcon，不再 rotate-180 */
 export function DownloadIcon(props: IconProps) {
   return (
     <Svg {...props}>
-      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-      <path d="m7 10 5 5 5-5" />
-      <path d="M12 15V3" />
+      <path d="M12 5v14" />
+      <path d="m19 12-7 7-7-7" />
+    </Svg>
+  );
+}
+
+/** 统一的上传箭头：与 DownloadIcon 同形镜像（箭头向上），语义成对 */
+export function UploadIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 19V5" />
+      <path d="m5 12 7-7 7 7" />
     </Svg>
   );
 }
@@ -204,6 +224,19 @@ export function GearIcon(props: IconProps) {
     <Svg {...props}>
       <circle cx="12" cy="12" r="3" />
       <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09a1.65 1.65 0 0 0-1-1.51 1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09a1.65 1.65 0 0 0 1.51-1 1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33h.01a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51h.01a1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82v.01a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </Svg>
+  );
+}
+
+/** 设备：显示器 + 机身（本机硬件 + 局域网设备共用一个语义位） */
+export function DeviceIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <rect x="3" y="4" width="18" height="12" rx="2" />
+      <path d="M12 16v3" />
+      <path d="M8 21h8" />
+      <path d="M8.5 11.2a5 5 0 0 1 7 0" />
+      <circle cx="12" cy="13" r="0.9" fill="currentColor" stroke="none" />
     </Svg>
   );
 }

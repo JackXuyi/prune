@@ -3,7 +3,7 @@
  *
  * - 图标先于文字被识别；文字全部降级为 hover tooltip（title）
  * - 选中态：左侧 2.5px 域色发光竖条 + 域色图标配色（颜色即语义 §3.2）
- * - ⌘1–6 快捷键仍在 MainWindow（rail 只负责呈现），底部固定设置齿轮
+ * - ⌘1–7 快捷键仍在 MainWindow（rail 只负责呈现），底部固定设置齿轮
  * - 刷新 / 口径 Badge / 返回按钮留在内容列标题栏——它们是「当前页」的属性，
  *   不是「全局导航」的属性
  *
@@ -17,6 +17,7 @@ import type { NoParamKey } from "../i18n/types";
 import {
   AppsIcon,
   DatabaseIcon,
+  DeviceIcon,
   GearIcon,
   GlobeIcon,
   MemoryCloudIcon,
@@ -25,7 +26,7 @@ import {
   ScissorsIcon,
 } from "./icons";
 
-export type RailTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports";
+export type RailTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports" | "device";
 
 interface RailItem {
   id: RailTab;
@@ -43,6 +44,7 @@ const ITEMS: RailItem[] = [
   { id: "disk", labelKey: "nav.disk", hintKey: "nav.diskHint", icon: DatabaseIcon, color: "var(--color-accent)" },
   { id: "net", labelKey: "nav.net", hintKey: "nav.netHint", icon: GlobeIcon, color: "var(--color-domain-net)" },
   { id: "ports", labelKey: "nav.ports", hintKey: "nav.portsHint", icon: PortJackIcon, color: "var(--color-domain-port)" },
+  { id: "device", labelKey: "nav.device", hintKey: "nav.deviceHint", icon: DeviceIcon, color: "var(--color-domain-device)" },
 ];
 
 export function RailNav({

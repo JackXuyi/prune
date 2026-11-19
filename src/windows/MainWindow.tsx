@@ -4,6 +4,7 @@ import { listen } from "@tauri-apps/api/event";
 
 import { AppResourceBoard } from "../components/AppResourceGrid";
 import { AppDetail } from "../components/appdetail/AppDetail";
+import { DeviceBoard } from "../components/DeviceBoard";
 import { LeakCard, LeakEvidence } from "../components/LeakCard";
 import { NetBoard } from "../components/NetBoard";
 import { PortBoard } from "../components/PortList";
@@ -50,10 +51,10 @@ import { exposureMeta, portsOfPid } from "../types/net";
  * - 「内存·应用」+「内存·概况」合并为「内存」（列表 + 详情）
  * - 「设置」撤出一级导航，移到标题栏齿轮弹层
  */
-type MainTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports";
+type MainTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports" | "device";
 
-/** ⌘1–⌘6 的切换顺序（UX v3 §5.5） */
-const TAB_ORDER: MainTab[] = ["stats", "resources", "memory", "disk", "net", "ports"];
+/** ⌘1–⌘7 的切换顺序（UX v3 §5.5；设备页后加入，排在端口之后） */
+const TAB_ORDER: MainTab[] = ["stats", "resources", "memory", "disk", "net", "ports", "device"];
 /** tab 名与 rail 共用 nav.* —— 两处分开写迟早会有一处忘了改 */
 const TAB_LABEL: Record<MainTab, NoParamKey> = {
   stats: "nav.stats",
@@ -62,6 +63,7 @@ const TAB_LABEL: Record<MainTab, NoParamKey> = {
   disk: "nav.disk",
   net: "nav.net",
   ports: "nav.ports",
+  device: "nav.device",
 };
 
 /** 顶栏副标：与 RailNav 的 hover hint 同源，避免两处各写一份说明 */
@@ -72,6 +74,7 @@ const TAB_HINT: Record<MainTab, NoParamKey> = {
   disk: "nav.diskHint",
   net: "nav.netHint",
   ports: "nav.portsHint",
+  device: "nav.deviceHint",
 };
 
 /**
@@ -96,7 +99,7 @@ function sourceLabel(s: WorkspaceSource, t: I18n["t"]): string {
       : t("memory.source.inherited");
 }
 
-/** 主窗口（1000×700）：总览 / 应用 / 内存 / 存储 / 网络 / 端口 + 设置齿轮 */
+/** 主窗口（1000×700）：总览 / 应用 / 内存 / 存储 / 网络 / 端口 / 设备 + 设置齿轮 */
 export function MainWindow() {
   const i18n = useI18n();
   const { t } = i18n;
@@ -349,7 +352,7 @@ export function MainWindow() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key >= "1" && e.key <= "6") {
+      if (meta && e.key >= "1" && e.key <= "7") {
         e.preventDefault();
         const next = TAB_ORDER[Number(e.key) - 1];
         if (next) {
@@ -420,15 +423,18 @@ export function MainWindow() {
               </span>
             </>
           ) : null}
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={busy}
-            className="flex items-center gap-1.5 rounded-md bg-chip px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-50"
-          >
-            <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
-            {refreshLabel}
-          </button>
+          {/* 设备页无全局刷新（DeviceBoard 注释）：按钮整颗隐藏，不放假动作 */}
+          {tab !== "device" ? (
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={busy}
+              className="flex items-center gap-1.5 rounded-md bg-chip px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-50"
+            >
+              <RefreshIcon size={12} className={busy ? "animate-spin" : ""} />
+              {refreshLabel}
+            </button>
+          ) : null}
         </header>
 
         {/* 全局错误条（spec §6.1）：贴边 32px，只留最高优先级一条；
@@ -461,11 +467,7 @@ export function MainWindow() {
         ) : null}
 
         {tab === "stats" ? (
-          <StatsBoard
-            onDrill={(t) => go(t, "stats")}
-            refreshNonce={statsNonce}
-            onFocusPort={(port) => setPortFocus(port)}
-          />
+          <StatsBoard onDrill={(t) => go(t, "stats")} refreshNonce={statsNonce} />
         ) : tab === "resources" ? (
           appDetail ? (
             <AppDetail
@@ -511,6 +513,10 @@ export function MainWindow() {
           <NetBoard onOpenResources={() => go("resources", "net")} />
         ) : tab === "disk" ? (
           <ReclaimBoard />
+        ) : tab === "device" ? (
+          // 设备页（M-设备栏）：本机硬件 + 局域网设备。无全局刷新——
+          // 硬件低频自轮询、局域网有显式扫描按钮，各段自己负责数据新鲜度
+          <DeviceBoard />
         ) : (
           // 内存页（UX v3 §6.3）：左栏家族列表 + 右栏（默认概况，选中进程后为详情）
           <div className="flex min-h-0 flex-1">

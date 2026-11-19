@@ -19,6 +19,7 @@ const zh = {
     scope: "4 级构成",
     scopeTip: "L1 零后悔 · L2 可再生 · L3 需判断 · L4 只给命令、不计入总量",
     l4Note: "L4 为斜纹段，不计入总量",
+    note: "各档口径悬浮可见 · 点击进入存储页执行清理",
   },
   unscanned: {
     title: "还没扫描过这台 Mac",
@@ -60,6 +61,15 @@ const zh = {
   },
   cpuTrend: { label: "近 10 min · 10 s 一个点", aria: "CPU 近 10 分钟走势" },
   portsDotsAria: "监听端口点阵：共 {n} 个",
+  /** 设备磁贴 / 状态带（eul 式图标优先重设计）：克制的一行口径 */
+  tile: {
+    netSub: "↑ {up} · 今日 {today}",
+    conflicts: "冲突 {n}",
+    deviceUnit: "台",
+    deviceTemp: "CPU {temp} ℃",
+    accessories: "蓝牙配件 {n}",
+    lanDevices: "局域网设备 {n}",
+  },
   /** W2/D-07：本地服务卡（关注层 + 冲突；点击行 → 端口页定位） */
   localService: {
     title: "本地服务",
@@ -132,6 +142,7 @@ const en: MessageTree<typeof zh> = {
     scope: "4 tiers",
     scopeTip: "L1 never regret · L2 regenerable · L3 needs judgment · L4 commands only, excluded",
     l4Note: "L4 is the hatched segment and is not counted in the total",
+    note: "Hover a tier for details · click to open Storage",
   },
   unscanned: {
     title: "This Mac hasn't been scanned yet",
@@ -173,6 +184,15 @@ const en: MessageTree<typeof zh> = {
   },
   cpuTrend: { label: "Last 10 min · one point per 10 s", aria: "CPU trend, last 10 minutes" },
   portsDotsAria: "Listening port matrix: {n} total",
+  /** Device tile / status ribbon (eul-style icon-first redesign): one restrained caption line */
+  tile: {
+    netSub: "↑ {up} · today {today}",
+    conflicts: "{n} conflicts",
+    deviceUnit: "devices",
+    deviceTemp: "CPU {temp} ℃",
+    accessories: "{n} Bluetooth accessories",
+    lanDevices: "{n} LAN devices",
+  },
   /** W2/D-07: local services card (watched layer + conflicts; click a row to focus the Ports page) */
   localService: {
     title: "Local services",

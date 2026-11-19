@@ -30,9 +30,12 @@
   --color-domain-net: #22d3ee;
   /* UI v5：端口域色原先借用 warn，红色告警时与「警告」语义撞车，独立一档 */
   --color-domain-port: #f2a35c;
+  /* 设备域（本机硬件 + 局域网设备）：玫红一档，与既有五域不撞色 */
+  --color-domain-device: #f072a8;
   --color-cpu-soft: rgba(167, 139, 250, 0.14);
   --color-net-soft: rgba(34, 211, 238, 0.12);
   --color-port-soft: rgba(242, 163, 92, 0.14);
+  --color-device-soft: rgba(240, 114, 168, 0.13);
 
   /* UI v5：把散落各处的 bg-white/[0.0x] 收敛成中性面三档。
      浅色主题下这三个值翻转为黑底 alpha，组件不必按主题写两套。 */
@@ -86,11 +89,15 @@
   --color-domain-cpu: #7c5cd6;
   --color-domain-net: #0e9cba;
   --color-domain-port: #b87333;
+  --color-domain-device: #bf4f87;
   --color-cpu-soft: rgba(124, 92, 214, 0.1);
   --color-net-soft: rgba(14, 156, 186, 0.1);
   --color-port-soft: rgba(184, 115, 51, 0.12);
+  --color-device-soft: rgba(191, 79, 135, 0.1);
   --color-chip: rgba(0, 0, 0, 0.045);
   --color-chip-hover: rgba(0, 0, 0, 0.075);
+  /* 与深色主题同名的中性面第一档：面板顶部渐变用，两主题同构 */
+  --color-chip-soft: rgba(0, 0, 0, 0.028);
   --color-hatch: rgba(0, 0, 0, 0.14);
 }
 

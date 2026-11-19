@@ -3,49 +3,61 @@ import {
   diskReadout,
   memoryReadout,
   netDirectionReadout,
-  netReadout,
   portReadout,
 } from "../lib/statsReadout";
 import { useI18n } from "../i18n/store";
-import { dayString } from "../lib/format";
+import { dayString, formatBytes, formatPercent } from "../lib/format";
 import { useVolumeInfo } from "../lib/useVolumeInfo";
 import { AreaChart } from "./charts/AreaChart";
 import { CountUp } from "./charts/CountUp";
 import { DotMatrix } from "./charts/DotMatrix";
-import { RingGauge, type RingSegment } from "./charts/RingGauge";
 import { MeterBar } from "./charts/MeterBar";
-import { ChipIcon, DatabaseIcon, DownloadIcon, MemoryCloudIcon, PortJackIcon } from "./icons";
-import { Btn, Meter, ProposalTag, ScopeBadge } from "./primitives";
+import { RingGauge, type RingSegment } from "./charts/RingGauge";
+import {
+  ChevronRightIcon,
+  ChipIcon,
+  DatabaseIcon,
+  DeviceIcon,
+  DownloadIcon,
+  MemoryCloudIcon,
+  PortJackIcon,
+  ScissorsIcon,
+  UploadIcon,
+} from "./icons";
+import { Btn, Meter } from "./primitives";
 import { useDiskStore } from "../stores/diskStore";
+import { useLanStore } from "../stores/lanStore";
 import { useMemStore } from "../stores/memStore";
 import { useNetTotalStore } from "../stores/netTotalStore";
-import { portConflicts } from "../types/net";
-import type { PortEntry, PortSnapshot } from "../types/net";
 import { usePortStore } from "../stores/portStore";
-import { formatBytes, formatPercent } from "../lib/format";
+import { portConflicts } from "../types/net";
 import { cutReport, isTauri, type CutReport } from "../lib/ipc";
 import { devCutReport } from "../lib/devFixture";
-import { NetDirectionReading } from "./stats/NetReading";
-import { DomainCard } from "./stats/DomainCard";
-import { HardwareStrip } from "./stats/HardwareStrip";
+import { InfoTile } from "./stats/InfoTile";
+import { StatusRibbon } from "./stats/StatusRibbon";
+import { useHardwareReadouts } from "./stats/useHardwareReadouts";
 
 import { useEffect, useState } from "react";
 
-/**
- * 下钻目标：总览卡只导航，不做任何清理/结束动作（M9 §4，UX v3 §6.1）。
- * v3.1 起 CPU 卡下钻到「应用」页（按 CPU 排序），内存卡到合并后的「内存」页。
- */
-export type DrillTab = "stats" | "resources" | "memory" | "disk" | "ports" | "net";
+import type { DrillTab } from "../types/drill";
+
+/** 总览下钻目标（含设备页）；类型本体在 types/drill（避免与 StatusRibbon 成环） */
+export type { DrillTab };
 
 /**
- * 总览页（UI v5「Quiet Cockpit」§4.1）。
+ * 总览页（eul 式图标优先重设计，设计稿 output/design/stats-eul-mockup.html）。
  *
- * 一屏三段：
- * 1. **Hero 可回收环**（172 高）：环 148 + 四段分弧，右侧 2×2 图例 + 一行脚注；
- *    未扫描时整块换成「还没扫描过」+ 立即扫描，绝不显示 0（假事实红线）。
- * 2. **六域卡**（96 高 × 3 列 × 2 行）：19px 读数 + 微图表 + 一行口径；
- *    口径正文只在 hover tooltip 里（少文字原则）。
- * 3. **剪除成绩单**：只统计你亲手剪掉的，本地 append-only。
+ * 一屏四段：
+ * 1. **状态带**：7 段「仪表/图标 + mono 读数」，hairline 分隔——CPU / 内存 /
+ *    磁盘 / 下载 / 上传 / 端口 / 电池，扫一眼即得全部活值，口径全在 tooltip；
+ * 2. **Hero 可回收环**：环 + L1–L4 徽标图例（色条 + 数值）+ 一行弱化说明；
+ *    未扫描时整块换成「还没扫描过」+ 立即扫描，绝不显示 0（假事实红线）；
+ * 3. **六磁贴**：仪表即语义 + 标题 + 大读数 + 一行口径 + 微图表；
+ * 4. **剪除成绩单**：奖章位 + 大数字 + Top3 迷你条，本地 append-only。
+ *
+ * 相比 v5 的取舍（已获确认）：NBA 提案条与本地服务卡撤出总览——NBA 的核心
+ * 量（可回收）已在磁盘磁贴口径行，端口关注/冲突聚合进端口磁贴，行级明细
+ * 在端口页；硬件读数条拆进状态带电池段与设备磁贴（useHardwareReadouts）。
  *
  * 读数一律来自 `lib/statsReadout.ts`（与菜单栏面板同源），只换排版不换口径；
  * 所有微图表由现有快照前端派生，零新增 IPC、零新增采样。
@@ -53,13 +65,10 @@ export type DrillTab = "stats" | "resources" | "memory" | "disk" | "ports" | "ne
 export function StatsBoard({
   onDrill,
   refreshNonce,
-  onFocusPort,
 }: {
   onDrill: (tab: DrillTab) => void;
   /** 头部「刷新」按钮的递增信号：变了就重取卷容量（内存/端口由各自 store 刷新） */
   refreshNonce: number;
-  /** W2/D-07：本地服务卡点行 → 预填端口页定位再跳转 */
-  onFocusPort?: (port: string) => void;
 }) {
   const { t, locale } = useI18n();
   const snapshot = useMemStore((s) => s.snapshot);
@@ -69,6 +78,11 @@ export function StatsBoard({
   const refreshDisk = useDiskStore((s) => s.refresh);
   const netSample = useNetTotalStore((s) => s.sample);
   const netHistory = useNetTotalStore((s) => s.history);
+  // 设备磁贴：局域网设备数（init 只拉缓存快照，绝不触发扫描/权限弹窗）
+  const lan = useLanStore((s) => s.snapshot);
+  const lanInit = useLanStore((s) => s.init);
+  // 状态带电池段 + 设备磁贴（门控采样在 hook 内，谁可见谁负责）
+  const { battery, accessories, temp } = useHardwareReadouts();
   // 卷容量：进入 tab、点刷新时各取一次（statvfs 微秒级，无需缓存）
   const { volume, known } = useVolumeInfo(refreshNonce);
   // 剪除成绩单（M21）：进入 tab / 点刷新各取一次；tab 切换会重挂载，天然重新拉取
@@ -92,13 +106,15 @@ export function StatsBoard({
       alive = false;
     };
   }, [refreshNonce]);
+  useEffect(() => {
+    void lanInit();
+  }, [lanInit]);
 
   const mem = memoryReadout(snapshot, locale);
   const cpu = cpuReadout(snapshot?.cpu, locale);
   const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known, locale);
   const port = portReadout(ports, locale);
-  const net = netReadout(netSample, netHistory, locale);
-  // 方向读数（M16 v6）：下载 / 上传各一张卡，口径在 readout 层派生
+  // 方向读数（M16 v6）：下载 / 上传各自口径，状态带与网络磁贴共用
   const netDown = netDirectionReadout(netSample, netHistory, "down", locale);
   const netUp = netDirectionReadout(netSample, netHistory, "up", locale);
 
@@ -114,7 +130,7 @@ export function StatsBoard({
       ]
     : [];
 
-  // swap 阈值条（内存卡微图表）：读不到就不渲染，绝不画 0
+  // swap 阈值条（内存磁贴微图表）：读不到就不渲染，绝不画 0
   const swap = snapshot?.swap;
   const swapRatio = swap && swap.total > 0 ? swap.used / swap.total : null;
 
@@ -131,77 +147,134 @@ export function StatsBoard({
       | "neutral",
     title: `:${e.port} ${e.proto}${e.listeners[0]?.comm ? ` · ${e.listeners[0].comm}` : ""}`,
   }));
+  const conflicts = portConflicts(portEntries).length;
+  const exposedCount = ports ? portEntries.filter((e) => e.exposure === "any").length : null;
 
-  // NBA（下一步最佳操作）：只从已有报告派生，不新采集。跨平台二进制是
-  // 唯一「零后悔」的量，且本机永远用不上，所以它排在任何其它建议之前。
-  const a1 = report?.groups.find((g) => g.deadweight != null) ?? null;
-  const dw = a1?.deadweight ?? null;
-  const nba = dw && dw.bytes > 0 ? dw : null;
+  // 设备磁贴数据：局域网设备（排除本机）+ 硬件读数（失败即隐藏）
+  const lanDevices = lan ? lan.devices.filter((d) => !d.isSelf) : null;
+  const deviceSubParts = [
+    temp ? t("stats.tile.deviceTemp", { temp: Math.round(temp.celsius) }) : null,
+    battery?.percent != null
+      ? t("hw.strip.batteryAria", { pct: battery.percent.toFixed(0) })
+      : null,
+    accessories.length > 0 ? t("stats.tile.accessories", { n: accessories.length }) : null,
+    lanDevices != null ? t("stats.tile.lanDevices", { n: lanDevices.length }) : null,
+  ].filter((s): s is string => s != null);
+
+  // 网络磁贴微图表：下载/上传各占一根的比例（warmup 时 bps 为 0，不给假比例）
+  const netTotalBps = netDown.bps + netUp.bps;
+  const netDownShare =
+    netDown.status === "ok" && netTotalBps > 0 ? netDown.bps / netTotalBps : null;
 
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-3">
-      {/* UI v5：页名与副标已上移到顶栏（spec §1.3），board 内不再重复同名标题。
-          这里只保留「采样节拍」这条只有本页才有的信息。 */}
-      <div className="flex items-baseline justify-end">
-        <span className="text-[10px] text-ink-faint">{t("common.hint.statsCadence")}</span>
-      </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto px-5 pt-3 pb-3">
+      {/* UI v5：页名与副标已上移到顶栏（spec §1.3），board 内不重复同名标题 */}
+
+      {/* ① 状态带：7 段活值，口径在 tooltip，点段直达对应页 */}
+      <StatusRibbon
+        cpu={cpu}
+        mem={mem}
+        disk={disk}
+        port={port}
+        netDown={netDown}
+        netUp={netUp}
+        battery={battery}
+        exposedCount={exposedCount}
+        onDrill={onDrill}
+      />
 
       {totals ? (
-        /* Hero：可回收环形仪表（GB 可行动，百分比可描述） */
+        /* ② Hero：可回收环形仪表（GB 可行动，百分比可描述） */
         <button
           type="button"
           onClick={() => onDrill("disk")}
           title={t("stats.hero.title")}
-          className="group mt-2 grid w-full grid-cols-[138px_minmax(0,1fr)] items-center gap-4 rounded-hero border border-accent/25 bg-accent/[0.05] px-5 py-2.5 text-left transition-colors hover:border-accent/45 hover:bg-accent/[0.08]"
+          className="group mt-1 grid w-full grid-cols-[138px_minmax(0,1fr)_auto] items-center gap-5 rounded-hero border border-accent/25 bg-surface-raised px-5 py-3 text-left transition-colors hover:border-accent/45"
+          style={{
+            backgroundImage:
+              "linear-gradient(120deg, color-mix(in srgb, var(--color-accent) 10%, transparent), color-mix(in srgb, var(--color-accent) 3%, transparent) 48%, transparent 78%)",
+          }}
         >
-          <RingGauge
-            segments={reclaimSegments}
-            size={134}
-            stroke={9}
-            gapDeg={2}
-            className="prune-anim shrink-0"
-            ariaLabel={t("stats.hero.aria", {
-              total: formatBytes(totals.reclaimable),
-              l1: formatBytes(totals.deadweight),
-              l2: formatBytes(totals.l2),
-              l3: formatBytes(totals.l3),
-              l4: formatBytes(totals.l4),
-            })}
+          <span
+            className="grid shrink-0 place-items-center"
+            style={{ filter: "drop-shadow(0 0 16px color-mix(in srgb, var(--color-accent) 22%, transparent))" }}
           >
-            <span className="flex flex-col items-center">
-              <CountUp
-                value={totals.reclaimable}
-                format={formatBytes}
-                className="font-mono text-[28px] leading-none font-semibold tabular-nums text-ink"
-              />
-              <span className="mt-1 text-[9.5px] text-ink-faint">{t("stats.hero.reclaimable")}</span>
-            </span>
-          </RingGauge>
+            <RingGauge
+              segments={reclaimSegments}
+              size={134}
+              stroke={9}
+              gapDeg={2}
+              className="prune-anim"
+              ariaLabel={t("stats.hero.aria", {
+                total: formatBytes(totals.reclaimable),
+                l1: formatBytes(totals.deadweight),
+                l2: formatBytes(totals.l2),
+                l3: formatBytes(totals.l3),
+                l4: formatBytes(totals.l4),
+              })}
+            >
+              <span className="flex flex-col items-center">
+                <CountUp
+                  value={totals.reclaimable}
+                  format={formatBytes}
+                  className="font-mono text-[26px] leading-none font-semibold tabular-nums text-ink"
+                />
+                <span className="mt-1 text-[9.5px] text-ink-faint">{t("stats.hero.reclaimable")}</span>
+              </span>
+            </RingGauge>
+          </span>
 
           <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <span className="text-[12.5px] font-medium text-ink">{t("stats.hero.breakdown")}</span>
-              <ScopeBadge label={t("stats.hero.scope")} tip={t("stats.hero.scopeTip")} />
-              <span className="ml-auto shrink-0 text-[10px] text-ink-faint transition-colors group-hover:text-ink-dim">
-                {t("stats.hero.toStorage")}
-              </span>
-            </div>
-            <div className="mt-2.5 grid grid-cols-2 gap-x-[18px] gap-y-2.5">
-              <LegendRow
-                color="var(--color-accent)"
+            <div className="grid content-start gap-2">
+              <TierRow
+                lv="L1"
                 label={t("stats.tier.l1")}
                 value={formatBytes(totals.deadweight)}
+                bytes={totals.deadweight}
+                max={tierMax(totals)}
+                color="var(--color-accent)"
               />
-              <LegendRow color="var(--color-info)" label={t("stats.tier.l2")} value={formatBytes(totals.l2)} />
-              <LegendRow color="var(--color-warn)" label={t("stats.tier.l3")} value={formatBytes(totals.l3)} />
-              <LegendRow color="hatch" label={t("stats.tier.l4")} value={formatBytes(totals.l4)} dim />
+              <TierRow
+                lv="L2"
+                label={t("stats.tier.l2")}
+                value={formatBytes(totals.l2)}
+                bytes={totals.l2}
+                max={tierMax(totals)}
+                color="var(--color-info)"
+              />
+              <TierRow
+                lv="L3"
+                label={t("stats.tier.l3")}
+                value={formatBytes(totals.l3)}
+                bytes={totals.l3}
+                max={tierMax(totals)}
+                color="var(--color-warn)"
+              />
+              <TierRow
+                lv="L4"
+                label={t("stats.tier.l4")}
+                value={formatBytes(totals.l4)}
+                bytes={totals.l4}
+                max={tierMax(totals)}
+                color="var(--color-danger)"
+                hatch
+                dim
+              />
             </div>
-            <p className="mt-2.5 text-[9.5px] leading-none text-ink-faint">{t("stats.hero.l4Note")}</p>
+            <p className="mt-2.5 text-[9.5px] leading-none text-ink-faint">{t("stats.hero.note")}</p>
           </div>
+
+          <span
+            className="grid size-[30px] place-items-center rounded-full text-accent transition-transform group-hover:translate-x-0.5"
+            style={{ background: "color-mix(in srgb, var(--color-accent) 14%, transparent)" }}
+            aria-hidden
+          >
+            <ChevronRightIcon size={14} />
+          </span>
         </button>
       ) : (
         /* 未扫描：环画成虚线空轨 + 中央「—」，绝不用 0 冒充事实 */
-        <div className="mt-2.5 flex items-start gap-5 rounded-hero border border-hairline-soft bg-surface-raised px-5 py-4">
+        <div className="mt-1 flex items-start gap-5 rounded-hero border border-hairline-soft bg-gradient-to-b from-chip-soft to-transparent bg-surface-raised px-5 py-4">
           <RingGauge
             segments={[]}
             size={104}
@@ -228,39 +301,26 @@ export function StatsBoard({
         </div>
       )}
 
-      {/* NBA：只从已有报告派生，点一下就去存储执行 */}
-      {nba ? (
-        <div className="mt-2 flex items-center gap-4 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2">
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-1.5">
-              <span className="inline-flex shrink-0 items-center rounded-full bg-accent/12 px-1.5 py-px text-[9px] leading-[13px] font-medium whitespace-nowrap text-accent">
-                {t("stats.nba.badge")}
-              </span>
-              <ProposalTag />
-            </div>
-            <div className="mt-1 truncate text-[12px] font-medium text-ink">
-              {t("stats.nba.title", { size: formatBytes(nba.bytes) })}
-            </div>
-            <div className="mt-0.5 truncate text-[9.5px] text-ink-faint">
-              {t("stats.nba.note", { n: nba.entryCount, native: formatBytes(nba.nativeBytes) })}
-            </div>
-          </div>
-          <Btn variant="ghost" onClick={() => onDrill("disk")}>
-            {t("stats.nba.action")}
-          </Btn>
-        </div>
-      ) : null}
-
-      {/* 六张域卡：3 列 × 2 行，固定 96 高 */}
-      <div className="mt-2.5 grid grid-cols-3 gap-3">
-        <DomainCard
+      {/* ③ 六磁贴：仪表即语义 + 标题 + 大读数 + 一行口径 + 微图表 */}
+      <div className="grid flex-1 grid-cols-3 grid-rows-2 gap-3">
+        <InfoTile
           title={t("stats.card.memory")}
-          caption={t("stats.caption.memory")}
+          caption={`${t("stats.caption.memory")}${mem.sub[0] ? ` · ${mem.sub[0]}` : ""}`}
           color="var(--color-info)"
           icon={<MemoryCloudIcon size={12} />}
-          readout={mem}
-          onOpen={() => onDrill("memory")}
-          chart={
+          gaugeRatio={mem.status === "ok" ? mem.ratio : null}
+          main={{ value: mem.main, unit: mem.unit, tail: mem.mainTail, tone: mem.tone }}
+          note={mem.note}
+          sub={
+            swap && swapRatio != null
+              ? t("stats.swap.footnote", {
+                  used: formatBytes(swap.used),
+                  total: formatBytes(swap.total),
+                  pct: formatPercent(swapRatio),
+                })
+              : mem.sub[0]
+          }
+          viz={
             swap && swapRatio != null ? (
               <MeterBar
                 value={swap.used}
@@ -272,24 +332,18 @@ export function StatsBoard({
               />
             ) : null
           }
-          footnote={
-            swap && swapRatio != null
-              ? t("stats.swap.footnote", {
-                  used: formatBytes(swap.used),
-                  total: formatBytes(swap.total),
-                  pct: formatPercent(swapRatio),
-                })
-              : undefined
-          }
+          onOpen={() => onDrill("memory")}
         />
-        <DomainCard
+        <InfoTile
           title={t("stats.card.cpu")}
-          caption={t("stats.caption.cpu")}
+          caption={`${t("stats.caption.cpu")}${cpu.sub[0] ? ` · ${cpu.sub[0]}` : ""}`}
           color="var(--color-domain-cpu)"
           icon={<ChipIcon size={12} />}
-          readout={cpu}
-          onOpen={() => onDrill("resources")}
-          chart={
+          gaugeRatio={cpu.status === "ok" ? cpu.ratio : null}
+          main={{ value: cpu.main, unit: cpu.unit, tone: cpu.tone }}
+          note={cpu.note}
+          sub={t("stats.cpuTrend.label")}
+          viz={
             <AreaChart
               values={cpuHistory}
               color="var(--color-domain-cpu)"
@@ -297,28 +351,36 @@ export function StatsBoard({
               ariaLabel={t("stats.cpuTrend.aria")}
             />
           }
-          footnote={t("stats.cpuTrend.label")}
+          onOpen={() => onDrill("resources")}
         />
-        <DomainCard
+        <InfoTile
           title={t("stats.card.disk")}
-          caption={t("stats.caption.disk")}
+          caption={`${t("stats.caption.disk")}${disk.sub[0] ? ` · ${disk.sub[0]}` : ""}`}
           color="var(--color-accent)"
           icon={<DatabaseIcon size={12} />}
-          readout={disk}
+          gaugeRatio={disk.status === "ok" ? disk.ratio : null}
+          main={{ value: disk.main, unit: disk.unit, tail: disk.mainTail, tone: disk.tone }}
+          note={disk.note}
+          sub={disk.sub[0] ?? disk.sub[1]}
+          viz={disk.ratio != null ? <Meter ratio={disk.ratio} tone={disk.tone} height={3} /> : null}
           onOpen={() => onDrill("disk")}
-          chart={disk.ratio != null ? <Meter ratio={disk.ratio} tone={disk.tone} height={3} /> : null}
-          footnote={disk.sub[0]}
         />
-        <DomainCard
+        <InfoTile
           title={t("stats.card.ports")}
-          caption={t("stats.caption.ports")}
+          caption={`${t("stats.caption.ports")}${port.sub[0] ? ` · ${port.sub[0]}` : ""}`}
           color="var(--color-domain-port)"
-          icon={<PortJackIcon size={12} />}
-          readout={port}
-          onOpen={() => onDrill("ports")}
-          chart={
+          icon={<PortJackIcon size={13} />}
+          main={port.status === "ok" ? { value: port.main } : undefined}
+          note={port.note}
+          sub={
+            port.status === "ok"
+              ? [port.sub[0], port.sub[1], conflicts > 0 ? t("stats.tile.conflicts", { n: conflicts }) : null]
+                  .filter((s): s is string => s != null)
+                  .join(" · ")
+              : undefined
+          }
+          viz={
             ports ? (
-              /* 17 颗一行 + 「+N」收尾：96 px 卡里两行点阵会把脚注挤掉 */
               <DotMatrix
                 items={portDots}
                 dot={6}
@@ -328,73 +390,108 @@ export function StatsBoard({
               />
             ) : null
           }
-          footnote={port.sub[0]}
+          onOpen={() => onDrill("ports")}
         />
-        {/* 网络拆成两卡（M16 v6）：下载 / 上传各自刻度，共享纵轴会把上传压平 */}
-        <DomainCard
+        <InfoTile
           title={t("stats.card.down")}
-          caption={t("stats.caption.down")}
+          caption={`${t("stats.caption.down")} · ${t("stats.net.m5", { value: netDown.avgText })}`}
           color="var(--color-domain-net)"
-          icon={<DownloadIcon size={12} />}
-          readout={net}
-          body={<NetDirectionReading readout={netDown} />}
+          icon={<DownloadIcon size={13} />}
+          main={
+            netDown.status === "ok"
+              ? { value: netDown.main, unit: netDown.unit, tone: "accent" }
+              : undefined
+          }
+          note={netDown.note}
+          sub={
+            netDown.todayText != null
+              ? t("stats.tile.netSub", {
+                  up: `${netUp.main} ${netUp.unit}`.trim(),
+                  today: netDown.todayText,
+                })
+              : t("stats.net.m5", { value: netDown.avgText })
+          }
+          viz={
+            netDownShare != null ? (
+              <div className="flex items-center gap-2" aria-hidden>
+                <DownloadIcon size={12} className="shrink-0 text-domain-net" />
+                <UploadIcon size={12} className="shrink-0 text-domain-cpu" />
+                <span className="relative h-[3px] min-w-0 flex-1 overflow-hidden rounded-full bg-chip">
+                  <i
+                    className="absolute inset-y-0 left-0 rounded-full bg-domain-net"
+                    style={{ width: `${netDownShare * 100}%` }}
+                  />
+                  <i
+                    className="absolute inset-y-0 right-0 rounded-full bg-domain-cpu"
+                    style={{ width: `${(1 - netDownShare) * 100}%` }}
+                  />
+                </span>
+              </div>
+            ) : null
+          }
           onOpen={() => onDrill("net")}
         />
-        <DomainCard
-          title={t("stats.card.up")}
-          caption={t("stats.caption.up")}
-          color="var(--color-domain-cpu)"
-          icon={<DownloadIcon size={12} className="rotate-180" />}
-          readout={net}
-          body={<NetDirectionReading readout={netUp} />}
-          onOpen={() => onDrill("net")}
+        <InfoTile
+          title={t("nav.device")}
+          caption={t("nav.deviceHint")}
+          color="var(--color-domain-device)"
+          icon={<DeviceIcon size={13} />}
+          main={
+            lanDevices != null
+              ? { value: String(lanDevices.length), unit: t("stats.tile.deviceUnit") }
+              : undefined
+          }
+          note={lanDevices == null ? t("common.state.notScanned") : undefined}
+          sub={deviceSubParts.length > 0 ? deviceSubParts.slice(0, 3).join(" · ") : undefined}
+          viz={<DeviceViz devices={lanDevices} tempCelsius={temp?.celsius ?? null} />}
+          onOpen={() => onDrill("device")}
         />
       </div>
 
-      {/* W2/D-07 本地服务卡：关注层 + 冲突的常驻读数。复用 30 s 轮的同一份快照，
-          零新增采样；冲突判定与 island 同口径（TCP 且 ≥2 个不同 pid） */}
-      <LocalServiceCard ports={ports} onOpenPort={(port) => { onFocusPort?.(port); onDrill("ports"); }} />
-
-      {/* f26 硬件读数条（电池/蓝牙配件电量 + CPU 温度）：门控采样，失败即隐藏 */}
-      <HardwareStrip />
-
-      {/* 剪除成绩单（M21）：只统计你亲手剪掉的，本地 SQLite append-only。
-          左：累计 + 换算；右：Top3。横排是为了在 700 高的窗口里和上面几段一起首屏读完。 */}
+      {/* ④ 剪除成绩单（M21）：只统计你亲手剪掉的，本地 SQLite append-only。
+          奖章位 + 大数字 + Top3 迷你条——一行读完，不与上面几段抢纵向空间。 */}
       {cut ? (
-        <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2.5">
-          <div className="flex items-start gap-5">
+        <div
+          className="shrink-0 rounded-card border border-hairline-soft bg-gradient-to-b from-chip-soft to-transparent bg-surface-raised px-4 py-2.5"
+          title={t("stats.scorecard.title")}
+        >
+          <div className="flex items-center gap-4">
+            <span
+              className="grid size-10 shrink-0 place-items-center rounded-[12px] text-accent"
+              style={{
+                background: "color-mix(in srgb, var(--color-accent) 13%, transparent)",
+                boxShadow: "0 0 14px color-mix(in srgb, var(--color-accent) 20%, transparent)",
+              }}
+              aria-hidden
+            >
+              <ScissorsIcon size={17} />
+            </span>
             <div className="min-w-0 flex-1">
-              <div className="flex items-baseline justify-between gap-2">
-                <span className="text-[11px] font-medium tracking-wide text-ink-dim">
-                  {t("stats.scorecard.title")}
-                </span>
-                <span className="shrink-0 text-[9px] text-ink-faint">{t("stats.scorecard.hint")}</span>
-              </div>
               {cut.totalItems > 0 ? (
                 <>
-                  <div className="mt-1 flex items-baseline gap-2.5">
+                  <div className="flex items-baseline gap-2.5">
                     <CountUp
                       value={cut.totalBytes}
                       format={formatBytes}
-                      className="font-mono text-[20px] leading-none tabular-nums text-ink"
+                      className="font-mono text-[22px] leading-none font-semibold tabular-nums text-ink"
                     />
                     <span className="truncate text-[10px] text-ink-faint">
                       {cutEquivalence(cut.totalBytes, t)}
                     </span>
                   </div>
-                  <p className="mt-0.5 text-[9.5px] text-ink-faint">
+                  <p className="mt-0.5 truncate text-[9.5px] text-ink-faint">
                     {/* 口径：cut_log 一行 = 一个被剪掉的条目，所以这里是「项」不是「次」 */}
                     {t("stats.scorecard.items", { n: cut.totalItems })}
                     {cut.firstTs != null
                       ? t("stats.scorecard.since", { date: dayString(new Date(cut.firstTs * 1000)) })
                       : ""}
+                    {" · "}
+                    {t("stats.scorecard.hint")}
                   </p>
                 </>
               ) : (
-                <div className="mt-2 flex items-center gap-2.5">
-                  <p className="text-[10.5px] leading-relaxed text-ink-faint">
-                    {t("stats.scorecard.empty")}
-                  </p>
+                <div className="flex items-center gap-2.5">
+                  <p className="text-[10.5px] leading-relaxed text-ink-faint">{t("stats.scorecard.empty")}</p>
                   <Btn variant="ghost" onClick={() => onDrill("disk")}>
                     {t("stats.scorecard.goStorage")}
                   </Btn>
@@ -402,23 +499,133 @@ export function StatsBoard({
               )}
             </div>
             {cut.totalItems > 0 && cut.top.length > 0 ? (
-              <div className="grid w-[212px] shrink-0 content-start gap-0.5 border-l border-hairline-soft pl-4">
-                {cut.top.slice(0, 3).map((item, i) => (
-                  <div key={item.label} className="flex items-baseline gap-1.5 text-[10px]">
-                    <span className="w-2.5 shrink-0 font-mono text-ink-faint">{i + 1}</span>
-                    <span className="truncate text-ink-dim">{item.label}</span>
-                    <span className="ml-auto shrink-0 font-mono tabular-nums text-ink">
-                      {formatBytes(item.bytes)}
-                    </span>
-                  </div>
-                ))}
+              <div className="flex w-[236px] shrink-0 flex-col gap-1.5 border-l border-hairline-soft pl-4">
+                {cut.top.slice(0, 3).map((item) => {
+                  const topBytes = cut.top[0]?.bytes ?? 0;
+                  return (
+                    <div key={item.label} className="min-w-0">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <span className="min-w-0 truncate text-[10px] text-ink-dim">{item.label}</span>
+                        <span className="shrink-0 font-mono text-[10.5px] tabular-nums text-ink">
+                          {formatBytes(item.bytes)}
+                        </span>
+                      </div>
+                      <div className="mt-0.5 h-[3px] overflow-hidden rounded-full bg-chip">
+                        <div
+                          className="h-full rounded-full bg-accent opacity-75"
+                          style={{ width: `${topBytes > 0 ? (item.bytes / topBytes) * 100 : 0}%` }}
+                        />
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
             ) : null}
           </div>
         </div>
       ) : null}
 
-      <p className="mt-2 text-[9px] leading-relaxed text-ink-faint">{t("common.hint.statsPrinciple")}</p>
+      <p className="shrink-0 text-[9px] leading-relaxed text-ink-faint">
+        {t("common.hint.statsPrinciple")}
+      </p>
+    </div>
+  );
+}
+
+/** 四档里最大的一档：图例色条的比例基准 */
+function tierMax(totals: { deadweight: number; l2: number; l3: number; l4: number }): number {
+  return Math.max(totals.deadweight, totals.l2, totals.l3, totals.l4);
+}
+
+/**
+ * Hero 图例行（eul 式）：L 徽标 + 比例色条 + 数值——完整档位名在 tooltip。
+ * L4 用斜纹填充，沿用「L4 不计入」的视觉约定。
+ */
+function TierRow({
+  lv,
+  label,
+  value,
+  bytes,
+  max,
+  color,
+  hatch = false,
+  dim = false,
+}: {
+  lv: string;
+  label: string;
+  value: string;
+  bytes: number;
+  max: number;
+  color: string;
+  hatch?: boolean;
+  dim?: boolean;
+}) {
+  const share = max > 0 ? Math.max(0.02, bytes / max) : 0;
+  return (
+    <span
+      className="grid grid-cols-[9px_18px_minmax(0,150px)_auto] items-center gap-2"
+      title={label}
+      style={dim ? { opacity: 0.55 } : undefined}
+    >
+      <i
+        className="size-[9px] shrink-0 rounded-[3px]"
+        style={{
+          background: hatch
+            ? "repeating-linear-gradient(45deg, var(--color-hatch) 0 2px, transparent 2px 4px)"
+            : color,
+          boxShadow: hatch ? undefined : `0 0 6px color-mix(in srgb, ${color} 35%, transparent)`,
+        }}
+        aria-hidden
+      />
+      <span className="font-mono text-[9px] leading-none text-ink-faint">{lv}</span>
+      <span className="h-[4px] overflow-hidden rounded-full bg-chip">
+        <i
+          className="block h-full rounded-full"
+          style={{
+            width: `${share * 100}%`,
+            background: hatch
+              ? "repeating-linear-gradient(45deg, var(--color-hatch) 0 2px, transparent 2px 4px)"
+              : `linear-gradient(90deg, color-mix(in srgb, ${color} 55%, transparent), color-mix(in srgb, ${color} 18%, transparent))`,
+          }}
+          aria-hidden
+        />
+      </span>
+      <span className="shrink-0 text-right font-mono text-[13px] font-medium tabular-nums text-ink">
+        {value}
+      </span>
+    </span>
+  );
+}
+
+/** 设备磁贴微图表：局域网设备点阵（亮=在线 / 弱=离线）+ 温度读数 */
+function DeviceViz({
+  devices,
+  tempCelsius,
+}: {
+  devices: { online: boolean }[] | null;
+  tempCelsius: number | null;
+}) {
+  if (devices == null && tempCelsius == null) return null;
+  return (
+    <div className="flex items-center gap-1.5" aria-hidden>
+      {(devices ?? []).slice(0, 8).map((d, i) => (
+        <i
+          key={i}
+          className="size-[6px] rounded-full"
+          style={{
+            background: "var(--color-domain-device)",
+            opacity: d.online ? 1 : 0.4,
+          }}
+        />
+      ))}
+      {devices != null && devices.length > 8 ? (
+        <span className="font-mono text-[9px] tabular-nums text-ink-faint">+{devices.length - 8}</span>
+      ) : null}
+      {tempCelsius != null ? (
+        <span className="ml-auto font-mono text-[9px] tabular-nums text-ink-faint">
+          {Math.round(tempCelsius)} ℃
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -431,162 +638,4 @@ function cutEquivalence(totalBytes: number, t: ReturnType<typeof useI18n>["t"]):
     return t("stats.scorecard.movies", { n: Math.max(1, Math.round(totalBytes / MOVIE)) });
   }
   return t("stats.scorecard.photos", { n: Math.max(1, Math.round(totalBytes / PHOTO)) });
-}
-
-/**
- * 图例行：`8px 1fr auto` 三列，数值列右对齐 —— 四项数值必须在同一条竖线上，
- * 否则「谁大谁小」要靠读数字，图例就白画了。
- */
-function LegendRow({
-  color,
-  label,
-  value,
-  dim = false,
-}: {
-  /** 域色；传 "hatch" 时画成斜纹块（L4 不计入的视觉约定） */
-  color: string;
-  label: string;
-  value: string;
-  dim?: boolean;
-}) {
-  const swatch =
-    color === "hatch"
-      ? "repeating-linear-gradient(45deg, var(--color-hatch) 0 2px, transparent 2px 4px)"
-      : color;
-  return (
-    <span
-      className="grid grid-cols-[8px_minmax(0,1fr)_auto] items-center gap-1.5"
-      style={dim ? { opacity: 0.55 } : undefined}
-    >
-      <i
-        className="size-2 shrink-0 rounded-[2px]"
-        style={{
-          background: swatch,
-          boxShadow: color === "hatch" ? undefined : `0 0 6px color-mix(in srgb, ${color} 35%, transparent)`,
-        }}
-        aria-hidden
-      />
-      <span className="truncate text-[11px] text-ink-dim">{label}</span>
-      <span className="shrink-0 text-right font-mono text-[11.5px] font-medium tabular-nums text-ink">
-        {value}
-      </span>
-    </span>
-  );
-}
-
-/**
- * W2/D-07 本地服务卡：关注层监听与冲突的常驻读数（§4.2 ①）。
- *
- * 边界（§4.3）：
- * - 快照为空（首次启动未采）→ 骨架 + 「正在采集」，不留空栏；
- * - 采集失败 / 无 lsof → 显示 coverage.note，绝不显示 0；
- * - 关注层为空 → 「当前没有监听」——扫描过了才是这个结论。
- */
-function LocalServiceCard({
-  ports,
-  onOpenPort,
-}: {
-  ports: PortSnapshot | null;
-  onOpenPort: (port: string) => void;
-}) {
-  const { t } = useI18n();
-
-  if (!ports) {
-    return (
-      <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2.5">
-        <span className="text-[11px] font-medium tracking-wide text-ink-dim">
-          {t("stats.localService.title")}
-        </span>
-        <p className="mt-1 text-[10.5px] text-ink-faint">{t("stats.localService.collecting")}</p>
-      </div>
-    );
-  }
-
-  const watched = ports.entries.filter((e) => e.watched);
-  const conflicts = portConflicts(ports.entries);
-  const conflictPorts = new Set(conflicts.map((c) => c.port));
-  // 冲突行置顶，其余按端口号排；最多 4 行，多的收进「其余 N 个」
-  const rows: PortEntry[] = [...watched].sort((a, b) => {
-    const ca = conflictPorts.has(a.port) ? 0 : 1;
-    const cb = conflictPorts.has(b.port) ? 0 : 1;
-    return ca - cb || a.port - b.port;
-  });
-  const shown = rows.slice(0, 4);
-
-  return (
-    <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised px-4 py-2.5">
-      <div className="flex items-baseline justify-between gap-3">
-        <span className="text-[11px] font-medium tracking-wide text-ink-dim">
-          {t("stats.localService.title")}
-        </span>
-        <span className="font-mono text-[10.5px] tabular-nums text-ink-dim">
-          {t("stats.localService.summary", {
-            watched: watched.length,
-            conflicts: conflicts.length,
-          })}
-        </span>
-      </div>
-
-      {ports.coverage.note ? (
-        <p className="mt-1 text-[10.5px] leading-relaxed text-warn">
-          {t("stats.localService.unreadable", { note: ports.coverage.note })}
-        </p>
-      ) : shown.length === 0 ? (
-        <p className="mt-1 text-[10.5px] text-ink-faint">{t("stats.localService.empty")}</p>
-      ) : (
-        <ul className="mt-1 space-y-0.5">
-          {shown.map((e) => (
-            <li key={`${e.port}-${e.proto}`}>
-              <button
-                type="button"
-                onClick={() => onOpenPort(String(e.port))}
-                title={t("stats.localService.rowAria", {
-                  port: e.port,
-                  comm: primaryComm(e),
-                })}
-                className="flex w-full items-center gap-2 rounded-md px-1 py-1 text-left transition-colors hover:bg-chip-hover"
-              >
-                <span
-                  className={`shrink-0 font-mono text-[11px] tabular-nums ${
-                    conflictPorts.has(e.port) ? "text-danger" : "text-ink"
-                  }`}
-                >
-                  :{e.port}
-                </span>
-                <span className="min-w-0 flex-1 truncate text-[10.5px] text-ink-dim">
-                  {primaryComm(e)}
-                  {e.listeners[0]?.projectLabel
-                    ? ` · ${e.listeners[0].projectLabel}`
-                    : ""}
-                </span>
-                {conflictPorts.has(e.port) ? (
-                  <span className="shrink-0 rounded-full bg-danger/12 px-1.5 py-px text-[9px] font-medium text-danger">
-                    {t("stats.localService.conflictMark")}
-                  </span>
-                ) : null}
-              </button>
-            </li>
-          ))}
-          {rows.length > shown.length ? (
-            <li>
-              <button
-                type="button"
-                onClick={() => onOpenPort("")}
-                className="px-1 pt-0.5 text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
-              >
-                {t("stats.localService.more", { n: rows.length - shown.length })}
-              </button>
-            </li>
-          ) : null}
-        </ul>
-      )}
-    </div>
-  );
-}
-
-/** 主展示进程名（primaryOf 的轻量版：卡里只要一个名字） */
-function primaryComm(e: PortEntry): string {
-  const b =
-    e.listeners.find((x) => x.pid != null) ?? e.listeners[0];
-  return b?.comm || "—";
 }
