@@ -384,7 +384,9 @@ if (refText) {
       continue;
     }
     for (const tk of tokens.slice(1)) {
-      if (tk.startsWith('-') && !usageFlags.has(tk)) {
+      // trace（F25）的观测边界 `--`：分隔符不是 flag，usage 文本里有就放行
+      // （白名单正则要求 -- 后带字母，裸 `--` 永远进不了 usageFlags）
+      if (tk.startsWith('-') && tk !== '--' && !usageFlags.has(tk)) {
         problems.push(`${CLI_REF} flag "${tk}" 不在 main.rs usage() 里: prune ${raw}`);
       }
     }

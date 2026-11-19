@@ -119,6 +119,10 @@ prune port [PORT] [--json] [--all] [--conflicts] [--drift [--rebase]]
                                     # who owns this port (--conflicts: >= 2 distinct holders; --drift: diff against the trusted baseline)
 prune why <PORT> [--json]           # plain-language port verdict: who holds it, why a kill would revive it, where to turn it off
 prune files <PATH> [--json]         # who has ordinary files open under this path (read-only, no execution entry)
+prune swap [--hours N] [--all] [--json]
+                                    # swap detail + per-process swap-out rate ranking (from existing series diffs, no extra sampling; negative delta = swapped back in / released)
+prune trace [--json] [--out <PATH>] [--interval N] [--no-ports] -- <command> [args...]
+                                    # task cost sheet (F25): an observation shell like /usr/bin/time — wall time / CPU / peak RSS / swap delta / newly bound ports; exit code passes through; Ctrl-C still yields the sheet
 prune projects [--days N] [--json]  # project dependency ledger: per-day trend (missing days are not zero-filled)
 prune app <family> [--json]         # one app's resource profile: processes/memory/CPU/ports/conns/disk
 prune lan [--scan] [--json]         # LAN devices (default: cache only; --scan probes the subnet)
@@ -134,7 +138,7 @@ Full command reference (flags per command / JSON contract / exit codes): [docs/c
 
 ## MCP server
 
-**MCP tools (13, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup + inbound peer summary, with `coverage` explaining what was visible) / `prune_why` (plain-language port verdict: who holds it, why a kill would revive it, where to turn it off) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail plus the most-swapped processes) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
+**MCP tools (13, all read-only):** `mem_snapshot` (one-shot memory reading) / `mem_leaks` (leak suspicion from the GUI's series store) / `disk_report` (full disk scan, ~15 s) / `disk_scan` (per-entry whitelist detail with optional child split, sub-second) / `port_listeners` (port reverse lookup + inbound peer summary, with `coverage` explaining what was visible) / `prune_why` (plain-language port verdict: who holds it, why a kill would revive it, where to turn it off) / `port_conflicts` (which ports have more than one holder right now) / `project_deps` (project dependency ledger and trend; reads history, never triggers a scan) / `swap_report` (swap detail, most-swapped processes, and 24h per-process swap-out rates with a dual-basis system total) / `net_sites` (five-stage site checks; **makes real HTTPS requests**, <= 20 MB per run) / `net_diag` (exposure verdict: who is listening on all interfaces) / `app_resources` (five-domain app profile) / `lan_devices` (LAN devices, cache only, sends no packets).
 
 Wire it into any MCP-capable agent and ask questions like "what is eating disk on this machine", "is anything of mine exposed on the LAN", or "is this process leaking" — the agent reads, you decide.
 

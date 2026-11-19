@@ -16,6 +16,8 @@
 | `prune port [PORT] [--json] [--all] [--conflicts] [--drift [--rebase]]` | 谁占着这个端口（`--conflicts` 只看冲突端口；`--drift` 看相对基线的漂移，`--rebase` 重建基线） |
 | `prune why <PORT> [--json]` | 端口白话解释：一句话说清谁占着、为什么杀不掉、去哪关 |
 | `prune files <PATH> [--json]` | 占用反查（F23）：这块盘/目录被谁开着文件（只读，不解） |
+| `prune swap [--hours N] [--all] [--json]` | swap 明细 + 换出增速榜（F24，读序列库历史，不触发扫描；负 Δ = 换回内存/退出释放） |
+| `prune trace [--json] [--out <PATH>] [--interval N] [--no-ports] -- <command> [args...]` | 任务成本核算（F25）：观测壳同 `/usr/bin/time`——墙钟/CPU/峰值 RSS/换出增量/新绑定端口；退出码透传 |
 | `prune projects [--days N] [--json]` | 项目依赖账本（按天趋势，默认 30 天） |
 | `prune doctor [--json] [--only disk,mem,port,net] [--timeout N]` | 四域体检：磁盘/内存/端口/网络的结论+证据+下一步 |
 | `prune app <家族名> [--json]` | 一个应用的资源画像：进程/内存/CPU/端口/连接/磁盘 |
@@ -164,6 +166,49 @@ JSON 顶层键：`schemaVersion`, `path`, `holders`, `scannedMs`, `coverageNote`
 Coverage 纪律：`coverageNote` **永远有值**——以当前用户权限运行，其他用户的进程句柄不可见，「没有可见的占用者」≠「没人占用」，可用 `sudo lsof` 复查。目录与 socket/pipe 不算占用（只计普通文件 VREG）。
 
 退出码：路径不存在 → **2**；lsof 失败 → **4**；其余 → 0（含「没有可见占用者」——那是数据事实）。
+
+## prune swap
+
+swap 三段读数（F24）：**明细**（与 MCP `swap_report` 同源）、**换出增速榜**（按进程的窗口首末样本差分）、**系统级双口径净增速**。增速全部来自序列库既有的 7 天 `swapped` 序列差分——**零新增采集、不触发扫描**；库不存在时输出指路文案并正常退出（不是错误）。
+
+```sh
+prune swap                           # 默认 24h 窗口，榜单前 10
+prune swap --hours 168 --all         # 7 天窗口 + 全量榜
+prune swap --json | jq '.systemRate'
+```
+
+- 负 Δ = 换回内存 / 退出释放，**不夹 0、不隐藏**——是信息不是脏数据；
+- pid 复用（首末样本 start_time 不一致）的差分整组丢弃，`coverage.pidReused` 计数；
+- 样本 < 2 的进程不产增速（宁缺勿错）；`coverage.gaps` 如实标注 Prune 没跑的时段——「没数据」≠「没换出」；
+- 系统级拆双口径：`sumDelta`（含退出释放的负贡献）与 `activeDelta`（仅窗口两端都被观测到的存活进程）；
+- Windows 无每进程换出口径：增速榜恒为空 + `coverage.note` 说明，系统级 swap 占用读数不受影响；
+- `--hours` 上限 168（= 7 天保留期，再多也没有数据）。
+
+JSON 顶层键：`schemaVersion`, `swap`, `usedRatio`, `pressure`, `windowHours`, `rates`, `systemRate`, `recent1h`, `coverage`
+
+退出码：0（含「暂无序列数据」——那是数据事实）；读序列失败 → **4**。
+
+## prune trace
+
+任务成本核算（F25）：`prune trace -- pnpm install` 结束后输出一张**成本单**——墙钟、CPU 时间与利用率、峰值 RSS、换出增量、新绑定端口、按树内 CPU 聚合的 top 后代。trace 的角色是**观测壳**（同 `/usr/bin/time`）：执行的是用户 `--` 后**显式传入**的命令，直接 spawn 不经 shell（无注入面）；Prune 自身没有任何「常见任务」清单。产出天然是可贴进 issue 的证据单。
+
+```sh
+prune trace -- pnpm install          # 成本单打 stderr，子进程 stdout 原样透传
+prune trace --json --out trace.json -- npm install
+prune trace --interval 1 -- vite dev   # dev server：端口证据 + Ctrl-C 出中断单
+```
+
+- **输出通道**：子进程 stdout/stderr 原样透传，成本单（文本或 JSON）走 **stderr**——`prune trace -- cmd > build.log` 的重定向习惯不被破坏；`--out` 时 JSON 写文件、stderr 只留路径回执（需与 `--json` 同用）；
+- **退出码透传**：正常退出取子进程 code；被信号杀死 = 128 + 信号号（shell 惯例）——`prune trace -- cmd && next` 的 CI 链可直接替换裸命令；
+- **Ctrl-C**：首次中断转发 SIGTERM 给子进程组并照常出成本单（`interrupted: true`，中断前的消耗也是成本；宽限 5s 后 SIGKILL 只针对用户自己的子进程）；**二次** Ctrl-C 直接退出（成本单丢弃）；
+- **归属边界诚实**：被 launchd 收养的后代不计入且 coverage 注明「实际消耗略高于本单」；短命进程漏采写明采样粒度（`--interval`，默认 2s，钳制 1-60）；
+- **换出增量**：深探 1-2s/轮不可逐轮付 → 仅首末轮对树内 Top 8 深探，成对才产 Δ；负值 = swap-in/释放，不夹 0；未成对显式「未采样」，不冒充 0；
+- **端口轮默认开**（dev server 场景正是端口证据），对基线轮 diff，分「还在监听」与「已释放」两段；只收树内 pid 的绑定；`--no-ports` 关闭；
+- 守护进程不退出时 trace 随之不退出——**Ctrl-C 是唯一出口**（trace 随子进程生灭，不装后台）。
+
+JSON 顶层键：`schemaVersion`, `cmd`, `wallMs`, `exitCode`, `interrupted`, `cpu`, `rss`, `swap`, `ports`, `topDescendants`, `coverage`, `intervalMs`
+
+退出码：子进程退出码透传；命令找不到 / spawn 失败 → **4**；`--out` 无 `--json` 等用法错 → **2**。
 
 口径纪律：`free` 必须在 Coverage 无差额时才出现——「没查到」≠「端口空闲」；`unknown` 只报观测事实，不编造用途；本命令只解释、不给任何执行动作。
 
