@@ -8,6 +8,7 @@ import { AppDetail } from "../components/appdetail/AppDetail";
 import { DeviceBoard } from "../components/DeviceBoard";
 import { LeakEvidence } from "../components/LeakCard";
 import { LeakStrip } from "../components/memory/LeakStrip";
+import { FamilyInspector } from "../components/memory/FamilyInspector";
 import { MemHero } from "../components/memory/MemHero";
 import { MemRibbon } from "../components/memory/MemRibbon";
 import { MemTiles } from "../components/memory/MemTiles";
@@ -301,6 +302,26 @@ export function MainWindow() {
     () => processes.find((p) => p.pid === selectedPid) ?? null,
     [processes, selectedPid],
   );
+  /** 左栏选中的家族（应用层级）；null = 未选中。与 selectedPid 并存时进程详情优先 */
+  const [selectedFamily, setSelectedFamily] = useState<string | null>(null);
+  const selectedFamilyMem = useMemo(
+    () => (selectedFamily ? (families.find((f) => f.name === selectedFamily) ?? null) : null),
+    [families, selectedFamily],
+  );
+  /**
+   * 家族行点击 = 选中 + 展开（再点一次 = 取消选中并收起）。
+   * 选中家族时清掉进程选中：右栏立刻呈现家族聚合，而不是停留在进程详情。
+   */
+  const pickFamily = (name: string) => {
+    if (selectedFamily === name) {
+      setSelectedFamily(null);
+      setExpanded(null);
+    } else {
+      setSelectedFamily(name);
+      setExpanded(name);
+      if (selectedPid != null) select(null);
+    }
+  };
 
   // 刷新按钮按 tab 分流：三个域的采样代价与语义都不同，不能混用一个 loading
   const busy =
@@ -377,11 +398,12 @@ export function MainWindow() {
       } else if (e.key === "Escape") {
         if (settingsOpen) setSettingsOpen(false);
         else if (tab === "memory" && selectedPid != null) select(null);
+        else if (tab === "memory" && selectedFamily != null) setSelectedFamily(null);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [settingsOpen, tab, selectedPid, select]);
+  }, [settingsOpen, tab, selectedPid, selectedFamily, select]);
 
   return (
     <div className="flex h-screen bg-surface text-ink">
@@ -552,7 +574,8 @@ export function MainWindow() {
                     processes={processes}
                     expanded={expanded}
                     selectedPid={selectedPid}
-                    onToggle={(name) => setExpanded(expanded === name ? null : name)}
+                    selectedFamily={selectedFamily}
+                    onPickFamily={pickFamily}
                     onSelect={select}
                     onKillMenu={openKillMenu}
                   />
@@ -563,6 +586,14 @@ export function MainWindow() {
             <main className="flex min-w-0 flex-1 flex-col overflow-y-auto px-4 pb-3.5 pt-3">
               {selected ? (
                 <ProcessInspector proc={selected} onBack={() => select(null)} />
+              ) : selectedFamilyMem ? (
+                <FamilyInspector
+                  family={selectedFamilyMem}
+                  processes={processes}
+                  onBack={() => setSelectedFamily(null)}
+                  onSelectPid={select}
+                  onKillMenu={openKillMenu}
+                />
               ) : (
                 <Overview onKillMenu={openKillMenu} />
               )}
@@ -612,7 +643,8 @@ function FamilyList({
   processes,
   expanded,
   selectedPid,
-  onToggle,
+  selectedFamily,
+  onPickFamily,
   onSelect,
   onKillMenu,
 }: {
@@ -620,7 +652,9 @@ function FamilyList({
   processes: ProcMem[];
   expanded: string | null;
   selectedPid: number | null;
-  onToggle: (name: string) => void;
+  /** 当前选中的家族名（应用层级选中态，与 selectedPid 并存时进程详情优先） */
+  selectedFamily: string | null;
+  onPickFamily: (name: string) => void;
   onSelect: (pid: number | null) => void;
   onKillMenu: (proc: ProcMem, x: number, y: number) => void;
 }) {
@@ -644,9 +678,10 @@ function FamilyList({
           family={f}
           icon={icons[f.name]}
           open={expanded === f.name}
+          active={selectedFamily === f.name}
           selectedPid={selectedPid}
           processes={processes}
-          onToggle={() => onToggle(f.name)}
+          onPick={() => onPickFamily(f.name)}
           onSelect={onSelect}
           onKillMenu={onKillMenu}
         />
@@ -662,9 +697,10 @@ function FamilyRow({
   family,
   icon,
   open,
+  active,
   selectedPid,
   processes,
-  onToggle,
+  onPick,
   onSelect,
   onKillMenu,
 }: {
@@ -672,9 +708,11 @@ function FamilyRow({
   /** 真实图标（data URL）；缺省落字母徽标（AppIcon 内部处理） */
   icon?: string;
   open: boolean;
+  /** 家族行选中态（应用层级） */
+  active: boolean;
   selectedPid: number | null;
   processes: ProcMem[];
-  onToggle: () => void;
+  onPick: () => void;
   onSelect: (pid: number | null) => void;
   onKillMenu: (proc: ProcMem, x: number, y: number) => void;
 }) {
@@ -695,10 +733,12 @@ function FamilyRow({
     <li>
       <button
         type="button"
-        onClick={onToggle}
+        onClick={onPick}
         aria-expanded={open}
         title={t("memory.families.expandHint")}
-        className="group flex w-full items-center gap-2 rounded-lg px-1.5 py-[5px] text-left transition-colors hover:bg-chip"
+        className={`group flex w-full items-center gap-2 rounded-lg px-1.5 py-[5px] text-left transition-colors ${
+          active ? "bg-info/[0.12]" : "hover:bg-chip"
+        }`}
       >
         <AppIcon family={family.name} icon={icon} size={28} className="shrink-0" />
         <span className="min-w-0 flex-1">

@@ -36,7 +36,7 @@ const zh = {
     empty: "暂无进程数据",
     swapPct: "换出 {pct}",
     procBadgeTip: "{n} 个进程",
-    expandHint: "点击展开进程列表",
+    expandHint: "点击选中并在右栏查看家族聚合 · 再次点击收起",
   },
   /** eul 重设计（memory-eul-mockup.html）：右栏状态带 / 构成条 / 双磁贴 / 泄漏带 */
   ribbon: {
@@ -114,6 +114,14 @@ const zh = {
   },
   deepUnavailable:
     "深探不可用：当前全部为 RSS 口径。macOS 请确认 /usr/bin/footprint 可执行；Windows 通常是该进程受保护或权限不足。",
+  /** 家族（应用层级）聚合详情：左栏家族行选中后右栏呈现 */
+  familyInspector: {
+    memberTitle: "成员进程（{n}）",
+    shareOf: "占家族 {pct}",
+    partialDeep: "{covered}/{total} 已深探",
+    partialDeepTip: "footprint 深探未覆盖全部成员：家族总量为下界估算",
+    memberHint: "点击下钻进程详情 · 右键结束进程",
+  },
   inspector: {
     badgeRssTip: "该进程尚未完成 footprint 深探",    compositionTitle: "内存构成一览",
     onDisk: "{pct} 在磁盘上",
@@ -226,7 +234,7 @@ const en: MessageTree<typeof zh> = {
     empty: "No process data yet",
     swapPct: "{pct} swapped",
     procBadgeTip: "{n} processes",
-    expandHint: "Click to expand processes",
+    expandHint: "Click to select and inspect the family on the right · click again to collapse",
   },
   /** eul redesign (memory-eul-mockup.html): right-pane ribbon / compose hero / tiles / leak strip */
   ribbon: {
@@ -306,6 +314,14 @@ const en: MessageTree<typeof zh> = {
   },
   deepUnavailable:
     "Deep scan unavailable: everything is on the RSS basis right now. On macOS check that /usr/bin/footprint is executable; on Windows the process is usually protected or you lack permission.",
+  /** Family-level aggregate detail: shown when a family row is selected in the left sidebar */
+  familyInspector: {
+    memberTitle: "Member processes ({n})",
+    shareOf: "{pct} of family",
+    partialDeep: "{covered}/{total} deep-scanned",
+    partialDeepTip: "footprint deep scan hasn't covered every member: family total is a lower-bound estimate",
+    memberHint: "Click to drill into the process · right-click to kill",
+  },
   inspector: {
     badgeRssTip: "This process has no footprint yet",
     compositionTitle: "Memory composition",
