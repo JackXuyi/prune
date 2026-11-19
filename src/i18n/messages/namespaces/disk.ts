@@ -15,9 +15,48 @@ import type { MessageTree } from "../../types";
 const zh = {
   title: "可回收空间",
   reclaimableSuffix: "可回收",
-  subnet: "L1 零后悔 + L2 可再生 + L3 需判断 · Docker 等 L4 高风险项不计入",
   scanning: "正在扫描…",
   scanningWith: "正在扫描…（{done}/{total}）",
+  /** eul 重设计（storage-eul-mockup.html ①）：状态带 4 段，只放本页任务内读数 */
+  ribbon: {
+    aria: "存储状态带：卷已用、可用、可回收、L1 死重",
+    usedTip: "卷已用 {pct}：{used} / {total}（含系统与其它卷占用）",
+    availTip: "用户视角可用空间（含 purgeable，偏乐观）：{free}",
+    reclaimTip: "可回收 {size} = L1 {l1} + L2 {l2} + L3 {l3} · 不含 L4",
+    l1Tip: "L1 死重 {size}：本机永远加载不了的跨平台二进制，零后悔",
+  },
+  /** SMART 条件提醒带：已验证（健康态）整条不渲染，仅警告/不支持出现 */
+  smartBand: {
+    tip: "SMART 状态来自系统磁盘诊断（后端 1 小时缓存）：{names}",
+    failing: "{n} 块磁盘 SMART 警告：{names} —— 清理前建议先备份",
+    unsupported: "{n} 块磁盘不支持 SMART 读取：{names}",
+  },
+  /** Hero：可回收大数字 + L1–L4 构成条 + 扫描口径块 */
+  hero: {
+    tip: "可回收 = L1+L2+L3。L4 只给命令不执行，不进可回收记账。",
+    lead: "可回收 = L1 + L2 + L3 · L4 仅命令不清理",
+    l4Tip: "L4 只给命令（如 brew cleanup）：不执行、不计入可回收",
+    scanWhen: "上次扫描 · {secs} s",
+    incrTag: "增量",
+    scanMeta: "{n} 组",
+  },
+  /** 占用反查带：卷芯片点选免输入（eul 改版） */
+  tool: {
+    hint: "外置盘弹不出时问「谁占着」· 只查不解 · 点卷即查（TTL 5 分钟）",
+    pickTip: "反查 {path} 的占用者",
+    more: "其他路径…",
+    moreTip: "卷列表里没有？手动输入路径反查",
+  },
+  /** 磁贴：死重比（比值，不套环）/ 重复依赖 */
+  tile: {
+    deadweight: "死重比 · {label}",
+    dwSub: "浪费 {waste} ÷ 本机原生 {native} · {n} 个平台共存",
+  },
+  /** 分级列表头与脚注 */
+  tiers: {
+    head: "分级清理",
+    foot: "分级由安全边界决定：L1 零后悔 · L2 可再生 · L3 需判断 · L4 只给命令。清理一律移入废纸篓，可撤销；一键🟢 只碰 L1，绝不替你做 L2+ 的主。",
+  },
   progressLine: "扫描中 {done}/{total} · {phase} · 已统计 {bytes}",
   /** f26 硬件读数条：磁盘 I/O（按物理盘差分，真读写拆分）+ SMART 状态灯 */
   hw: {
@@ -42,13 +81,6 @@ const zh = {
     summary: "{path}：{n} 个占用者（{ms} ms · {when}）",
     none: "没有可见的占用者（见下方说明）",
     fileCount: "{n} 个文件",
-  },  volume: {
-    aria: "卷已用 {pct}：{used} / {total}",
-    title: "卷容量",
-    used: "已用 {used} / {total}",
-    free: "剩余 {free}",
-    reclaimable: "可回收 {size}",
-    reclaimOfFree: " · 相当于剩余空间的 {pct}%",
   },
   empty: {
     noReportTitle: "还没有扫描结果",
@@ -80,28 +112,15 @@ const zh = {
     l4: "只给命令",
   },
   stack: {
-    title: "可回收构成",
-    note: "斜纹段 = 只给命令，不计入",
     aria: "可回收构成：L1 {l1}，L2 {l2}，L3 {l3}，L4 {l4} 不计入",
   },
   deadweight: {
-    title: "{size} · 你的 Mac 永远加载不了",
-    meta: "{label} · {n} 个跨平台二进制缓存包",
-    ratio: " · 浪费比 {ratio} : 1",
-    native: " · 本机可用 {size}",
-    preview: "预览清理",
-    platformEntry: "{n} 个 · {size}",
     aria: "跨平台浪费 {waste}，本机可用 {native}",
     ariaRatio: "跨平台浪费 {waste}，本机可用 {native}，浪费比 {ratio} 比 1",
     segWaste: "跨平台浪费",
     segNative: "本机可用",
     summary: "浪费 {waste} · 本机可用 {native}",
     summaryRatio: "浪费 {waste} · 本机可用 {native} · 浪费比 {ratio} : 1",
-    barTitle: "{platform}：{n} 个跨平台缓存包，共 {size}",
-    topItems: "最大的 {n} 个条目",
-    other: "另有 {size} 为普通包或依赖 Rosetta 的 darwin-x64 条目，不在默认清理清单内。",
-    noneTitle: "跨平台二进制 · 未发现",
-    noneNote: "Yarn v6 缓存不存在，或其中只有本机架构的包——本地单架构安装时这是正常状态。",
   },
   dup: {
     title: "同一批依赖存了 {n} 份",
@@ -384,9 +403,42 @@ const zh = {
 const en: MessageTree<typeof zh> = {
   title: "Reclaimable space",
   reclaimableSuffix: "reclaimable",
-  subnet: "L1 zero regret + L2 regenerable + L3 needs judgment · high-risk items like Docker (L4) are not counted",
   scanning: "Scanning…",
   scanningWith: "Scanning… ({done}/{total})",
+  ribbon: {
+    aria: "Storage ribbon: volume used, available, reclaimable, L1 deadweight",
+    usedTip: "Volume {pct} used: {used} / {total} (incl. system and other volumes)",
+    availTip: "User-visible free space (incl. purgeable, optimistic): {free}",
+    reclaimTip: "Reclaimable {size} = L1 {l1} + L2 {l2} + L3 {l3} · excludes L4",
+    l1Tip: "L1 deadweight {size}: cross-platform binaries your Mac can never load — zero regret",
+  },
+  smartBand: {
+    tip: "SMART status comes from system disk diagnostics (1 h cache on the backend): {names}",
+    failing: "{n} disk(s) report SMART failure: {names} — consider backing up before cleanup",
+    unsupported: "{n} disk(s) don't support SMART: {names}",
+  },
+  hero: {
+    tip: "Reclaimable = L1+L2+L3. L4 is commands-only and never counted.",
+    lead: "Reclaimable = L1 + L2 + L3 · L4 commands only, not cleaned",
+    l4Tip: "L4 is commands only (e.g. brew cleanup): never executed, never counted",
+    scanWhen: "last scan · {secs} s",
+    incrTag: "incremental",
+    scanMeta: "{n} groups",
+  },
+  tool: {
+    hint: "Disk won't eject? Ask who holds it · read-only · pick a volume to look up (5 min TTL)",
+    pickTip: "Look up holders of {path}",
+    more: "Other path…",
+    moreTip: "Volume not listed? Type a path to look up",
+  },
+  tile: {
+    deadweight: "Waste ratio · {label}",
+    dwSub: "waste {waste} ÷ native {native} · {n} platforms coexist",
+  },
+  tiers: {
+    head: "Tiered cleanup",
+    foot: "Tiers follow safety boundaries: L1 zero regret · L2 regenerable · L3 needs judgment · L4 commands only. Cleanup always goes to Trash and is reversible; one-click 🟢 only touches L1.",
+  },
   progressLine: "Scanning {done}/{total} · {phase} · {bytes} counted so far",
   hw: {
     title: "Hardware readings",
@@ -410,14 +462,6 @@ const en: MessageTree<typeof zh> = {
     summary: "{path}: {n} holders ({ms} ms · {when})",
     none: "No visible holders (see note below)",
     fileCount: "{n} files",
-  },
-  volume: {
-    aria: "Volume {pct} used: {used} / {total}",
-    title: "Volume",
-    used: "{used} / {total} used",
-    free: "{free} free",
-    reclaimable: "{size} reclaimable",
-    reclaimOfFree: " · {pct}% of free space",
   },
   empty: {
     noReportTitle: "No scan results yet",
@@ -449,28 +493,15 @@ const en: MessageTree<typeof zh> = {
     l4: "commands only",
   },
   stack: {
-    title: "What's reclaimable",
-    note: "Hatched segment = commands only, not counted",
     aria: "Reclaimable breakdown: L1 {l1}, L2 {l2}, L3 {l3}, L4 {l4} excluded",
   },
   deadweight: {
-    title: "{size} · your Mac can never load these",
-    meta: "{label} · {n} cross-platform binary cache packages",
-    ratio: " · waste ratio {ratio} : 1",
-    native: " · {size} usable locally",
-    preview: "Preview cleanup",
-    platformEntry: "{n} · {size}",
     aria: "Cross-platform waste {waste}, {native} usable locally",
     ariaRatio: "Cross-platform waste {waste}, {native} usable locally, waste ratio {ratio} to 1",
     segWaste: "Cross-platform waste",
     segNative: "Usable locally",
     summary: "Waste {waste} · usable locally {native}",
     summaryRatio: "Waste {waste} · usable locally {native} · waste ratio {ratio} : 1",
-    barTitle: "{platform}: {n} cross-platform cache packages, {size} total",
-    topItems: "Top {n} entries",
-    other: "Another {size} are plain packages or darwin-x64 entries relying on Rosetta — not in the default cleanup list.",
-    noneTitle: "Cross-platform binaries · none found",
-    noneNote: "The Yarn v6 cache doesn't exist, or holds only this machine's architecture — normal for a single-arch local install.",
   },
   dup: {
     title: "The same dependencies stored {n} times",

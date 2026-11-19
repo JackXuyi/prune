@@ -2,29 +2,26 @@ import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useI18n } from "../i18n/store";
 import type { I18n } from "../i18n";
-import { formatBytes, formatPercent, formatRelative } from "../lib/format";
+import { formatBytes } from "../lib/format";
 import { useDialogA11y } from "../lib/dialogA11y";
 import { isTauri, reclaimChildren, revealPath, activationReport, reclaimPreview, reclaimExecute, diskReport, type ActivationSummary } from "../lib/ipc";
 import { writeClipboard } from "../lib/clipboard";
 import { useDiskStore } from "../stores/diskStore";
-import { StackBar } from "./charts/StackBar";
-import { BarList } from "./charts/BarList";
-import { RingGauge } from "./charts/RingGauge";
 import { EmptyState } from "./EmptyArt";
-import { DiskHardwareStrip } from "./DiskHardwareStrip";
 import { ProjectHealthCard } from "./ProjectHealthCard";
-import { OpenFilesCard } from "./OpenFilesCard";
+import { StRibbon } from "./storage/StRibbon";
+import { SmartBand } from "./storage/SmartBand";
+import { StHero } from "./storage/StHero";
+import { OpenFilesBand } from "./storage/OpenFilesBand";
+import { StTiles } from "./storage/StTiles";
 import {
   cacheLabel,
   reclaimNoteText,
-  LEVEL_META,
   type CacheGroup,
-  type DeadweightStats,
   type DetailItem,
   type Level,
   type ReclaimChild,
   type ReclaimItem,
-  type VolumeInfo,
 } from "../types/disk";
 import { ChevronRightIcon, FileIcon, FolderIcon, RefreshIcon } from "./icons";
 import { Btn, PopMenu, toast } from "./primitives";
@@ -33,7 +30,11 @@ import { Btn, PopMenu, toast } from "./primitives";
 const TIERS: Level[] = ["l1", "l2", "l3", "l4"];
 
 /**
- * 存储 tab（UI v5 §4.4）。
+ * 存储 tab（eul 重设计 · storage-eul-mockup.html）。
+ *
+ * 版式骨架：Ribbon（4 段）→ SMART 条件带 → Hero（可回收大数字 + L1–L4 构成）
+ * → 占用反查带（卷芯片点选）→ 磁贴（死重比/重复依赖）→ 分级列表（唯一滚动区）
+ * → 底部操作栏。
  *
  * **三段链路是唯一正确形态**（旧版画成「四个勾选框 → 一键清理」是错的）：
  * ① 分级构成（只读 + 勾选决定预览范围）
@@ -263,245 +264,171 @@ export function ReclaimBoard() {
   };
 
   return (
-    <div className="relative flex min-h-0 flex-1 flex-col">
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 pt-3 pb-3">
-        {/* f26 硬件读数条：磁盘 I/O（门控差分）+ SMART 状态灯（1 h 缓存） */}
-        <DiskHardwareStrip />
-        {/* F23 占用反查卡：与分级清理链路正交——那是「可以删什么」，这是「谁占着」 */}
-        <OpenFilesCard />
-        {/* 头部：可回收总额（顶栏承担页名，这里只放这一页的核心事实） */}
-        <div className="flex items-start justify-between gap-4">
-          <div className="min-w-0">
-            <div className="flex items-baseline gap-2">
-              <span className="font-mono text-[26px] leading-none font-semibold tracking-tight tabular-nums text-ink">
-                <span className="mr-1 text-accent">⚡</span>
-                {formatBytes(totals.reclaimable)}
-              </span>
-              <span className="text-[12px] text-ink-faint">{t("disk.reclaimableSuffix")}</span>
-            </div>
-            <p className="mt-1 text-[10px] text-ink-faint">{t("disk.subnet")}</p>
-            <p className="mt-0.5 text-[10px] text-ink-faint">
-              {t("disk.groups.meta", {
-                n: groups.length,
-                when: formatRelative(report.scannedAt, i18n.locale),
-                secs: (report.scanElapsedMs / 1000).toFixed(1),
-              })}
-              {report.incremental ? t("disk.groups.incremental") : ""}
-            </p>
-          </div>
-          <Btn
-            className="mt-0.5"
-            onClick={() => void refresh()}
-            disabled={scanning}
-            icon={<RefreshIcon size={12} className={scanning ? "animate-spin" : ""} />}
-          >
-            {scanning ? t("common.progress.scanning") : t("common.action.rescan")}
-          </Btn>
-        </div>
+    <div className="flex min-h-0 flex-1 flex-col gap-[9px] px-4 pb-3.5 pt-3">
+      {/* ① 状态带：只放本页任务内读数（卷环/可用/可回收/L1；I/O 与 SMART 不进本页） */}
+      <StRibbon volume={report.volume ?? null} totals={totals} />
 
-        {/* M2 引导卡（DP-3 裁 B）：首扫完成页的「惊讶时刻」顺势承接——
-            只报零后悔（L1）体量，一键🟢 只碰 L1，绝不替用户做 L2+ 的主 */}
-        {showGuide ? (
-          <div className="mt-2.5 rounded-card border border-accent/30 bg-accent/[0.06] px-3.5 py-3">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[12.5px] font-medium text-ink">{t("disk.guide.title")}</p>
-                <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">
-                  {t("disk.guide.body", { size: formatBytes(l1Bytes), n: l1Groups.length })}
-                </p>
-              </div>
-              <div className="flex shrink-0 flex-col items-end gap-1">
-                <Btn onClick={() => void oneClickGreen()} disabled={greenBusy || busy}>
-                  {greenBusy ? t("common.progress.scanning") : t("disk.guide.cta")}
-                </Btn>
-                <button
-                  type="button"
-                  onClick={dismissGuide}
-                  className="text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
-                >
-                  {t("disk.guide.dismiss")}
-                </button>
-              </div>
-            </div>
-            {/* 征募点（RK-5 红线内：首扫结果页 + 只许「复制 6 个数字」+ 零遥测） */}
-            <div className="mt-2 flex items-center justify-between gap-2 border-t border-hairline-soft pt-2">
-              <p className="min-w-0 text-[10px] leading-relaxed text-ink-faint">
-                {t("disk.guide.recruit")}
+      {/* SMART 条件提醒带：已验证 = 健康态 = 整条不渲染 */}
+      <SmartBand />
+
+      {/* ② Hero：可回收大数字 + L1–L4 构成条 + 扫描口径块 */}
+      <StHero
+        totals={totals}
+        scannedAt={report.scannedAt}
+        scanElapsedMs={report.scanElapsedMs}
+        incremental={!!report.incremental}
+        groupCount={groups.length}
+        scanning={scanning}
+        onRescan={() => void refresh()}
+      />
+
+      {/* M2 引导卡（DP-3 裁 B）：首扫完成页的「惊讶时刻」顺势承接——
+          只报零后悔（L1）体量，一键🟢 只碰 L1，绝不替用户做 L2+ 的主 */}
+      {showGuide ? (
+        <div className="shrink-0 rounded-card border border-accent/30 bg-accent/[0.06] px-3.5 py-3">
+          <div className="flex items-start justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-[12.5px] font-medium text-ink">{t("disk.guide.title")}</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-ink-dim">
+                {t("disk.guide.body", { size: formatBytes(l1Bytes), n: l1Groups.length })}
               </p>
+            </div>
+            <div className="flex shrink-0 flex-col items-end gap-1">
+              <Btn onClick={() => void oneClickGreen()} disabled={greenBusy || busy}>
+                {greenBusy ? t("common.progress.scanning") : t("disk.guide.cta")}
+              </Btn>
               <button
                 type="button"
-                onClick={() => void copySixNumbers()}
-                className="shrink-0 text-[10px] text-accent transition-colors hover:underline"
+                onClick={dismissGuide}
+                className="text-[10px] text-ink-faint transition-colors hover:text-ink-dim"
               >
-                {copied ? t("disk.guide.copied") : t("disk.guide.recruitBtn")}
+                {t("disk.guide.dismiss")}
               </button>
             </div>
           </div>
-        ) : null}
-
-        {/* 清理完成条：「已移入废纸篓 N 项」+ 从右上浮起的 +N GB */}
-        {lastReclaimed ? (
-          <div className="relative mt-2.5 flex items-center gap-2.5 rounded-card bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
-            {lastReclaimed.bytes > 0 ? (
-              <span
-                className="prune-float-up pointer-events-none absolute top-0.5 right-20 font-mono text-[13px] font-semibold tabular-nums"
-                aria-hidden
-              >
-                +{formatBytes(lastReclaimed.bytes)}
-              </span>
-            ) : null}
-            <span className="min-w-0 flex-1 truncate">
-              {t("disk.reclaimed.moved", {
-                n: lastReclaimed.moved,
-                size: formatBytes(lastReclaimed.bytes),
-              })}
-              {lastReclaimed.skipped > 0
-                ? t("disk.reclaimed.skipped", { n: lastReclaimed.skipped })
-                : ""}
-              {lastReclaimed.failed.length > 0
-                ? t("disk.reclaimed.failed", { n: lastReclaimed.failed.length })
-                : ""}
-            </span>
+          {/* 征募点（RK-5 红线内：首扫结果页 + 只许「复制 6 个数字」+ 零遥测） */}
+          <div className="mt-2 flex items-center justify-between gap-2 border-t border-hairline-soft pt-2">
+            <p className="min-w-0 text-[10px] leading-relaxed text-ink-faint">
+              {t("disk.guide.recruit")}
+            </p>
             <button
               type="button"
-              onClick={clearReclaimed}
-              className="shrink-0 text-[10px] text-ink-dim transition-colors hover:text-ink"
+              onClick={() => void copySixNumbers()}
+              className="shrink-0 text-[10px] text-accent transition-colors hover:underline"
             >
-              {t("disk.reclaimed.dismiss")}
+              {copied ? t("disk.guide.copied") : t("disk.guide.recruitBtn")}
             </button>
           </div>
-        ) : null}
+        </div>
+      ) : null}
 
-        {/* 卷容量：可回收的 GB 需要分母才有意义 */}
-        {report.volume ? (
-          <VolumeCard volume={report.volume} reclaimable={totals.reclaimable} />
-        ) : null}
+      {/* 清理完成条：「已移入废纸篓 N 项」+ 从右上浮起的 +N GB */}
+      {lastReclaimed ? (
+        <div className="relative flex shrink-0 items-center gap-2.5 rounded-card bg-accent/[0.08] px-3 py-2 text-[11px] text-accent">
+          {lastReclaimed.bytes > 0 ? (
+            <span
+              className="prune-float-up pointer-events-none absolute top-0.5 right-20 font-mono text-[13px] font-semibold tabular-nums"
+              aria-hidden
+            >
+              +{formatBytes(lastReclaimed.bytes)}
+            </span>
+          ) : null}
+          <span className="min-w-0 flex-1 truncate">
+            {t("disk.reclaimed.moved", {
+              n: lastReclaimed.moved,
+              size: formatBytes(lastReclaimed.bytes),
+            })}
+            {lastReclaimed.skipped > 0
+              ? t("disk.reclaimed.skipped", { n: lastReclaimed.skipped })
+              : ""}
+            {lastReclaimed.failed.length > 0
+              ? t("disk.reclaimed.failed", { n: lastReclaimed.failed.length })
+              : ""}
+          </span>
+          <button
+            type="button"
+            onClick={clearReclaimed}
+            className="shrink-0 text-[10px] text-ink-dim transition-colors hover:text-ink"
+          >
+            {t("disk.reclaimed.dismiss")}
+          </button>
+        </div>
+      ) : null}
 
-        {/* 扫完了但确实没有可回收项 —— 「很干净」是正反馈，不是缺数据 */}
+      {/* ②b 占用反查带：Hero 正下方；路径 = 卷芯片点选，免输入 */}
+      <OpenFilesBand />
+
+      {/* ③ 磁贴：死重比 / 重复依赖；无数据整行消失 */}
+      <StTiles deadweightGroup={a1} dup={report.dup} />
+
+      {/* ④ 分级列表 + 项目体检：唯一滚动区 */}
+      <section className="flex min-h-0 flex-1 flex-col overflow-y-auto">
         {totals.reclaimable === 0 ? (
-          <div className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised py-2">
+          // 扫完了但确实没有可回收项 —— 「很干净」是正反馈，不是缺数据
+          <div className="rounded-card border border-hairline-soft bg-surface-raised py-2">
             <EmptyState
               art="scan"
               title={t("disk.empty.cleanTitle")}
               description={t("disk.empty.cleanNote")}
             />
           </div>
-        ) : null}
-
-        {/* ① 分级构成 + ② 分组预览（同一个卡，展开即预览） */}
-        {totals.reclaimable > 0 ? (
-          <section className="mt-2.5 rounded-card border border-hairline-soft bg-surface-raised">
-            <div className="flex items-baseline justify-between gap-3 px-3.5 pt-2.5">
-              <span className="text-[11.5px] font-medium text-ink">{t("disk.stack.title")}</span>
-              <span className="text-[9.5px] text-ink-faint">{t("disk.stage.pickHint")}</span>
-            </div>
-            <div className="px-3.5">
-              <StackBar
-                className="mt-2"
-                ariaLabel={t("disk.stack.aria", {
-                  l1: formatBytes(totals.deadweight),
-                  l2: formatBytes(totals.l2),
-                  l3: formatBytes(totals.l3),
-                  l4: formatBytes(totals.l4),
-                })}
-                segments={[
-                  { key: "l1", label: `L1 ${t("disk.tier.l1")}`, value: totals.deadweight, tone: "accent" },
-                  { key: "l2", label: `L2 ${t("disk.tier.l2")}`, value: totals.l2, tone: "info" },
-                  { key: "l3", label: `L3 ${t("disk.tier.l3")}`, value: totals.l3, tone: "neutral" },
-                  { key: "l4", label: `L4 ${t("disk.tier.l4")}`, value: totals.l4, muted: true },
-                ]}
-              />
-              <p className="mt-1.5 text-[9.5px] text-ink-faint">{t("disk.stack.note")}</p>
-            </div>
-
-            <div className="mt-1 pb-1">
-              {TIERS.map((level) => (
-                <TierRow
-                  key={level}
-                  level={level}
-                  bytes={
-                    level === "l1"
-                      ? totals.deadweight
-                      : level === "l2"
-                        ? totals.l2
-                        : level === "l3"
-                          ? totals.l3
-                          : totals.l4
-                  }
-                  members={groupsOfTier(level)}
-                  picked={picked}
-                  expanded={openTier === level}
-                  onToggleExpand={() => setOpenTier((cur) => (cur === level ? null : level))}
-                  onToggleGroup={toggleGroup}
-                />
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {/* 扫描进度（轻量一行，不抢视线） */}
-        {scanning ? (
-          <div className="mt-2 text-[10px] text-ink-faint">
-            {progress
-              ? t("disk.progressLine", {
-                  done: progress.done,
-                  total: progress.total,
-                  phase: progress.phase,
-                  bytes: formatBytes(progress.bytesSoFar),
-                })
-              : t("common.progress.scanning")}
-          </div>
-        ) : null}
-
-        {/* A1 杀手卡：跨平台二进制（唯一「零后悔」的量） */}
-        {a1?.deadweight ? (
-          <DeadweightCard group={a1} dw={a1.deadweight} />
         ) : (
-          <section className="mt-3">
-            <h2 className="text-[11.5px] font-medium text-ink-dim">{t("disk.deadweight.noneTitle")}</h2>
-            <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">
-              {t("disk.deadweight.noneNote")}
+          <>
+            <div className="sticky top-0 z-10 flex shrink-0 items-baseline gap-2 bg-surface pb-1">
+              <span className="text-[11px] font-semibold text-ink-dim">{t("disk.tiers.head")}</span>
+              <span className="min-w-0 flex-1 text-[9.5px] text-ink-faint">{t("disk.stage.pickHint")}</span>
+            </div>
+
+            {TIERS.map((level) => (
+              <TierCard
+                key={level}
+                level={level}
+                bytes={
+                  level === "l1"
+                    ? totals.deadweight
+                    : level === "l2"
+                      ? totals.l2
+                      : level === "l3"
+                        ? totals.l3
+                        : totals.l4
+                }
+                members={groupsOfTier(level)}
+                picked={picked}
+                expanded={openTier === level}
+                onToggleExpand={() => setOpenTier((cur) => (cur === level ? null : level))}
+                onToggleGroup={toggleGroup}
+              />
+            ))}
+
+            {/* 扫描进度（轻量一行，不抢视线） */}
+            {scanning ? (
+              <div className="mt-1.5 text-[10px] text-ink-faint">
+                {progress
+                  ? t("disk.progressLine", {
+                      done: progress.done,
+                      total: progress.total,
+                      phase: progress.phase,
+                      bytes: formatBytes(progress.bytesSoFar),
+                    })
+                  : t("common.progress.scanning")}
+              </div>
+            ) : null}
+
+            {/* F9 项目体检：把「N 个 node_modules 共 X GB」拆成按项目的账本 */}
+            <div className="mt-2.5">
+              <ProjectHealthCard projects={report.projects ?? []} />
+            </div>
+
+            <p className="mt-2.5 px-1 pb-1 text-[9px] leading-relaxed text-ink-faint">
+              {t("disk.tiers.foot")}
             </p>
-          </section>
+          </>
         )}
+      </section>
 
-        {/* 同一批依赖存了 N 份 */}
-        {report.dup ? (
-          <section className="mt-2.5 rounded-card border border-warn/25 bg-warn/[0.06] px-3.5 py-2.5">
-            <div className="flex items-baseline justify-between gap-3">
-              <h2 className="text-[11.5px] font-medium text-ink">
-                {t("disk.dup.title", { n: report.dup.managers.length })}
-              </h2>
-              <span className="font-mono text-[11.5px] tabular-nums text-warn">
-                {formatBytes(report.dup.totalBytes)}
-              </span>
-            </div>
-            {/* advice 由 Rust 生成：P4 批次随 commands 一起本地化，这里先用后端串 */}
-            <p className="mt-1 text-[10px] leading-relaxed text-ink-faint">{report.dup.advice}</p>
-            <div className="mt-1.5 flex flex-wrap gap-1.5">
-              {report.dup.managers.map(([name, bytes]) => (
-                <span
-                  key={name}
-                  className="rounded-ctl bg-chip px-1.5 py-0.5 text-[10px] text-ink-dim"
-                >
-                  {name} <span className="font-mono tabular-nums">{formatBytes(bytes)}</span>
-                </span>
-              ))}
-            </div>
-          </section>
-        ) : null}
-
-        {/* F9 项目体检：把「N 个 node_modules 共 X GB」拆成按项目的账本 */}
-        <ProjectHealthCard projects={report.projects ?? []} />
-
-        <p className="mt-3 text-[9px] leading-relaxed text-ink-faint">
-          {t("disk.drawer.recycleNote")}
-        </p>
-      </div>
-
-      {/* ③ 底部操作栏：选中态是唯一的执行入口 */}
+      {/* ⑤ 底部操作栏：选中态是唯一的执行入口 */}
       {totals.reclaimable > 0 ? (
-        <div className="flex shrink-0 items-center gap-3 border-t border-hairline bg-surface px-5 py-2.5">
+        <div className="flex shrink-0 items-center gap-3 border-t border-hairline-soft pt-2">
           <span className="text-[11px] text-ink-dim">
             {pickedGroups.length === 0
               ? t("disk.bar.pickedNone")
@@ -580,65 +507,18 @@ function reclaimableOf(g: CacheGroup): number {
 }
 
 /* ==========================================================================
-   卷卡
+   ① + ② 分级卡片 → 分组预览（行 = 级，展开 = 组勾选）
    ========================================================================== */
 
-function VolumeCard({ volume, reclaimable }: { volume: VolumeInfo; reclaimable: number }) {
-  const { t } = useI18n();
-  const used = Math.max(0, volume.totalBytes - volume.availableBytes);
-  const usedRatio = volume.totalBytes > 0 ? used / volume.totalBytes : 0;
-  const reclaimOfFree = volume.userAvailableBytes > 0 ? reclaimable / volume.userAvailableBytes : 0;
-  // 容量越满环越红（80% 预警），环色即语义
-  const ringColor =
-    usedRatio >= 0.9
-      ? "var(--color-danger)"
-      : usedRatio >= 0.8
-        ? "var(--color-warn)"
-        : "var(--color-domain-net)";
+/** 级 → 色（L4 只给命令，点也用斜纹，不伪装成可执行量） */
+const TIER_COLORS: Record<Level, string> = {
+  l1: "var(--color-accent)",
+  l2: "var(--color-info)",
+  l3: "var(--color-warn)",
+  l4: "var(--color-danger)",
+};
 
-  return (
-    <section className="mt-2.5 flex items-center gap-3 rounded-card border border-hairline-soft bg-surface-raised px-3.5 py-2">
-      <RingGauge
-        segments={[{ value: Math.max(0.04, usedRatio), color: ringColor }]}
-        size={56}
-        stroke={5}
-        ariaLabel={t("disk.volume.aria", {
-          pct: formatPercent(usedRatio),
-          used: formatBytes(used),
-          total: formatBytes(volume.totalBytes),
-        })}
-      >
-        <span className="flex items-baseline font-mono text-[12px] leading-none tabular-nums text-ink">
-          {Math.round(usedRatio * 100)}
-          <span className="text-[7px] text-ink-faint">%</span>
-        </span>
-      </RingGauge>
-      <div className="min-w-0 flex-1">
-        <div className="flex items-baseline justify-between gap-3">
-          <span className="text-[11px] font-medium text-ink-dim">{t("disk.volume.title")}</span>
-          <span className="font-mono text-[10.5px] tabular-nums text-ink-dim">
-            {t("disk.volume.used", { used: formatBytes(used), total: formatBytes(volume.totalBytes) })}
-            <span className="ml-2 text-ink">
-              {t("disk.volume.free", { free: formatBytes(volume.userAvailableBytes) })}
-            </span>
-          </span>
-        </div>
-        <p className="mt-0.5 text-[9.5px] text-ink-faint">
-          {t("disk.volume.reclaimable", { size: formatBytes(reclaimable) })}
-          {reclaimOfFree > 0
-            ? t("disk.volume.reclaimOfFree", { pct: Math.round(reclaimOfFree * 100) })
-            : ""}
-        </p>
-      </div>
-    </section>
-  );
-}
-
-/* ==========================================================================
-   ① + ② 分级构成 → 分组预览
-   ========================================================================== */
-
-function TierRow({
+function TierCard({
   level,
   bytes,
   members,
@@ -648,7 +528,7 @@ function TierRow({
   onToggleGroup,
 }: {
   level: Level;
-  /** 本级可回收量（与顶部总量、构成条同源 = report.totals） */
+  /** 本级可回收量（与 Hero 构成条同源 = report.totals） */
   bytes: number;
   /** 本级下的分组（L1 = 带死重切片的组，见 groupsOfTier） */
   members: CacheGroup[];
@@ -658,7 +538,6 @@ function TierRow({
   onToggleGroup: (key: string) => void;
 }) {
   const { t, locale } = useI18n();
-  const meta = LEVEL_META[level];
   const hint = t(
     level === "l1"
       ? "disk.tier.l1Hint"
@@ -668,78 +547,85 @@ function TierRow({
           ? "disk.tier.l3Hint"
           : "disk.tier.l4Hint",
   );
-  const colors: Record<Level, string> = {
-    l1: "var(--color-accent)",
-    l2: "var(--color-info)",
-    l3: "var(--color-warn)",
-    l4: "var(--color-danger)",
-  };
-  const actionable = members.filter((g) => g.cleanable && level !== "l4").length;
+  const color = TIER_COLORS[level];
+  const isL4 = level === "l4";
+  const actionable = members.filter((g) => g.cleanable && !isL4).length;
   const max = Math.max(bytes, 1);
   const pickedHere = members.filter((g) => picked.has(g.key)).length;
 
   return (
-    <div className="border-b border-hairline-soft last:border-b-0">
+    <div className="shrink-0 overflow-hidden rounded-[11px] border border-hairline-soft bg-surface-raised">
       <button
         type="button"
         onClick={onToggleExpand}
         aria-expanded={expanded}
         title={hint}
-        className="flex w-full items-center gap-2 rounded-ctl px-3.5 py-[6px] text-left transition-colors hover:bg-chip"
+        className="grid w-full grid-cols-[14px_150px_minmax(0,1fr)_92px_64px_44px_14px] items-center gap-2 px-2.5 py-[7px] text-left transition-colors hover:bg-chip"
       >
         <i
-          className="size-[7px] shrink-0 rounded-[2px]"
-          style={{ background: colors[level], opacity: level === "l4" ? 0.45 : 1 }}
+          className="size-[8px] shrink-0 rounded-[2.5px]"
+          style={{
+            background: isL4
+              ? "repeating-linear-gradient(45deg, color-mix(in srgb, var(--color-ink-faint) 55%, transparent) 0 2.5px, transparent 2.5px 5px)"
+              : color,
+          }}
           aria-hidden
         />
-        <span className="shrink-0 text-[11.5px] text-ink">
-          <span className="mr-1 font-mono text-[10px] text-ink-faint">{level.toUpperCase()}</span>
-          {t(meta.labelKey)}
+        <span className="min-w-0">
+          <span className="block truncate text-[11.5px] font-medium text-ink">
+            <span className="mr-1 font-mono text-[10px] text-ink-faint">{level.toUpperCase()}</span>
+            {t(`disk.tier.${level}` as const)}
+          </span>
+          <span className="block truncate text-[9px] text-ink-faint">{hint}</span>
         </span>
-        <span className="min-w-0 flex-1 truncate text-[9.5px] text-ink-faint">
-          {level === "l4"
+        <span className="min-w-0 truncate text-[9.5px] text-ink-faint">
+          {isL4
             ? t("disk.stage.commandOnly")
             : actionable > 0
               ? t("disk.stage.cleanable", { n: actionable })
               : t("disk.stage.statsOnly")}
         </span>
-        <span className="h-[3px] w-16 shrink-0 overflow-hidden rounded-full bg-chip">
+        <span className="h-[4px] shrink-0 overflow-hidden rounded-[2px] bg-chip">
           <i
-            className="block h-full rounded-full"
+            className="block h-full rounded-[2px]"
             style={{
               width: `${Math.max(2, (bytes / max) * 100)}%`,
-              background: colors[level],
-              opacity: level === "l4" ? 0.45 : 0.85,
+              background: isL4
+                ? "repeating-linear-gradient(90deg, color-mix(in srgb, var(--color-ink-faint) 60%, transparent) 0 3px, transparent 3px 6px)"
+                : color,
+              opacity: isL4 ? 1 : 0.85,
             }}
           />
         </span>
-        <span className="w-14 shrink-0 text-right font-mono text-[11px] tabular-nums text-ink">
+        <span
+          className={`shrink-0 text-right font-mono text-[11.5px] tabular-nums ${isL4 ? "text-ink-faint" : "text-ink"}`}
+        >
           {formatBytes(bytes)}
         </span>
         <span
-          className={`w-9 shrink-0 text-right font-mono text-[9.5px] tabular-nums ${
+          className={`shrink-0 text-right font-mono text-[9.5px] tabular-nums ${
             pickedHere > 0 ? "text-accent" : "text-transparent"
           }`}
           aria-hidden
         >
-          {pickedHere > 0 ? `${pickedHere}/${members.length}` : "0"}
+          {pickedHere > 0 ? `${pickedHere}/${members.length}` : "—"}
         </span>
         <ChevronRightIcon
-          size={11}
+          size={12}
           className={`shrink-0 text-ink-faint transition-transform ${expanded ? "rotate-90" : ""}`}
         />
       </button>
 
       {expanded ? (
-        <div className="border-t border-hairline-soft bg-surface-sunk/40 px-3.5 py-1">
+        <div className="border-t border-hairline-soft bg-surface-sunk/40 px-2 py-1">
           {members.length === 0 ? (
-            <p className="py-1.5 text-[10px] text-ink-faint">{t("disk.group.statsOnlyTip")}</p>
+            <p className="px-1 py-1.5 text-[10px] text-ink-faint">{t("disk.group.statsOnlyTip")}</p>
           ) : (
             members.map((g) => (
               <GroupPick
                 key={g.key}
                 group={g}
-                selectable={g.cleanable && level !== "l4"}
+                selectable={g.cleanable && !isL4}
                 checked={picked.has(g.key)}
                 onToggle={() => onToggleGroup(g.key)}
                 locale={locale}
@@ -806,7 +692,7 @@ function GroupPick({
 
   return (
     <div
-      className="group/row flex items-center gap-2 rounded-ctl py-[3px] pr-1 transition-colors hover:bg-chip"
+      className="group/row flex items-center gap-2 rounded-ctl px-1 py-[3px] pr-1 transition-colors hover:bg-chip"
       title={t("disk.fileList.title", { path: group.root, tip: t("disk.pathMenu.rootTip") })}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -1279,124 +1165,4 @@ function FileList({ root }: { root: string }) {
 
 function joinPath(root: string, name: string): string {
   return `${root.replace(/\/+$/, "")}/${name}`;
-}
-
-/* ==========================================================================
-   A1 杀手卡：跨平台二进制
-   ========================================================================== */
-
-function DeadweightCard({ group, dw }: { group: CacheGroup; dw: DeadweightStats }) {
-  const loadPreview = useDiskStore((s) => s.loadPreview);
-  const busy = useDiskStore((s) => s.busy);
-  const { t, locale } = useI18n();
-
-  return (
-    <section className="mt-2.5 rounded-card border border-accent/25 bg-accent/[0.06] px-3.5 py-2.5">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="text-[12px] font-semibold tracking-tight text-ink">
-            🟢 {t("disk.deadweight.title", { size: formatBytes(dw.bytes) })}
-          </h2>
-          <p className="mt-0.5 text-[9.5px] text-ink-faint">
-            {t("disk.deadweight.meta", {
-              label: cacheLabel(group, locale),
-              n: dw.entryCount,
-            })}
-            {dw.ratio != null ? t("disk.deadweight.ratio", { ratio: dw.ratio.toFixed(1) }) : ""}
-            {t("disk.deadweight.native", { size: formatBytes(dw.nativeBytes) })}
-          </p>
-        </div>
-        <Btn variant="primary" onClick={() => void loadPreview([group.key])} disabled={busy}>
-          {t("disk.deadweight.preview")}
-        </Btn>
-      </div>
-
-      <div className="mt-1.5 grid grid-cols-2 gap-x-6">
-        {dw.byPlatform.map((p) => (
-          <div key={p.platform} className="flex items-baseline justify-between text-[9.5px]">
-            <span className="font-mono text-ink-dim">{p.platform}</span>
-            <span className="font-mono tabular-nums text-ink-faint">
-              {t("disk.deadweight.platformEntry", { n: p.entryCount, size: formatBytes(p.bytes) })}
-            </span>
-          </div>
-        ))}
-      </div>
-
-      {/* 浪费 vs 可用双段条：「浪费比 3.2 : 1」的比例一眼可见，数字仍保留 */}
-      <StackBar
-        className="mt-2"
-        height={4}
-        ariaLabel={
-          dw.ratio != null
-            ? t("disk.deadweight.ariaRatio", {
-                waste: formatBytes(dw.bytes),
-                native: formatBytes(dw.nativeBytes),
-                ratio: dw.ratio.toFixed(1),
-              })
-            : t("disk.deadweight.aria", {
-                waste: formatBytes(dw.bytes),
-                native: formatBytes(dw.nativeBytes),
-              })
-        }
-        segments={[
-          { key: "waste", label: t("disk.deadweight.segWaste"), value: dw.bytes, tone: "accent" },
-          { key: "native", label: t("disk.deadweight.segNative"), value: dw.nativeBytes, tone: "neutral" },
-        ]}
-      />
-      <p className="mt-1 text-[9.5px] text-ink-faint">
-        {dw.ratio != null
-          ? t("disk.deadweight.summaryRatio", {
-              waste: formatBytes(dw.bytes),
-              native: formatBytes(dw.nativeBytes),
-              ratio: dw.ratio.toFixed(1),
-            })
-          : t("disk.deadweight.summary", {
-              waste: formatBytes(dw.bytes),
-              native: formatBytes(dw.nativeBytes),
-            })}
-      </p>
-
-      {dw.byPlatform.length > 1 ? (
-        <BarList
-          className="mt-1.5"
-          rows={dw.byPlatform.map((p) => ({
-            key: p.platform,
-            label: p.platform,
-            value: p.bytes,
-            display: formatBytes(p.bytes),
-            title: t("disk.deadweight.barTitle", {
-              platform: p.platform,
-              n: p.entryCount,
-              size: formatBytes(p.bytes),
-            }),
-          }))}
-        />
-      ) : null}
-
-      <details className="mt-1.5">
-        <summary className="cursor-pointer text-[9.5px] text-ink-faint hover:text-ink-dim">
-          {t("disk.deadweight.topItems", { n: Math.min(dw.items.length, 10) })}
-        </summary>
-        <ul className="mt-1 space-y-0.5">
-          {dw.items.slice(0, 10).map((it) => (
-            <li key={it.path} className="flex items-baseline gap-2 text-[9.5px]">
-              <span className="w-14 shrink-0 text-right font-mono tabular-nums text-ink-dim">
-                {formatBytes(it.bytes)}
-              </span>
-              <span className="w-16 shrink-0 text-ink-faint">{it.platform ?? "—"}</span>
-              <span className="min-w-0 flex-1 truncate text-ink-dim" title={it.name}>
-                {it.name}
-              </span>
-            </li>
-          ))}
-        </ul>
-      </details>
-
-      {dw.otherBytes > 0 ? (
-        <p className="mt-1.5 text-[9.5px] text-ink-faint">
-          {t("disk.deadweight.other", { size: formatBytes(dw.otherBytes) })}
-        </p>
-      ) : null}
-    </section>
-  );
 }
