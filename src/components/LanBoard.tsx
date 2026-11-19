@@ -2,16 +2,19 @@ import { useEffect, useState } from "react";
 
 import { EmptyState } from "./EmptyArt";
 import { LanDeviceCard, LanDeviceDetailModal } from "./LanDeviceCard";
+import { LanHero } from "./lan/LanHero";
+import { LanRibbon } from "./lan/LanRibbon";
 import { LanTopology } from "./LanTopology";
-import { ChevronRightIcon, RefreshIcon } from "./icons";
+import { ChevronRightIcon } from "./icons";
 import { formatClock } from "../lib/format";
 import { useI18n } from "../i18n/store";
 import { phaseText, useLanStore } from "../stores/lanStore";
-import type { LanDevice } from "../types/lan";
+import { kindLabel, type LanDevice } from "../types/lan";
 
 /**
  * 局域网设备分段（M18-C5，spec §11）：挂在「端口」tab 内。
- * 卡片化重设计：m18-lan-cards-redesign-plan.md。
+ * eul 重设计：ports-eul-mockup.html 局域网子页 —— 状态带 4 段 → 设备点阵 Hero
+ * → 条件带 → 设备网格（工具行 / 固定组 / 在线组 / 离线折叠）。
  *
  * 两种状态 + 一条铁律：**进入分段不扫描**。macOS 15 起桌面 App 纳入本地网络
  * 授权，这是 Prune 第一次引入系统权限弹窗——只允许在用户点「扫描局域网」时
@@ -20,7 +23,7 @@ import type { LanDevice } from "../types/lan";
 
 type LanFilter = "all" | "online" | "inbound";
 
-export function LanBoard() {
+export function LanBoard({ query = "" }: { query?: string }) {
   const { t, locale } = useI18n();
   const snapshot = useLanStore((s) => s.snapshot);
   const scanning = useLanStore((s) => s.scanning);
@@ -83,39 +86,44 @@ export function LanBoard() {
   }
 
   const devices = snapshot.devices;
+  const q = query.trim().toLowerCase();
+  // 搜索：IP / 主机名 / 厂商 / 类型词——用户手里只有其中一种线索
+  const matchQuery = (d: LanDevice) =>
+    !q ||
+    d.ip.includes(q) ||
+    (d.hostname ?? "").toLowerCase().includes(q) ||
+    (d.vendor ?? "").toLowerCase().includes(q) ||
+    kindLabel(d.kind, locale).toLowerCase().includes(q);
+
   const onlineCount = devices.filter((d) => d.online).length;
   const inboundCount = devices.filter((d) => d.inbound.length > 0).length;
   const randomMacCount = devices.filter((d) => d.randomizedMac).length;
 
   // 分组：本机与网关置顶固定 → 在线设备网格 → 离线折叠（plan §3 信息架构）
-  const match =
-    filter === "all"
-      ? () => true
+  const match = (d: LanDevice) =>
+    matchQuery(d) &&
+    (filter === "all"
+      ? true
       : filter === "online"
-        ? (d: LanDevice) => d.online
-        : (d: LanDevice) => d.inbound.length > 0;
+        ? d.online
+        : d.inbound.length > 0);
   const pinned = devices.filter((d) => (d.isSelf || d.isGateway) && match(d));
   const onlineOthers = devices.filter(
     (d) => d.online && !d.isSelf && !d.isGateway && match(d),
   );
   const offline = devices.filter((d) => !d.online && match(d));
-  const connectedMe = devices.filter((d) => d.inbound.length > 0);
-
-  const exposed = snapshot.exposedPorts;
-  const exposedHint =
-    exposed.length > 0
-      ? `${exposed.slice(0, 4).join(" / ")}${exposed.length > 4 ? " …" : ""}`
-      : t("lan.metric.noExposed");
+  const connectedMe = devices.filter((d) => match(d) && d.inbound.length > 0);
+  const hasMatch = pinned.length + onlineOthers.length + offline.length > 0;
 
   return (
-    <div className="mt-4">
+    <div className="flex flex-col gap-[9px]">
       {error ? (
-        <p className="mt-2 rounded-lg bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">{error}</p>
+        <p className="rounded-[10px] bg-danger/[0.08] px-3 py-2 text-[11px] text-danger">{error}</p>
       ) : null}
       {snapshot.notes.map((n) => (
         <p
           key={n}
-          className="mt-2 rounded-lg bg-warn/[0.07] px-3 py-2 text-[11px] leading-relaxed text-warn"
+          className="rounded-[10px] bg-warn/[0.07] px-3 py-[7px] text-[10.5px] leading-relaxed text-warn"
         >
           {n}
         </p>
@@ -128,9 +136,20 @@ export function LanBoard() {
         />
       ) : (
         <>
-          {/* 筛选条 + 视图切换 + 重扫（plan §5：单选 chips，与端口页搜索语义独立）。
-              chips 只属于卡片网格——拓扑模式下隐藏，避免「点了没反应」（spec §1.2） */}
-          <div className="mt-3 flex items-center justify-between gap-3">
+          {/* ① 状态带 + ② 设备点阵 Hero：首屏读数区（扫描按钮在 Hero 的口径块里，
+              进入分段绝不自动扫描——权限弹窗纪律） */}
+          <LanRibbon snapshot={snapshot} />
+          <LanHero snapshot={snapshot} scanning={scanning} onScan={() => void scan()} />
+
+          {randomMacCount > 0 ? (
+            <p className="rounded-[10px] bg-chip px-3 py-[7px] text-[10.5px] leading-relaxed text-ink-dim">
+              {t("lan.randomMacNote", { n: randomMacCount })}
+            </p>
+          ) : null}
+
+          {/* 工具行：筛选 chips（只属于卡片网格——拓扑模式下隐藏，避免「点了没反应」）
+              + 卡片/拓扑 视图切换 */}
+          <div className="flex items-center justify-between gap-3">
             {view === "cards" ? (
               <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.filter.aria")}>
                 <FilterChip
@@ -156,64 +175,26 @@ export function LanBoard() {
             ) : (
               <span />
             )}
-            <div className="flex shrink-0 items-center gap-2">
-              <div className="flex items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
-                <ViewChip
-                  active={view === "cards"}
-                  onClick={() => setView("cards")}
-                  label={t("lan.topo.cards")}
-                />
-                <ViewChip
-                  active={view === "topo"}
-                  onClick={() => setView("topo")}
-                  label={t("lan.topo.view")}
-                />
-              </div>
-              <button
-                type="button"
-                onClick={() => void scan()}
-                title={t("lan.rescanTitle")}
-                className="flex shrink-0 items-center gap-1 rounded-full bg-chip px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
-              >
-                <RefreshIcon size={10} /> {t("lan.rescan")}
-              </button>
+            <div className="flex shrink-0 items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
+              <ViewChip
+                active={view === "cards"}
+                onClick={() => setView("cards")}
+                label={t("lan.topo.cards")}
+              />
+              <ViewChip
+                active={view === "topo"}
+                onClick={() => setView("topo")}
+                label={t("lan.topo.view")}
+              />
             </div>
           </div>
 
-          {/* 指标卡 ×3（plan §3：核心安全信号从摘要行提权） */}
-          <div className="mt-3 grid grid-cols-3 gap-2.5">
-            <MetricCard
-              label={t("lan.metric.online")}
-              value={String(onlineCount)}
-              unit={t("lan.metric.onlineUnit", { n: devices.length })}
-              hint={
-                snapshot.scanned > 0
-                  ? t("lan.metric.probed", {
-                      scanned: snapshot.scanned,
-                      total: snapshot.total,
-                    })
-                  : t("lan.metric.neighborsOnly")
-              }
+          {view === "cards" && !hasMatch ? (
+            <EmptyState
+              art="search"
+              title={t("lan.empty.noMatchTitle", { query })}
+              note={t("lan.empty.noMatchNote")}
             />
-            <MetricCard
-              label={t("lan.metric.exposed")}
-              value={String(exposed.length)}
-              unit={t("lan.metric.exposedUnit")}
-              tone={exposed.length > 0 ? "warn" : undefined}
-              hint={exposedHint}
-            />
-            <MetricCard
-              label={t("lan.metric.elapsed")}
-              value={(snapshot.scanMs / 1000).toFixed(1)}
-              unit={t("lan.metric.elapsedUnit")}
-              hint={formatClock(snapshot.at)}
-            />
-          </div>
-
-          {randomMacCount > 0 ? (
-            <p className="mt-2 rounded-lg bg-chip px-3 py-2 text-[10.5px] leading-relaxed text-ink-dim">
-              {t("lan.randomMacNote", { n: randomMacCount })}
-            </p>
           ) : null}
 
           {/* 拓扑画布（M20）：全量设备直渲（离线置灰），不做筛选——chips 语义只属于卡片。
@@ -221,7 +202,7 @@ export function LanBoard() {
           <div className={view === "cards" ? "hidden" : ""}>
             <LanTopology devices={devices} onSelect={setSelected} />
           </div>
-          <div className={view === "topo" ? "hidden" : ""}>
+          <div className={view === "topo" || !hasMatch ? "hidden" : ""}>
             {filter === "inbound" ? (
             connectedMe.length > 0 ? (
               <DeviceSection
@@ -257,7 +238,7 @@ export function LanBoard() {
                 />
               ) : null}
               {offline.length > 0 ? (
-                <div className="mt-3.5">
+                <div>
                   <button
                     type="button"
                     onClick={() => setShowOffline((v) => !v)}
@@ -296,7 +277,7 @@ export function LanBoard() {
             )}
           </div>
 
-          <p className="mt-3.5 text-[10px] text-ink-faint">
+          <p className="px-1 text-[9px] text-ink-faint">
             {t("lan.footer", {
               devices: devices.length,
               seconds: (snapshot.scanMs / 1000).toFixed(1),
@@ -373,41 +354,6 @@ function FilterChip({
     >
       {label} <span className="tabular-nums">{count}</span>
     </button>
-  );
-}
-
-function MetricCard({
-  label,
-  value,
-  unit,
-  hint,
-  tone,
-}: {
-  label: string;
-  value: string;
-  unit?: string;
-  hint?: string;
-  tone?: "warn";
-}) {
-  return (
-    <div className="rounded-[10px] border border-hairline-soft bg-chip px-3 py-2">
-      <div className="text-[10px] text-ink-faint">{label}</div>
-      <div className="mt-1 flex items-baseline gap-1">
-        <span
-          className={`font-mono text-[20px] leading-none tabular-nums ${
-            tone === "warn" ? "text-warn" : "text-ink"
-          }`}
-        >
-          {value}
-        </span>
-        {unit ? <span className="text-[10px] text-ink-faint">{unit}</span> : null}
-      </div>
-      {hint ? (
-        <div className="mt-1 truncate text-[9.5px] text-ink-faint" title={hint}>
-          {hint}
-        </div>
-      ) : null}
-    </div>
   );
 }
 

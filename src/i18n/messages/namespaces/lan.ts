@@ -40,6 +40,8 @@ const zh = {
       "入站连接（ESTABLISHED 且对端在网段内）为零。可能只是没有长期服务与这台机器保持连接——不代表本轮扫描没跑。",
     noOnlineTitle: "没有在线设备",
     noOnlineNote: "扫描过了才是这个结论——邻居表里只有离线记录。",
+    noMatchTitle: "没有匹配「{query}」的设备",
+    noMatchNote: "试试 IP、主机名或厂商的一部分。",
   },
 
   filter: {
@@ -63,6 +65,40 @@ const zh = {
 
   randomMacNote:
     "{n} 台设备使用随机化 MAC——无法识别厂商，跨轮次聚合以 IP + 网段为准。",
+
+  /** eul 状态带：在线 / 对我开放的端口 / 新面孔 / 探测覆盖口径（口径不是进度） */
+  ribbon: {
+    aria: "局域网状态带",
+    onlineTitle: "在线 {n} 台 / 邻居表共 {total} 条：Incomplete 无响应的幽灵条目不渲染",
+    onlineUnit: "/ {n} 台",
+    exposedUnit: "暴露",
+    exposedTitle: "本机 {n} 个 TCP 端口对同网段开放——与端口页「对外暴露」同口径",
+    newFacesUnit: "新面孔",
+    newFacesTitle: "{n} 台新面孔：10 分钟内首次出现（按 IP 身份键，终身只报一次）",
+    coverageUnit: "/ {total} 探测",
+    coverageTitle:
+      "本轮主动探测 {scanned} 个地址 / 网段主机总数 {total}；截断不缩水，如实 N/M",
+    neighborsOnly: "仅邻居表",
+  },
+
+  /** eul Hero：设备点阵（一设备一点）+ 网段/扫描口径块（唯一执行入口） */
+  hero: {
+    tip: "每个点 = 一台设备；hover 出「IP · 主机名」。点色：绿=本机 / 蓝=网关 / 黄=有入站连接 / 灰=其他在线 / 淡化=离线遗留",
+    leadNote: "台在线 · {iface} · {cidr} · 一点一台，淡化是离线遗留",
+    dotAria:
+      "设备点阵：本机 {self} · 网关 {router} · 有入站 {inbound} · 其他在线 {online} · 离线 {offline}",
+    legendSelf: "本机",
+    legendRouter: "网关",
+    legendInbound: "有入站连接",
+    legendOnline: "其他在线",
+    legendOffline: "离线遗留",
+    iface: "接口",
+    lastScan: "上次扫描",
+    method: "手段",
+    methodBoth: "邻居表+探测",
+    methodNeighbors: "仅邻居表",
+    scanTip: "进入分段绝不自动扫描——本地网络权限弹窗只在点这里时出现（macOS 15）",
+  },
 
   section: {
     inbound: "连了我的设备",
@@ -182,6 +218,8 @@ const en: MessageTree<typeof zh> = {
     noOnlineTitle: "No devices online",
     noOnlineNote:
       "That conclusion holds because a scan ran — the neighbor table only has offline entries.",
+    noMatchTitle: 'No devices match "{query}"',
+    noMatchNote: "Try part of an IP, hostname or vendor.",
   },
 
   filter: {
@@ -205,6 +243,44 @@ const en: MessageTree<typeof zh> = {
 
   randomMacNote:
     "{n} devices use a randomized MAC — the vendor can't be identified, so rounds are aggregated by IP + subnet.",
+
+  /** eul status ribbon: online / ports open to the subnet / new faces / probe coverage */
+  ribbon: {
+    aria: "LAN status ribbon",
+    onlineTitle:
+      "{n} online out of {total} neighbor entries: unreachable “incomplete” ghosts are never rendered",
+    onlineUnit: "/ {n}",
+    exposedUnit: "exposed",
+    exposedTitle:
+      "{n} of my TCP ports are open to this subnet — same figure as “Externally exposed” on the ports subpage",
+    newFacesUnit: "new",
+    newFacesTitle:
+      "{n} new: first seen within 10 minutes (keyed on IP, reported once per device lifetime)",
+    coverageUnit: "/ {total} probed",
+    coverageTitle:
+      "Probed {scanned} addresses this round out of {total} hosts on the subnet — truncation never shrinks the denominator",
+    neighborsOnly: "neighbors only",
+  },
+
+  /** eul hero: device dot matrix (one dot per device) + subnet / scan provenance block */
+  hero: {
+    tip: "Each dot is a device; hover for “IP · hostname”. Green = this machine / blue = gateway / amber = has inbound connections / grey = other online / faded = offline leftovers",
+    leadNote: "devices online · {iface} · {cidr} · one dot each, faded means offline",
+    dotAria:
+      "Device dot matrix: {self} this machine · {router} gateway · {inbound} with inbound · {online} other online · {offline} offline",
+    legendSelf: "This machine",
+    legendRouter: "Gateway",
+    legendInbound: "Has inbound",
+    legendOnline: "Other online",
+    legendOffline: "Offline leftovers",
+    iface: "Interface",
+    lastScan: "Last scan",
+    method: "Method",
+    methodBoth: "neighbors + probe",
+    methodNeighbors: "neighbors only",
+    scanTip:
+      "Entering this subpage never scans — the local-network permission prompt only appears when you click here (macOS 15)",
+  },
 
   section: {
     inbound: "Devices connected to me",

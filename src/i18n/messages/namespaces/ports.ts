@@ -39,16 +39,38 @@ const zh = {
   configIdle: "项目配置的关注端口当前空闲：{ports}（prune.toml 还在，服务没起）",
   configIdleAria: "{n} 个配置关注端口空闲",
 
-  board: {
-    title: "端口仪表盘",
-    summary: "关注 {watched} · 对外 {exposed} · 其他 {other}（已折叠）",
-    dotAria: "端口点阵：关注层 {watched}，对外暴露 {exposed}，其他 {other}",
-    barAria: "端口分组：关注层 {watched}，对外暴露 {exposed}，其他 {other}",
-    segWatched: "关注层",
-    segExposed: "对外暴露",
-    segOther: "其他",
-    /** 点阵里单点的 title：内核持有的端口没有 comm */
-    kernelOwned: "内核持有",
+  searchLanPlaceholder: "IP / 主机名 / 厂商",
+
+  /** eul 状态带：5 段全是本页任务内读数；归属盲区走提醒带，不上带子 */
+  ribbon: {
+    aria: "端口状态带",
+    listenUnit: "监听",
+    listenTitle:
+      "监听 {n} 个：lsof 能归属到进程的 {attributed} 个 · 内核口径 {total} 个（盲区见下方提醒带）",
+    exposedUnit: "暴露",
+    exposedTitle: "对外暴露 {n} 个：绑定 0.0.0.0 / ::，局域网内其他设备可达",
+    watchedUnit: "关注",
+    watchedTitle: "关注 {n} 个：prune.toml 声明的端口（各项目并集）",
+    connsUnit: "连接",
+    connsTitle: "活跃连接 {n} 条：监听端口上的 ESTABLISHED 之和；{udp}",
+    udpNote: "{n} 个 UDP 端口无连接口径，不计入",
+    closeWaitUnit: "未关",
+    closeWaitTitle:
+      "CLOSE_WAIT {n} 条：本端未关闭的连接——泄漏信号，不是结论；0 为实测零，非缺数",
+  },
+
+  /** eul Hero：点阵主角（一端口一点）+ 扫描口径块（重扫从快捷键变显性按钮） */
+  hero: {
+    tip: "每个点 = 一个监听端口；hover 出「端口 · 进程」。点色：琥珀=对外暴露 / 绿=关注 / 灰=其他（含系统服务）",
+    leadNote: "个监听端口 · 琥珀是对外暴露，绿是关注，灰是其他",
+    dotAria: "端口点阵：对外暴露 {exposed} · 关注 {watched} · 其他 {other}",
+    legendExposed: "对外暴露",
+    legendWatched: "关注",
+    legendOther: "其他（多为系统服务）",
+    scanAt: "扫描完成",
+    scanMs: "耗时",
+    attribution: "归属口径",
+    rescan: "重新扫描",
   },
 
   col: {
@@ -176,15 +198,40 @@ const en: MessageTree<typeof zh> = {
   configIdle: "Configured watch ports currently idle: {ports} (prune.toml present, server not running)",
   configIdleAria: "{n} configured watch ports idle",
 
-  board: {
-    title: "Port dashboard",
-    summary: "Focus {watched} · exposed {exposed} · other {other} (folded)",
-    dotAria: "Port dot matrix: focus layer {watched}, externally exposed {exposed}, other {other}",
-    barAria: "Port groups: focus layer {watched}, externally exposed {exposed}, other {other}",
-    segWatched: "Focus layer",
-    segExposed: "Externally exposed",
-    segOther: "Other",
-    kernelOwned: "Kernel-owned",
+  searchLanPlaceholder: "IP / hostname / vendor",
+
+  /** eul status ribbon: all five segments are readings this page actually acts on */
+  ribbon: {
+    aria: "Port status ribbon",
+    listenUnit: "listening",
+    listenTitle:
+      "{n} listening: {attributed} attributable to a process · kernel sees {total} (blind spots are called out below)",
+    exposedUnit: "exposed",
+    exposedTitle:
+      "{exposed} exposed: bound to 0.0.0.0 / ::, reachable from other devices on the LAN",
+    watchedUnit: "focused",
+    watchedTitle: "{watched} focused: ports declared in prune.toml (union across projects)",
+    connsUnit: "conns",
+    connsTitle:
+      "{n} active connections: sum of ESTABLISHED on listening ports; {udp}",
+    udpNote: "UDP has no connection notion, so {n} UDP ports are excluded",
+    closeWaitUnit: "unclosed",
+    closeWaitTitle:
+      "{n} CLOSE_WAIT: connections this side hasn't closed — a leak signal, not a conclusion; 0 is a measured zero, not missing data",
+  },
+
+  /** eul hero: the dot matrix is the lead (one dot per port) + scan provenance block */
+  hero: {
+    tip: "Each dot is a listening port; hover for “port · process”. Amber = externally exposed / green = focused / grey = other (mostly system services)",
+    leadNote: "listening ports · amber is externally exposed, green is focused, grey is other",
+    dotAria: "Port dot matrix: {exposed} externally exposed · {watched} focused · {other} other",
+    legendExposed: "Externally exposed",
+    legendWatched: "Focused",
+    legendOther: "Other (mostly system services)",
+    scanAt: "Scanned",
+    scanMs: "Took",
+    attribution: "Attributed",
+    rescan: "Rescan",
   },
 
   col: {

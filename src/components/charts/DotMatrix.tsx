@@ -10,6 +10,8 @@ export interface DotItem {
   tone: Tone;
   /** hover tooltip（端口 + 进程）；省略则不可交互 */
   title?: string;
+  /** 淡化（离线遗留设备）：保留位置与颜色语义，只降不透明度——不是「不存在」 */
+  dim?: boolean;
 }
 
 const TONE_COLOR: Record<Tone, string> = {
@@ -54,6 +56,7 @@ export function DotMatrix({
             width: dot,
             height: dot,
             background: TONE_COLOR[d.tone],
+            opacity: d.dim ? 0.32 : undefined,
             boxShadow:
               d.tone === "warn" || d.tone === "danger"
                 ? `0 0 6px color-mix(in srgb, ${TONE_COLOR[d.tone]} 40%, transparent)`
