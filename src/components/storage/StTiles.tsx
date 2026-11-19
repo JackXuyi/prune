@@ -31,7 +31,7 @@ export function StTiles({
   if (!showDw && dup == null) return null;
 
   return (
-    <div className="grid h-[108px] shrink-0 grid-cols-2 gap-[9px]">
+    <div className="flex shrink-0 flex-col gap-[9px]">
       {showDw && dw ? (
         <InfoTile
           title={t("disk.tile.deadweight", { label: cacheLabel(deadweightGroup!, locale) })}

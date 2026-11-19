@@ -33,8 +33,9 @@ const TIERS: Level[] = ["l1", "l2", "l3", "l4"];
  * 存储 tab（eul 重设计 · storage-eul-mockup.html）。
  *
  * 版式骨架：Ribbon（4 段）→ SMART 条件带 → Hero（可回收大数字 + L1–L4 构成）
- * → 占用反查带（卷芯片点选）→ 磁贴（死重比/重复依赖）→ 分级列表（唯一滚动区）
- * → 底部操作栏。
+ * → 占用反查带（卷芯片点选）→ 磁贴（死重比/重复依赖，全宽堆叠）→ 分级列表
+ * → 底部操作栏。**整页一个滚动容器**（用户定稿）：页内不再有嵌套滚动区，
+ * 底部操作栏 sticky 钉底，始终可达。
  *
  * **三段链路是唯一正确形态**（旧版画成「四个勾选框 → 一键清理」是错的）：
  * ① 分级构成（只读 + 勾选决定预览范围）
@@ -117,7 +118,7 @@ export function ReclaimBoard() {
 
   if (!report) {
     return (
-      <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5 py-4">
         {/* 页名在顶栏（spec §1.3）；这里只留扫描状态 —— 它是状态不是标题 */}
         <p className="text-[11px] text-ink-faint">
           {scanning
@@ -264,7 +265,7 @@ export function ReclaimBoard() {
   };
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col gap-[9px] px-4 pb-3.5 pt-3">
+    <div className="flex min-h-0 flex-1 flex-col gap-[9px] overflow-x-hidden overflow-y-auto px-4 pt-3">
       {/* ① 状态带：只放本页任务内读数（卷环/可用/可回收/L1；I/O 与 SMART 不进本页） */}
       <StRibbon volume={report.volume ?? null} totals={totals} />
 
@@ -361,8 +362,8 @@ export function ReclaimBoard() {
       {/* ③ 磁贴：死重比 / 重复依赖；无数据整行消失 */}
       <StTiles deadweightGroup={a1} dup={report.dup} />
 
-      {/* ④ 分级列表 + 项目体检：唯一滚动区 */}
-      <section className="flex min-h-0 flex-1 flex-col overflow-y-auto">
+      {/* ④ 分级列表 + 项目体检：随整页滚动，不再嵌套独立滚动区 */}
+      <section className="flex flex-col">
         {totals.reclaimable === 0 ? (
           // 扫完了但确实没有可回收项 —— 「很干净」是正反馈，不是缺数据
           <div className="rounded-card border border-hairline-soft bg-surface-raised py-2">
@@ -419,16 +420,17 @@ export function ReclaimBoard() {
               <ProjectHealthCard projects={report.projects ?? []} />
             </div>
 
-            <p className="mt-2.5 px-1 pb-1 text-[9px] leading-relaxed text-ink-faint">
+            <p className="mt-2.5 px-1 pb-3.5 text-[9px] leading-relaxed text-ink-faint">
               {t("disk.tiers.foot")}
             </p>
           </>
         )}
       </section>
 
-      {/* ⑤ 底部操作栏：选中态是唯一的执行入口 */}
+      {/* ⑤ 底部操作栏：选中态是唯一的执行入口；整页滚动后 sticky 钉底始终可达。
+          全出血（-mx-4/px-4）+ 自带 pb：root 不留底 padding，钉底时下面不漏内容 */}
       {totals.reclaimable > 0 ? (
-        <div className="flex shrink-0 items-center gap-3 border-t border-hairline-soft pt-2">
+        <div className="sticky bottom-0 z-10 -mx-4 flex items-center gap-3 border-t border-hairline-soft bg-surface px-4 pt-2.5 pb-3.5">
           <span className="text-[11px] text-ink-dim">
             {pickedGroups.length === 0
               ? t("disk.bar.pickedNone")
@@ -880,7 +882,7 @@ function CleanDrawer({
           </button>
         </div>
 
-        <div className="min-h-0 flex-1 overflow-y-auto px-5">
+        <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto px-5">
           {loading || !preview ? (
             <div className="space-y-1.5 py-2">
               {[0, 1, 2, 3].map((i) => (
