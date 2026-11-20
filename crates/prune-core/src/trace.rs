@@ -40,7 +40,9 @@ const TERMINAL_GRACE: Duration = Duration::from_secs(5);
 /// reap 精度：轮询 try_wait 的 tick（100 ms）。采样节奏仍按 interval，
 /// tick 只影响墙钟与 reap 的分辨率。
 const WAIT_TICK: Duration = Duration::from_millis(100);
-/// 换出深探预算：首末轮各一次，树内按 RSS 取 Top N（逐轮深探不可行）
+/// 换出深探预算：首末轮各一次，树内按 RSS 取 Top N（逐轮深探不可行）。
+/// 消费者 probe_swap 仅 macOS 存在——不挂门控会在 Linux CI 被 -D dead_code 打红
+#[cfg(target_os = "macos")]
 const SWAP_PROBE_TOP: usize = 8;
 
 /// trace 选项（CLI 解析后传入）
