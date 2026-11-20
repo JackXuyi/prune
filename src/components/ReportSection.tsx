@@ -12,7 +12,8 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useI18n } from "../i18n/store";
 import { isTauri, reportCliDetect, reportGenerate, revealPath, type ReportCliInfo, type ReportOutcome } from "../lib/ipc";
-import { FileIcon, FolderIcon, RefreshIcon } from "./icons";
+import { StatusDot } from "./settings/kit";
+import { FolderIcon, RefreshIcon } from "./icons";
 
 type Phase = "detecting" | "missing" | "ready";
 
@@ -52,66 +53,68 @@ export function ReportSection() {
   }, [generating, phase]);
 
   return (
-    <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5" aria-label={t("settings.report.title")}>
-      <div className="flex items-center gap-1.5">
-        <FileIcon size={12} />
-        <span className="text-[13px] font-medium">{t("settings.report.title")}</span>
+    <>
+      {/* 紧凑行（settings-eul-mockup）：label + CLI 状态点 + 生成按钮。
+          desc / 未装 CLI 的完整提示进行级 tooltip，不挡行 */}
+      <div
+        className="flex items-center justify-between gap-2.5 py-1"
+        title={phase === "missing" ? `${t("settings.report.notFound")} ${t("settings.report.notFoundHint")}` : t("settings.report.desc")}
+      >
+        <span className="min-w-0 truncate text-[11.5px] text-ink">
+          {t("settings.report.title")}
+        </span>
+        <span className="flex shrink-0 items-center gap-2">
+          {phase === "detecting" && (
+            <span className="text-[10px] text-ink-faint">{t("settings.report.detecting")}</span>
+          )}
+          {phase === "missing" && (
+            <StatusDot tone="warn" title={`${t("settings.report.notFound")} ${t("settings.report.notFoundHint")}`}>
+              {t("settings.report.notFound")}
+            </StatusDot>
+          )}
+          {phase === "ready" && (
+            <>
+              <StatusDot title={t("settings.report.desc")}>
+                {t("settings.report.cliFound", { version: cli?.version ?? "" })}
+              </StatusDot>
+              <button
+                type="button"
+                onClick={() => void generate()}
+                disabled={generating}
+                className="flex items-center gap-1 rounded-md bg-chip px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:cursor-default disabled:opacity-60"
+              >
+                <RefreshIcon size={11} className={generating ? "animate-spin" : ""} />
+                {generating ? t("settings.report.generating") : t("settings.report.generate")}
+              </button>
+            </>
+          )}
+        </span>
       </div>
-      <p className="mt-1.5 text-[11px] leading-4.5 text-ink-dim">{t("settings.report.desc")}</p>
 
-      <div className="mt-2.5 flex flex-wrap items-center gap-x-3 gap-y-1.5 border-t border-hairline-soft pt-2.5">
-        {phase === "detecting" && <span className="text-[11px] text-ink-faint">{t("settings.report.detecting")}</span>}
-
-        {phase === "missing" && (
-          <p className="text-[11px] leading-4.5 text-ink-faint">
-            {t("settings.report.notFound")}
-            <br />
-            {t("settings.report.notFoundHint")}
-          </p>
-        )}
-
-        {phase === "ready" && (
-          <>
-            <span className="text-[11px] font-mono tabular-nums text-ink-faint">
-              {t("settings.report.cliFound", { version: cli?.version ?? "" })}
-            </span>
-            <button
-              type="button"
-              onClick={() => void generate()}
-              disabled={generating}
-              className="flex items-center gap-1.5 text-[11px] text-ink-dim transition-colors hover:text-ink disabled:cursor-default disabled:opacity-60"
-            >
-              <RefreshIcon size={12} className={generating ? "animate-spin" : ""} />
-              {generating ? t("settings.report.generating") : t("settings.report.generate")}
-            </button>
-          </>
-        )}
-      </div>
-
-      {error && <p className="mt-1.5 text-[11px] leading-4.5 text-danger">{t("settings.report.failed", { err: error })}</p>}
+      {error && <p className="pb-1 text-[9.5px] leading-4 text-danger">{t("settings.report.failed", { err: error })}</p>}
 
       {outcome && !error && (
-        <div className="mt-1.5 space-y-1">
+        <div className="pb-1">
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-            <span className="text-[11px] text-ink-faint">
+            <span className="text-[9.5px] text-ink-faint">
               {t("settings.report.done", { seconds: outcome.elapsedS })}
             </span>
             <button
               type="button"
               onClick={() => void revealPath(outcome.path).catch(() => {})}
-              className="flex items-center gap-1.5 text-[11px] text-ink-dim transition-colors hover:text-ink"
+              className="flex items-center gap-1.5 text-[9.5px] text-ink-dim transition-colors hover:text-ink"
             >
-              <FolderIcon size={12} />
+              <FolderIcon size={11} />
               {t("settings.report.openFolder")}
             </button>
           </div>
           {outcome.degraded.length > 0 && (
-            <p className="text-[11px] leading-4.5 text-ink-faint">
+            <p className="mt-0.5 text-[9.5px] leading-4 text-ink-faint">
               {t("settings.report.degradedWarn", { items: outcome.degraded.join("；") })}
             </p>
           )}
         </div>
       )}
-    </section>
+    </>
   );
 }

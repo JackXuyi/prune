@@ -1,14 +1,20 @@
 /**
- * 设置页（M15.4 灵动岛 + 语言）。见 docs/m15-dynamic-island-plan.md §5.6。
+ * 设置弹层（settings-eul-mockup.html W2 落码，取代 M15.4 单列布局）。
  *
- * 三个设计决定：
+ * 结构：弹层头（标题 + 唯一保存状态出口）+ 双栏分组。
+ * 左栏 = 常规（外观与语言 / 系统 / 硬件模块 / 关于），
+ * 右栏 = 灵动岛域（主开关 + 提报开关 + 阈值滑杆 + 端口探测）。
+ *
+ * 保留的三条原有设计决定（行为不变，只换皮）：
  * 1. **滑杆即时保存 + 400 ms 防抖**：拖一次滑杆会连发几十个 change 事件，
  *    每个都写盘既慢又会和 `set_many` 抢文件；
  * 2. **范围前后端一致**：滑杆的 min/max 就是后端的钳制范围，所以不需要
  *    「保存后回写钳制值」这一步 —— 用户根本拖不出越界值；
  * 3. **语言不防抖**：点一下就切，切失败要立刻回滚并报错（spec §1.5），
- *    防抖只会让用户以为没点上。这段逻辑连同整张语言卡片一起搬到了
- *    `LanguageSection`（下拉菜单 + 系统语言解释），本文件只负责摆位置。
+ *    防抖只会让用户以为没点上。
+ *
+ * eul 纪律落位：每组一个图形锚点；说明文字全降级 tooltip（文字三层红线）；
+ * 保存状态只在弹层头一条；实验项带 tag 且默认关；读不到的状态点不渲染。
  */
 import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
@@ -16,12 +22,30 @@ import { invoke } from "@tauri-apps/api/core";
 import { AboutSection } from "./AboutSection";
 import { LanguageSection } from "./LanguageSection";
 import { ReportSection } from "./ReportSection";
-import { Badge, toast } from "../components/primitives";
+import {
+  SettingsGroup,
+  Slider,
+  StatusDot,
+  Switch,
+  ToggleRow,
+  RuleLine,
+} from "./settings/kit";
+import { toast } from "../components/primitives";
 import { useI18n } from "../i18n/store";
 import { isTauri, pruneTomlTemplate, autostartGet, autostartSet, hwFlags, hwFlagSet } from "../lib/ipc";
 import { writeClipboard } from "../lib/clipboard";
+import { formatClock } from "../lib/format";
 import { getTheme, setTheme, subscribeTheme, type ThemeMode } from "../lib/theme";
 import { usePortStore } from "../stores/portStore";
+import {
+  ActivityIcon,
+  ChipIcon,
+  CopyIcon,
+  ExpandIcon,
+  GearIcon,
+  GlobeIcon,
+  PortJackIcon,
+} from "./icons";
 
 interface IslandSettings {
   enabled: boolean;
@@ -180,400 +204,338 @@ export function SettingsBoard() {
   };
 
   if (!cfg) {
-    return <div className="px-5 py-6 text-[12px] text-ink-faint">{t("settings.loading")}</div>;
+    return (
+      <div className="px-5 py-6 text-[12px] text-ink-faint">{t("settings.loading")}</div>
+    );
   }
 
   const disabled = !cfg.enabled;
 
   return (
-    <div className="flex-1 overflow-y-auto px-5 py-5">
-      <div className="mx-auto flex max-w-[560px] flex-col gap-4">
-        <LanguageSection />
-
-        {/* 外观（spec §5.3 v5 新增）：三态主题分段控件。落盘 localStorage["prune.theme"]，
-            system 时由 theme.ts 监听 matchMedia 实时切换 —— 不新增 Rust command。 */}
-        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
-          <div className="flex items-center justify-between gap-4">
-            <div>
-              <span className="text-[13px] font-medium">{t("settings.theme.title")}</span>
-              <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">{t("settings.theme.desc")}</p>
-            </div>
-            <ThemeSegmented />
-          </div>
-        </section>
-
-        {/* 开机自启动（docs/autostart-plan.md）：状态直接问系统（LaunchAgent plist），
-            不落 settings.json —— 用户在系统设置登录项里手动增删也能反映出来 */}
-        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <span className="text-[13px] font-medium">{t("settings.autostart.title")}</span>
-              <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">
-                {t("settings.autostart.desc")}
-              </p>
-            </div>
-            <Switch
-              checked={autostartOn ?? false}
-              onChange={(v) => void toggleAutostart(v)}
-              label={t("settings.autostart.enable")}
-            />
-          </div>
-        </section>
-
-        {/* W2/D-09：prune.toml——只复制模板到剪贴板。Prune 永不写项目文件
-            （「工具悄悄改我仓库」是信任红线），用户自己落盘 */}
-        <PruneTomlSection />
-
-        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[13px] font-medium">{t("settings.island.title")}</span>
-                {status && !status.available ? (
-                  <Badge tone="warn" title={t("settings.island.noNotchHint")}>
-                    {t("settings.island.noNotch")}
-                  </Badge>
-                ) : (
-                  <Badge tone="accent">{t("settings.island.ready")}</Badge>
-                )}
-              </div>
-              <p className="mt-1.5 text-[11px] leading-5 text-ink-dim">{t("settings.island.desc")}</p>
-              {status?.available ? (
-                <p className="mt-1 text-[10px] text-ink-faint">
-                  {t("settings.island.notchSize", {
-                    w: Math.round(status.notchW),
-                    h: Math.round(status.notchH),
-                  })}
-                </p>
-              ) : (
-                <p className="mt-1 text-[10px] text-ink-faint">{t("settings.island.notchHint")}</p>
-              )}
-            </div>
-            <Switch
-              checked={cfg.enabled}
-              onChange={(v) => update({ enabled: v })}
-              label={t("settings.island.enable")}
-            />
-          </div>
-        </section>
-
-        <section
-          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
-            disabled ? "opacity-40" : ""
-          }`}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium">{t("settings.portGuard.title")}</span>
-                <span className="text-[10px] text-ink-faint">{t("settings.portGuard.tag")}</span>
-              </div>
-              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
-                {t("settings.portGuard.desc")}
-              </p>
-            </div>
-            <Switch
-              checked={cfg.portGuard}
-              onChange={(v) => update({ portGuard: v })}
-              label={t("settings.portGuard.enable")}
-            />
-          </div>
-        </section>
-
-        <section
-          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
-            disabled ? "opacity-40" : ""
-          }`}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium">{t("settings.lanWatch.title")}</span>
-                <span className="text-[10px] text-ink-faint">{t("settings.lanWatch.tag")}</span>
-              </div>
-              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
-                {t("settings.lanWatch.desc")}
-              </p>
-            </div>
-            <Switch
-              checked={cfg.lanWatch}
-              onChange={(v) => update({ lanWatch: v })}
-              label={t("settings.lanWatch.enable")}
-            />
-          </div>
-        </section>
-
-        {/* F18 闲置 dev server 提报（实验功能，默认关）：路线图「冻结第五类事件」
-            的 opt-in 通道——默认值翻转到 M-B 访谈判定通过后（f18 方案 §1 门禁）。
-            随灵动岛开关变灰 */}
-        <section
-          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
-            disabled ? "opacity-40" : ""
-          }`}
-        >
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium">{t("settings.idleServer.title")}</span>
-                <span className="text-[10px] text-ink-faint">{t("settings.idleServer.tag")}</span>
-              </div>
-              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
-                {t("settings.idleServer.desc")}
-              </p>
-            </div>
-            <Switch
-              checked={cfg.idleServer}
-              onChange={(v) => update({ idleServer: v })}
-              label={t("settings.idleServer.enable")}
-            />
-          </div>
-        </section>
-
-        {/* 端口服务自动探测（P2）：它发包，默认关——用户显式授权才跑（调研 §5 的纪律）。
-            不随灵动岛开关变灰：这是端口页功能，跟灵动岛无关 */}
-        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[12px] font-medium">{t("settings.portsProbe.title")}</span>
-                <span className="text-[10px] text-ink-faint">{t("settings.portsProbe.tag")}</span>
-              </div>
-              <p className="mt-1.5 text-[10.5px] leading-4.5 text-ink-dim">
-                {t("settings.portsProbe.desc")}
-              </p>
-            </div>
-            <Switch
-              checked={autoProbe}
-              onChange={setAutoProbe}
-              label={t("settings.portsProbe.enable")}
-            />
-          </div>
-        </section>
-
-        {/* f26 硬件模块开关（D7）：settings.json 布尔键，默认全开。
-            乐观更新 + 失败回滚：开关拨下去 UI 立即翻转，写盘失败回拨并提示 */}
-        <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
-          <div className="mb-2 flex items-baseline justify-between">
-            <span className="text-[12px] font-medium">{t("settings.hw.title")}</span>
-            <span className="text-[10px] text-ink-faint">{t("settings.hw.tag")}</span>
-          </div>
-          {hwFlagsMap == null ? (
-            <p className="text-[11px] text-ink-faint">{t("settings.loading")}</p>
-          ) : (
-            <ul className="space-y-2.5">
-              {HW_SECTIONS.map((s) => (
-                <li key={s.key} className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <div className="text-[11.5px] text-ink">{t(s.titleKey)}</div>
-                    <p className="mt-0.5 text-[10px] leading-4 text-ink-faint">{t(s.descKey)}</p>
-                  </div>
-                  <Switch
-                    checked={hwFlagsMap.get(s.key) ?? true}
-                    onChange={(v) => setHwFlag(s.key, v)}
-                    label={t(s.enableKey)}
-                  />
-                </li>
-              ))}
-            </ul>
-          )}
-        </section>
-
-        <section
-          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
-            disabled ? "opacity-40" : ""
-          }`}
-        >
-          <div className="mb-3 flex items-center justify-between">
-            <span className="text-[12px] font-medium">{t("settings.cpu.title")}</span>
-            <span className="text-[10px] text-ink-faint">{t("settings.cpu.tag")}</span>
-          </div>
-
-          <Slider
-            label={t("settings.cpu.threshold")}
-            hint={t("settings.cpu.thresholdHint")}
-            value={cfg.cpuPct}
-            min={60}
-            max={100}
-            step={1}
-            suffix="%"
-            disabled={disabled}
-            onChange={(v) => update({ cpuPct: v })}
-          />
-          <Slider
-            label={t("settings.cpu.window")}
-            hint={t("settings.cpu.windowHint")}
-            value={cfg.cpuSustainSec}
-            min={10}
-            max={600}
-            step={10}
-            suffix={t("common.unit.seconds")}
-            disabled={disabled}
-            onChange={(v) => update({ cpuSustainSec: v })}
-          />
-          <Slider
-            label={t("settings.cpu.tolerance")}
-            hint={t("settings.cpu.toleranceHint")}
-            value={cfg.cpuTolerancePct}
-            min={50}
-            max={100}
-            step={5}
-            suffix="%"
-            disabled={disabled}
-            onChange={(v) => update({ cpuTolerancePct: v })}
-          />
-          <Slider
-            label={t("settings.cpu.maxPerHour")}
-            hint={t("settings.cpu.maxPerHourHint")}
-            value={cfg.maxPerHour}
-            min={1}
-            max={30}
-            step={1}
-            suffix={t("common.unit.times")}
-            disabled={disabled}
-            onChange={(v) => update({ maxPerHour: v })}
-          />
-
-          <p className="mt-3 rounded-lg bg-chip px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
-            {t("settings.cpu.rule", {
-              window: cfg.cpuSustainSec,
-              tolerance: cfg.cpuTolerancePct,
-              threshold: cfg.cpuPct,
-              reset: Math.max(0, cfg.cpuPct - 10),
-            })}
-          </p>
-        </section>
-
-        <section
-          className={`rounded-card border border-hairline bg-surface-raised px-4 py-3.5 transition-opacity ${
-            disabled ? "opacity-40" : ""
-          }`}
-        >
-          <div className="mb-1 flex items-center justify-between">
-            <span className="text-[12px] font-medium">{t("settings.mem.title")}</span>
-            <span className="text-[10px] text-ink-faint">{t("settings.mem.tag")}</span>
-          </div>
-          <Slider
-            label={t("settings.mem.swapThreshold")}
-            hint={t("settings.mem.swapHint")}
-            value={cfg.swapPct}
-            min={50}
-            max={95}
-            step={5}
-            suffix="%"
-            disabled={disabled}
-            onChange={(v) => update({ swapPct: v })}
-          />
-          <Slider
-            label={t("settings.mem.window")}
-            hint={t("settings.mem.windowHint")}
-            value={cfg.memSustainSec}
-            min={10}
-            max={300}
-            step={5}
-            suffix={t("common.unit.seconds")}
-            disabled={disabled}
-            onChange={(v) => update({ memSustainSec: v })}
-          />
-
-          <p className="mt-3 rounded-lg bg-chip px-3 py-2 text-[10.5px] leading-4.5 text-ink-faint">
-            {t("settings.mem.rule", {
-              swap: cfg.swapPct,
-              window: cfg.memSustainSec,
-              reset: Math.max(50, cfg.swapPct - 10),
-            })}
-          </p>
-        </section>
-
-        {/* 体检报告（复用已装 CLI，docs/w1-report-sample-plan.md §10） */}
-        <ReportSection />
-
-        {/* 关于（docs/version-info-plan.md）：应用名 + 版本号，沉底惯例 */}
-        <AboutSection />
-
-        <div className="flex h-4 items-center gap-2 text-[10.5px]">
+    <div className="flex flex-col">
+      {/* 弹层头：标题 + 唯一保存状态出口（自动保存 / 已保存 HH:MM / 失败红字） */}
+      <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hairline-soft bg-surface-raised px-4">
+        <span className="text-[13px] font-semibold">{t("settings.title")}</span>
+        <span className="ml-auto text-[10px]">
           {error ? (
             <span className="text-danger">{t("settings.saveFailed", { err: error })}</span>
           ) : savedAt ? (
-            <span className="text-accent">{t("settings.saved")}</span>
+            <span className="text-accent">{t("settings.savedAt", { clock: formatClock(savedAt) })}</span>
           ) : (
             <span className="text-ink-faint">{t("settings.autoSave")}</span>
           )}
+        </span>
+      </div>
+
+      {/* 双栏分组：左栏常规，右栏灵动岛域。列内各自滚动兜底（小窗口不裁内容） */}
+      <div className="grid min-h-0 flex-1 grid-cols-2 gap-2.5 overflow-y-auto px-4 py-3">
+        {/* ═══ 左栏：常规 ═══ */}
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <SettingsGroup
+            icon={<GlobeIcon size={13} />}
+            title={t("settings.group.appearance")}
+            note={t("settings.group.appearanceNote")}
+          >
+            <LanguageSection />
+            <div
+              className="flex items-center justify-between gap-2.5 border-t border-hairline-soft py-1"
+              title={t("settings.theme.desc")}
+            >
+              <span className="text-[11.5px] text-ink">{t("settings.theme.row")}</span>
+              <ThemeSegmented />
+            </div>
+          </SettingsGroup>
+
+          <SettingsGroup
+            icon={<GearIcon size={13} />}
+            title={t("settings.group.system")}
+            note={t("settings.group.systemNote")}
+          >
+            {/* 自启动：状态直接问系统（LaunchAgent plist），系统设置里手动增删也能反映 */}
+            <div
+              className="flex items-center justify-between gap-2.5 py-1"
+              title={t("settings.autostart.desc")}
+            >
+              <span className="text-[11.5px] text-ink">{t("settings.autostart.title")}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                {autostartOn ? (
+                  <StatusDot title={t("settings.autostart.desc")}>
+                    {t("settings.autostart.onState")}
+                  </StatusDot>
+                ) : null}
+                <Switch
+                  checked={autostartOn ?? false}
+                  onChange={(v) => void toggleAutostart(v)}
+                  label={t("settings.autostart.enable")}
+                />
+              </span>
+            </div>
+            <PruneTomlRow />
+            {/* 体检报告（复用已装 CLI，docs/w1-report-sample-plan.md §10）：并入系统组一行 */}
+            <div className="border-t border-hairline-soft pt-0.5">
+              <ReportSection />
+            </div>
+          </SettingsGroup>
+
+          {/* f26 硬件模块开关（D7）：settings.json 布尔键，默认全开。
+              乐观更新 + 失败回滚：开关拨下去 UI 立即翻转，写盘失败回拨并提示。
+              两列网格一屏收齐；关闭的模块对应读数整段隐藏（隐藏是失败语义） */}
+          <SettingsGroup
+            icon={<ChipIcon size={13} />}
+            title={t("settings.hw.title")}
+            note={t("settings.hw.tag")}
+          >
+            <div className="grid grid-cols-2 gap-x-3.5">
+              {hwFlagsMap == null ? (
+                <p className="col-span-2 py-1 text-[11px] text-ink-faint">{t("settings.loading")}</p>
+              ) : (
+                HW_SECTIONS.map((s, i) => (
+                  <div
+                    key={s.key}
+                    className={i >= 2 ? "border-t border-hairline-soft" : undefined}
+                  >
+                    <ToggleRow
+                      label={t(s.titleKey)}
+                      desc={t(s.descKey)}
+                      checked={hwFlagsMap.get(s.key) ?? true}
+                      onChange={(v) => setHwFlag(s.key, v)}
+                      ariaLabel={t(s.enableKey)}
+                    />
+                  </div>
+                ))
+              )}
+            </div>
+          </SettingsGroup>
+
+          {/* 关于（docs/version-info-plan.md）：应用名 + 版本号 + 自身开销，沉底惯例 */}
+          <AboutSection />
+        </div>
+
+        {/* ═══ 右栏：灵动岛域 ═══ */}
+        <div className="flex min-w-0 flex-col gap-2.5">
+          <SettingsGroup
+            icon={<ExpandIcon size={13} />}
+            title={t("settings.island.title")}
+            note={t("settings.island.note")}
+            titleTooltip={t("settings.island.desc")}
+          >
+            {/* 主开关行：可用性点徽来自 island_status（刘海实测尺寸）。
+                无刘海机型徽标变 warn，其余不动——诚实口径 */}
+            <div className="flex items-center justify-between gap-2.5 py-1">
+              <span className="text-[11.5px] text-ink">{t("settings.group.mainRow")}</span>
+              <span className="flex shrink-0 items-center gap-2">
+                {status && !status.available ? (
+                  <StatusDot
+                    tone="warn"
+                    title={t("settings.island.noNotchHint")}
+                  >
+                    {t("settings.island.noNotch")}
+                  </StatusDot>
+                ) : status?.available ? (
+                  <StatusDot title={t("settings.island.notchHint")}>
+                    {t("settings.island.ready")} · {t("settings.island.notchSize", {
+                      w: Math.round(status.notchW),
+                      h: Math.round(status.notchH),
+                    })}
+                  </StatusDot>
+                ) : null}
+                <Switch
+                  checked={cfg.enabled}
+                  onChange={(v) => update({ enabled: v })}
+                  label={t("settings.island.enable")}
+                />
+              </span>
+            </div>
+            <div className={disabled ? "transition-opacity opacity-40" : "transition-opacity"}>
+              {/* 三条提报通道：说明全降级 tooltip */}
+              <ToggleRow
+                label={t("settings.portGuard.title")}
+                desc={t("settings.portGuard.desc")}
+                checked={cfg.portGuard}
+                onChange={(v) => update({ portGuard: v })}
+                ariaLabel={t("settings.portGuard.enable")}
+                dim={disabled}
+              />
+              <ToggleRow
+                label={t("settings.lanWatch.title")}
+                desc={t("settings.lanWatch.desc")}
+                checked={cfg.lanWatch}
+                onChange={(v) => update({ lanWatch: v })}
+                ariaLabel={t("settings.lanWatch.enable")}
+                dim={disabled}
+              />
+              {/* F18 闲置 dev server 提报（实验功能，默认关）：路线图「冻结第五类事件」
+                  的 opt-in 通道——默认值翻转到 M-B 访谈判定通过后（f18 方案 §1 门禁） */}
+              <ToggleRow
+                label={t("settings.idleServer.title")}
+                tag={t("settings.idleServer.tag")}
+                desc={t("settings.idleServer.desc")}
+                checked={cfg.idleServer}
+                onChange={(v) => update({ idleServer: v })}
+                ariaLabel={t("settings.idleServer.enable")}
+                dim={disabled}
+              />
+            </div>
+          </SettingsGroup>
+
+          {/* 提报阈值：六条滑杆单行化，hint 进 tooltip；两条规则口径句在场 */}
+          <SettingsGroup
+            icon={<ActivityIcon size={13} />}
+            title={t("settings.group.thresholds")}
+            note={t("settings.group.thresholdsNote")}
+          >
+            <Slider
+              label={t("settings.cpu.threshold")}
+              hint={t("settings.cpu.thresholdHint")}
+              value={cfg.cpuPct}
+              min={60}
+              max={100}
+              step={1}
+              suffix="%"
+              disabled={disabled}
+              onChange={(v) => update({ cpuPct: v })}
+            />
+            <Slider
+              label={t("settings.cpu.window")}
+              hint={t("settings.cpu.windowHint")}
+              value={cfg.cpuSustainSec}
+              min={10}
+              max={600}
+              step={10}
+              suffix={t("common.unit.seconds")}
+              disabled={disabled}
+              onChange={(v) => update({ cpuSustainSec: v })}
+            />
+            <Slider
+              label={t("settings.cpu.tolerance")}
+              hint={t("settings.cpu.toleranceHint")}
+              value={cfg.cpuTolerancePct}
+              min={50}
+              max={100}
+              step={5}
+              suffix="%"
+              disabled={disabled}
+              onChange={(v) => update({ cpuTolerancePct: v })}
+            />
+            <Slider
+              label={t("settings.cpu.maxPerHour")}
+              hint={t("settings.cpu.maxPerHourHint")}
+              value={cfg.maxPerHour}
+              min={1}
+              max={30}
+              step={1}
+              suffix={t("common.unit.times")}
+              disabled={disabled}
+              onChange={(v) => update({ maxPerHour: v })}
+            />
+            <RuleLine>
+              {t("settings.cpu.rule", {
+                window: cfg.cpuSustainSec,
+                tolerance: cfg.cpuTolerancePct,
+                threshold: cfg.cpuPct,
+                reset: Math.max(0, cfg.cpuPct - 10),
+              })}
+            </RuleLine>
+            <Slider
+              label={t("settings.mem.swapThreshold")}
+              hint={t("settings.mem.swapHint")}
+              value={cfg.swapPct}
+              min={50}
+              max={95}
+              step={5}
+              suffix="%"
+              disabled={disabled}
+              onChange={(v) => update({ swapPct: v })}
+            />
+            <Slider
+              label={t("settings.mem.window")}
+              hint={t("settings.mem.windowHint")}
+              value={cfg.memSustainSec}
+              min={10}
+              max={300}
+              step={5}
+              suffix={t("common.unit.seconds")}
+              disabled={disabled}
+              onChange={(v) => update({ memSustainSec: v })}
+            />
+            <RuleLine>
+              {t("settings.mem.rule", {
+                swap: cfg.swapPct,
+                window: cfg.memSustainSec,
+                reset: Math.max(50, cfg.swapPct - 10),
+              })}
+            </RuleLine>
+          </SettingsGroup>
+
+          {/* 端口服务自动探测（P2）：它发包，默认关——用户显式授权才跑（调研 §5 的纪律）。
+              不随灵动岛开关变灰：这是端口页功能，跟灵动岛无关。
+              组头是全名，行用短 label 避免同屏重复 */}
+          <SettingsGroup
+            icon={<PortJackIcon size={13} />}
+            title={t("settings.portsProbe.title")}
+            note={t("settings.portsProbe.tag")}
+          >
+            <ToggleRow
+              label={t("settings.portsProbe.rowLabel")}
+              desc={t("settings.portsProbe.desc")}
+              checked={autoProbe}
+              onChange={setAutoProbe}
+              ariaLabel={t("settings.portsProbe.enable")}
+            />
+          </SettingsGroup>
         </div>
       </div>
     </div>
   );
 }
 
-function Switch({
-  checked,
-  onChange,
-  label,
-}: {
-  checked: boolean;
-  onChange: (v: boolean) => void;
-  label: string;
-}) {
-  return (
-    <button
-      type="button"
-      role="switch"
-      aria-checked={checked}
-      aria-label={label}
-      onClick={() => onChange(!checked)}
-      className={`relative h-[22px] w-[38px] shrink-0 rounded-full transition-colors ${
-        checked ? "bg-accent/80" : "bg-chip-hover"
-      }`}
-    >
-      <span
-        className="absolute top-[3px] h-4 w-4 rounded-full bg-white shadow-[0_1px_3px_rgba(0,0,0,0.3)] transition-all"
-        style={{ left: checked ? 20 : 3 }}
-      />
-    </button>
-  );
-}
+/** W2/D-09 prune.toml 行：说明 + 「复制模板」。纪律（方案 §6.4）：
+    Prune 永不写项目文件——模板进剪贴板，由用户自己落盘。 */
+function PruneTomlRow() {
+  const { t } = useI18n();
+  const [copied, setCopied] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
 
-function Slider({
-  label,
-  hint,
-  value,
-  min,
-  max,
-  step,
-  suffix,
-  disabled,
-  onChange,
-}: {
-  label: string;
-  hint: string;
-  value: number;
-  min: number;
-  max: number;
-  step: number;
-  suffix: string;
-  disabled?: boolean;
-  onChange: (v: number) => void;
-}) {
+  const copy = async () => {
+    let template: string;
+    try {
+      template = await pruneTomlTemplate();
+    } catch {
+      setErr(t("settings.pruneToml.copyFailed", { err: "template" }));
+      return;
+    }
+    const ok = await writeClipboard(template);
+    if (ok) {
+      setCopied(true);
+      setErr(null);
+      window.setTimeout(() => setCopied(false), 4000);
+    } else {
+      setErr(t("settings.pruneToml.copyFailed", { err: "clipboard" }));
+    }
+  };
+
   return (
-    <div className="mt-2.5">
-      <div className="flex items-baseline justify-between">
-        <span className="text-[11.5px] text-ink-dim">{label}</span>
-        <span className="text-[11.5px] font-medium tabular-nums">
-          {value}
-          {suffix}
+    <div className="border-t border-hairline-soft">
+      <div
+        className="flex items-center justify-between gap-2.5 py-1"
+        title={t("settings.pruneToml.desc")}
+      >
+        <span className="min-w-0 truncate text-[11.5px] text-ink">
+          {t("settings.pruneToml.title")}
         </span>
+        <button
+          type="button"
+          onClick={() => void copy()}
+          className="flex shrink-0 items-center gap-1 rounded-md bg-chip px-2.5 py-1 text-[10.5px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
+        >
+          <CopyIcon size={11} />
+          {t("settings.pruneToml.copyTemplate")}
+        </button>
       </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={value}
-        disabled={disabled}
-        onChange={(e) => onChange(Number(e.target.value))}
-        aria-label={label}
-        className="mt-1.5 h-1 w-full cursor-pointer appearance-none rounded-full bg-chip accent-accent disabled:cursor-not-allowed [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent"
-      />
-      <p className="mt-1 text-[10px] leading-4 text-ink-faint">{hint}</p>
+      {copied ? (
+        <p className="pb-1 text-[9.5px] leading-4 text-accent">{t("settings.pruneToml.copied")}</p>
+      ) : null}
+      {err ? <p className="pb-1 text-[9.5px] leading-4 text-danger">{err}</p> : null}
     </div>
   );
 }
@@ -617,60 +579,5 @@ function ThemeSegmented() {
         );
       })}
     </div>
-  );
-}
-
-/**
- * W2/D-09 prune.toml 设置段：说明 + 「复制模板」。
- *
- * 纪律（方案 §6.4）：Prune 永不写项目文件——模板进剪贴板，由用户自己落盘。
- * 这样既不会弄脏 `git status`，也不存在「工具悄悄改我仓库」的信任问题。
- * 模板文本由核心命令下发（`pruneTomlTemplate()`），前端不存副本，
- * 避免两处漂移；注释是单语中文，与 CLI 文案同一约定。
- */
-
-function PruneTomlSection() {
-  const { t } = useI18n();
-  const [copied, setCopied] = useState(false);
-  const [err, setErr] = useState<string | null>(null);
-
-  const copy = async () => {
-    let template: string;
-    try {
-      template = await pruneTomlTemplate();
-    } catch {
-      setErr(t("settings.pruneToml.copyFailed", { err: "template" }));
-      return;
-    }
-    const ok = await writeClipboard(template);
-    if (ok) {
-      setCopied(true);
-      setErr(null);
-      window.setTimeout(() => setCopied(false), 4000);
-    } else {
-      setErr(t("settings.pruneToml.copyFailed", { err: "clipboard" }));
-    }
-  };
-
-  return (
-    <section className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5">
-      <div className="flex items-start justify-between gap-4">
-        <div className="min-w-0">
-          <span className="text-[13px] font-medium">{t("settings.pruneToml.title")}</span>
-          <p className="mt-1 text-[10.5px] leading-4.5 text-ink-dim">{t("settings.pruneToml.desc")}</p>
-          {copied ? (
-            <p className="mt-1 text-[10px] text-accent">{t("settings.pruneToml.copied")}</p>
-          ) : null}
-          {err ? <p className="mt-1 text-[10px] text-danger">{err}</p> : null}
-        </div>
-        <button
-          type="button"
-          onClick={() => void copy()}
-          className="shrink-0 rounded-ctl bg-chip px-2.5 py-1.5 text-[11px] text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink"
-        >
-          {t("settings.pruneToml.copyTemplate")}
-        </button>
-      </div>
-    </section>
   );
 }

@@ -12,6 +12,9 @@
  * - **点当前项不短路**：`locale_set` 值没变时不写盘，但会重读系统语言并广播 ——
  *   这正是「在 macOS 里换了语言，回来重选跟随系统」的刷新路径。
  * - **先关菜单再 await**：切完语言整棵树重渲染，菜单若还开着会以新语言闪一下。
+ *
+ * 呈现（settings-eul-mockup W2）：外层卡片取消，改为「外观与语言」组内的紧凑行——
+ * 「当前生效」口径进行级 tooltip；下拉菜单交互与 spec §5.3 理由全部保留。
  */
 import { useEffect, useRef, useState } from "react";
 
@@ -136,9 +139,14 @@ export function LanguageSection() {
   }, [open, cursor, busy]);
 
   return (
-    <section className="rounded-xl border border-hairline bg-chip-soft px-4 py-3.5">
-      <div className="flex items-center justify-between gap-4">
-        <span className="text-[13px] font-medium">{t("settings.language.title")}</span>
+    <>
+      {/* 紧凑行（settings-eul-mockup）：label + 右贴下拉触发器。
+          「当前生效」口径进行级 tooltip，不占行高；切失败红字单独一行 */}
+      <div
+        className="flex items-center justify-between gap-2.5 py-1"
+        title={t("settings.language.current", { current: localeName(locale) })}
+      >
+        <span className="text-[11.5px] text-ink">{t("settings.language.title")}</span>
 
         <div ref={rootRef} className="relative">
           <button
@@ -148,7 +156,7 @@ export function LanguageSection() {
             aria-haspopup="menu"
             aria-expanded={open}
             onClick={toggle}
-            className="flex max-w-[260px] items-center gap-1 rounded-md bg-chip px-2 py-1 text-[11.5px] font-medium text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-60"
+            className="flex max-w-[200px] items-center gap-1 rounded-md bg-chip px-2 py-1 text-[10.5px] font-medium text-ink-dim transition-colors hover:bg-chip-hover hover:text-ink disabled:opacity-60"
           >
             <span className="truncate">{triggerLabel}</span>
             <ChevronRightIcon size={11} className="shrink-0 rotate-90 opacity-60" />
@@ -201,10 +209,7 @@ export function LanguageSection() {
         </div>
       </div>
 
-      <p className="mt-1.5 text-[10px] leading-4 text-ink-faint">
-        {t("settings.language.current", { current: localeName(locale) })}
-      </p>
-      {error ? <p className="mt-1 text-[10px] text-danger">{error}</p> : null}
-    </section>
+      {error ? <p className="pb-1 text-[10px] text-danger">{error}</p> : null}
+    </>
   );
 }

@@ -615,7 +615,7 @@ export function MainWindow() {
               role="dialog"
               aria-modal="true"
               aria-label={t("settings.title")}
-              className="absolute left-1/2 top-1/2 max-h-[calc(100vh-64px)] w-[520px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-[14px] border border-hairline bg-overlay shadow-2xl shadow-black/50"
+              className="absolute left-1/2 top-1/2 flex max-h-[calc(100vh-64px)] w-[780px] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-[14px] border border-hairline bg-overlay shadow-2xl shadow-black/50"
               onClick={(e) => e.stopPropagation()}
             >
               <SettingsBoard />

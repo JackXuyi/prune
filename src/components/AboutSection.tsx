@@ -21,7 +21,8 @@ import { useI18n } from "../i18n/store";
 import { isTauri, selfFootprint, updateCheckDialog } from "../lib/ipc";
 import type { SelfFootprint } from "../types/net";
 import { formatClock } from "../lib/format";
-import { RefreshIcon } from "./icons";
+import { RefreshIcon, ScissorsIcon } from "./icons";
+import { SettingsGroup } from "./settings/kit";
 
 export function AboutSection() {
   const { t } = useI18n();
@@ -70,67 +71,60 @@ export function AboutSection() {
       : t("settings.selfFootprint.unavailable");
 
   return (
-    <section
-      className="rounded-card border border-hairline bg-surface-raised px-4 py-3.5"
-      aria-label={t("settings.about.title")}
+    <SettingsGroup
+      icon={<ScissorsIcon size={13} />}
+      title={t("settings.about.title")}
+      note={version ? `v${version}` : "dev"}
+      titleTooltip={t("settings.selfFootprint.sampleNote")}
     >
-      <div className="flex items-center justify-between">
-        <span className="text-[13px] font-medium">Prune</span>
-        <span className="text-[11px] font-mono tabular-nums text-ink-faint">
-          {version ? `v${version}` : "dev"}
-        </span>
-      </div>
-
-      {selfFp ? (
-        <div className="mt-2.5 border-t border-hairline-soft pt-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-[11px] font-medium text-ink-dim">
-              {t("settings.selfFootprint.title")}
-            </span>
-            <span
-              className="text-[9.5px] text-ink-faint"
-              title={t("settings.selfFootprint.sampleNote")}
-            >
-              {t("settings.selfFootprint.at", { clock: formatClock(selfFp.sampleAt) })}
-            </span>
-          </div>
-          <dl className="mt-1.5 grid grid-cols-2 gap-x-4 gap-y-1">
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-[10px] text-ink-faint" title={t("settings.selfFootprint.memHint")}>
-                {t("settings.selfFootprint.mem")}
-              </dt>
-              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{memText}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-[10px] text-ink-faint">{t("settings.selfFootprint.cpu")}</dt>
-              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{cpu}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-[10px] text-ink-faint">{t("settings.selfFootprint.threads")}</dt>
-              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{threads}</dd>
-            </div>
-            <div className="flex items-center justify-between gap-2">
-              <dt className="text-[10px] text-ink-faint">{t("settings.selfFootprint.db")}</dt>
-              <dd className="font-mono text-[10.5px] tabular-nums text-ink">{db}</dd>
-            </div>
-          </dl>
-          <p className="mt-1.5 text-[9.5px] leading-3.5 text-ink-faint">
-            {t("settings.selfFootprint.noPromise")}
-          </p>
-        </div>
-      ) : null}
-
-      <div className="mt-2.5 border-t border-hairline-soft pt-2.5">
+      {/* 版本行 + 检查更新（与托盘菜单项复用同一条 Rust 逻辑 updateCheckDialog） */}
+      <div className="flex items-center justify-between gap-2.5 py-1">
+        <span className="text-[11.5px] text-ink">Prune</span>
         <button
           type="button"
           onClick={() => void check()}
           disabled={checking || !isTauri()}
-          className="flex items-center gap-1.5 text-[11px] text-ink-dim transition-colors hover:text-ink disabled:cursor-default disabled:opacity-60"
+          className="flex items-center gap-1.5 text-[10.5px] text-ink-dim transition-colors hover:text-ink disabled:cursor-default disabled:opacity-60"
         >
-          <RefreshIcon size={12} className={checking ? "animate-spin" : ""} />
+          <RefreshIcon size={11} className={checking ? "animate-spin" : ""} />
           {checking ? t("settings.about.checking") : t("settings.about.checkUpdate")}
         </button>
       </div>
-    </section>
+
+      {selfFp ? (
+        <div className="border-t border-hairline-soft pt-0.5" aria-label={t("settings.selfFootprint.title")}>
+          {/* 自身开销 2×2 mono 网格（F19 自耗透明）：打开时拉一次不轮询，
+              缺数显示「暂无」而不是 0%（S3）；口径与采样时间进 tooltip（S1） */}
+          <div
+            className="grid grid-cols-2 gap-x-4 gap-y-0.5 py-1"
+            title={t("settings.selfFootprint.sampleNote")}
+          >
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[9.5px] text-ink-faint" title={t("settings.selfFootprint.memHint")}>
+                {t("settings.selfFootprint.mem")}
+              </span>
+              <span className="font-mono text-[10.5px] tabular-nums text-ink">{memText}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[9.5px] text-ink-faint">
+                {t("settings.selfFootprint.cpu")}
+              </span>
+              <span className="font-mono text-[10.5px] tabular-nums text-ink">{cpu}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[9.5px] text-ink-faint">{t("settings.selfFootprint.threads")}</span>
+              <span className="font-mono text-[10.5px] tabular-nums text-ink">{threads}</span>
+            </div>
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-[9.5px] text-ink-faint">{t("settings.selfFootprint.db")}</span>
+              <span className="font-mono text-[10.5px] tabular-nums text-ink">{db}</span>
+            </div>
+          </div>
+          <p className="pb-0.5 text-[9px] leading-3.5 text-ink-faint">
+            {t("settings.selfFootprint.at", { clock: formatClock(selfFp.sampleAt) })} · {t("settings.selfFootprint.noPromise")}
+          </p>
+        </div>
+      ) : null}
+    </SettingsGroup>
   );
 }
