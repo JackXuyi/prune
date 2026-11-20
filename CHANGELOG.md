@@ -2,6 +2,15 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## 0.17.0
+
+### 外设页（M21，第 8 个一级导航）（[方案](./docs/m21-peripherals-plan.md)、[设计稿](./output/design/peripherals-eul-mockup.html)）
+
+- 新增「外设」页（⌘8，与设备页边界：设备页 = 本机硬件 + 局域网，外设页 = 插上/连上本机的外部设备），三源独立采样零新依赖：蓝牙/USB 走 `system_profiler -json`（6 s 超时兜底），音频走 CoreAudio 手工 extern；15 s 低频 + 页面可见性门控（不可见零开销），单源失败保持上轮快照
+- **AirPods 分件电量**：左耳/右耳/充电盒三环独立显示（IOPS 只有总百分比，分件电量只有 `SPBluetoothDataType` 给）；真机 JSON 结构固化为解析测试 ×3，电量 0/超范围/空串等脏数据一律丢弃
+- **卡片化改版**（`7b5dca8`、`1060cc6`）：四段状态带（蓝牙/USB/音频计数 + 最低配件电量环，全页唯一百分比位）→ 每台设备一张卡（AirPods=分件最低环、键盘/鼠标=电量条、USB=总线供电 mA、音频=方向读数，无电量画 — 不画 0）→ 点击弹 430px 详情弹窗（类型/厂商/分件电量/采集时刻，Esc 关闭）
+- 设置页新增「外设采样」硬件模块开关（`hw.periph.enabled`，默认开）；读不到电量的部件不画环，无设备的分区整块隐藏
+
 ## 0.16.0
 
 ### 端口页 eul 式重实现 + 局域网子页同步改版（[设计稿](./output/design/ports-eul-mockup.html)）
