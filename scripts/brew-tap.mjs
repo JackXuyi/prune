@@ -186,7 +186,7 @@ try {
       `无法 clone ${tapRepo}。发版前需要一次性完成三件事：`,
       `  1) 在 GitHub 建公开仓库 ${tapRepo}（空仓库即可，含 README 能立住）`,
       `  2) 建 main 分支，并预先放 Casks/ 与 Formula/ 两个空目录（否则 push 后 tap 不可用）`,
-      `  3) Settings → Secrets and variables → Actions 添加 HOMEBREW_TAP_TOKEN`,
+      `  3) Settings → Secrets and variables → Actions 添加 PRUNE_TAP_TOKEN`,
       `     （fine-grained PAT，仅该仓库 Contents: Read and write）`,
       `本地调试可用 --dry-run，不需要 token 与 tap 仓库。`,
     ].join("\n"),
