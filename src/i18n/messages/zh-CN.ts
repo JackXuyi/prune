@@ -7,6 +7,7 @@
 import { chart } from "./namespaces/chart";
 import { common } from "./namespaces/common";
 import { disk } from "./namespaces/disk";
+import { device } from "./namespaces/device";
 import { island } from "./namespaces/island";
 import { lan } from "./namespaces/lan";
 import { memory } from "./namespaces/memory";
@@ -24,6 +25,7 @@ export const zh = {
   chart: chart.zh,
   common: common.zh,
   disk: disk.zh,
+  device: device.zh,
   hw: hw.zh,
   island: island.zh,
   lan: lan.zh,

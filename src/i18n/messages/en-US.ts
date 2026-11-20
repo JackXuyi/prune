@@ -9,6 +9,7 @@ import type { Messages } from "../types";
 import { chart } from "./namespaces/chart";
 import { common } from "./namespaces/common";
 import { disk } from "./namespaces/disk";
+import { device } from "./namespaces/device";
 import { hw } from "./namespaces/hw";
 import { island } from "./namespaces/island";
 import { lan } from "./namespaces/lan";
@@ -26,6 +27,7 @@ export const en = {
   chart: chart.en,
   common: common.en,
   disk: disk.en,
+  device: device.en,
   hw: hw.en,
   island: island.en,
   lan: lan.en,
