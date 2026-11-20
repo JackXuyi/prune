@@ -335,9 +335,11 @@ jobs:
             macOS 首次打开若提示未验证开发者：右键 → 打开，或 `xattr -cr /Applications/Prune.app`。
           releaseDraft: true
           prerelease: false
-          # 生成 latest.json（updater 清单）：三个 job 并行跑，tauri-action 会把
-          # 各自的平台条目合并进 Release 上已存在的 latest.json
-          includeUpdaterJson: true
+          # latest.json（updater 清单）不在 bundle 腿生成：三腿并行各自「删旧传新」
+          # 同一资产会互踩——一腿删除时另一腿手里的 asset id 已失效，GitHub 404
+          # （v0.16.0 run #35 的真实失败，run #34 没撞上是运气）。清单统一由
+          # release-notes job 单点从 Release 的 .sig 资产组装，见该 job 注释。
+          includeUpdaterJson: false
           args: ${{ matrix.args }}
 
       # D-02（docs/d02-homebrew-plan.md §3.2）：把 CLI 二进制（beforeBuildCommand
@@ -506,32 +508,48 @@ jobs:
             if (!patch.ok) throw new Error(`PATCH release failed: ${patch.status} ${await patch.text()}`);
             console.log(`✓ GitHub Release #${meta.id} 已同步正文并发布：下载表 + CHANGELOG${section ? ` ${tag} 段` : '（无本版段）'}`);
 
-            // updater 清单（latest.json）的 notes：tauri-action 生成时写死为 releaseBody
-            // 静态下载表模板，不是真正的更新说明。这里把 notes 改写成同一份 CHANGELOG
-            // 本版段，让「发现新版本」弹窗 / 面板卡片看到的是本版变更而非下载表。
-            // 只动 notes 字段——platforms 里的下载 URL 与 .sig 签名逐字保留，
-            // 客户端只校验安装包签名（校验对象是下载字节，不是清单本身），改 notes 不影响升级链路。
-            if (!section) {
-              console.log('⏭ CHANGELOG 无本版段，跳过 latest.json notes 改写');
-              return;
-            }
+            // updater 清单（latest.json）：由本 job 单点生成。bundle 三腿并行时
+            // 各自 includeUpdaterJson 都会对同一资产「删旧传新」，一腿删除时另一腿
+            // 手里的 asset id 已失效 → GitHub 404（v0.16.0 run #35 的真实失败）。
+            // 现在三腿 includeUpdaterJson 全关，这里从 Release 自己的 .sig 资产组装：
+            // 签名逐字来自 .sig 文件，URL 由签名资产名去掉 .sig 得到（即同产物资产），
+            // 平台键集与 tauri-action 生成的历史清单逐字对齐（v0.15.0 实测 7 键）。
             const assetsRes = await fetch(`https://api.github.com/repos/${repo}/releases/${meta.id}/assets?per_page=100`, { headers });
             if (!assetsRes.ok) throw new Error(`GET assets failed: ${assetsRes.status} ${await assetsRes.text()}`);
             const assets = await assetsRes.json();
-            const manifest = assets.find((a) => a.name === 'latest.json');
-            if (!manifest) throw new Error(`Release #${meta.id} 里没有 latest.json 资产（tauri-action includeUpdaterJson 是否生效？）`);
-            // 下载资产内容：API 端点 + octet-stream 拿原始字节，不是浏览器下载页
-            const dl = await fetch(manifest.url, { headers: { ...headers, Accept: 'application/octet-stream' } });
-            if (!dl.ok) throw new Error(`下载 latest.json 失败: ${dl.status} ${await dl.text()}`);
-            const json = await dl.json();
-            json.notes = section;
-            const manifestBody = JSON.stringify(json, null, 2);
+
+            const SIGS = [
+              { keys: ['darwin-aarch64', 'darwin-aarch64-app'], re: /^Prune_aarch64\.app\.tar\.gz\.sig$/ },
+              { keys: ['darwin-x86_64', 'darwin-x86_64-app'], re: /^Prune_x64\.app\.tar\.gz\.sig$/ },
+              { keys: ['windows-x86_64', 'windows-x86_64-msi'], re: /^Prune_[\d.]+_x64_en-US\.msi\.sig$/ },
+              { keys: ['windows-x86_64-nsis'], re: /^Prune_[\d.]+_x64-setup\.exe\.sig$/ },
+            ];
+            const platforms = {};
+            for (const { keys, re } of SIGS) {
+              const asset = assets.find((a) => re.test(a.name));
+              if (!asset) throw new Error(`缺 updater 签名资产 /${re.source}/——对应 bundle 腿是否成功上传了 updater 产物？`);
+              const dl = await fetch(asset.url, { headers: { ...headers, Accept: 'application/octet-stream' } });
+              if (!dl.ok) throw new Error(`下载 ${asset.name} 失败: ${dl.status} ${await dl.text()}`);
+              const signature = (await dl.text()).trim();
+              const url = asset.browser_download_url.replace(/\.sig$/, '');
+              for (const k of keys) platforms[k] = { signature, url };
+            }
+            const manifestBody = JSON.stringify({
+              version: tag.slice(1),
+              // 无本版段时沿用下载表（与旧 tauri-action 生成时的 notes 同源）
+              notes: section || table,
+              pub_date: new Date().toISOString(),
+              platforms,
+            }, null, 2);
 
             // GitHub asset 不支持原地改内容，只能 DELETE + POST 上传同名文件。
             // 顺序：先删后传；删成功但传失败会留下缺失清单的窗口——此时升级检查会拿到
             // 404（客户端当「已是最新」静默处理，不阻塞任何人），重跑本 job 即可恢复。
-            const del = await fetch(manifest.url, { method: 'DELETE', headers });
-            if (!del.ok) throw new Error(`删除旧 latest.json 失败: ${del.status} ${await del.text()}`);
+            const old = assets.find((a) => a.name === 'latest.json');
+            if (old) {
+              const del = await fetch(old.url, { method: 'DELETE', headers });
+              if (!del.ok) throw new Error(`删除旧 latest.json 失败: ${del.status} ${await del.text()}`);
+            }
             const uploadUrl = `https://uploads.github.com/repos/${repo}/releases/${meta.id}/assets?name=latest.json`;
             const up = await fetch(uploadUrl, {
               method: 'POST',
@@ -539,7 +557,7 @@ jobs:
               body: manifestBody,
             });
             if (!up.ok) throw new Error(`上传 latest.json 失败: ${up.status} ${await up.text()}`);
-            console.log(`✓ latest.json 的 notes 已改写为 ${tag} 的 CHANGELOG 段（platforms 签名未动）`);
+            console.log(`✓ latest.json 已单点生成：4 平台签名 × 7 键（notes=${section ? `${tag} CHANGELOG 段` : '下载表'}）`);
           })().catch((e) => { console.error(e); process.exit(1); });
           NODE_SCRIPT
 
