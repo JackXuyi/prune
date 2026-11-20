@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { LeakBanner } from "../components/LeakCard";
-import { NetDirectionRow, StatsRow } from "../components/stats/StatsRow";
+import { NetDirectionRow } from "../components/stats/StatsRow";
+import { PanelPortBand, PanelRings } from "../components/panel/PanelHero";
 import { formatBytes, formatRelative } from "../lib/format";
 import { useI18n } from "../i18n/store";
 import { fireAndForget, openMain, panelFitHeight } from "../lib/ipc";
@@ -9,7 +10,6 @@ import {
   diskReadout,
   memoryReadout,
   netDirectionReadout,
-  portReadout,
 } from "../lib/statsReadout";
 import { useVolumeInfo } from "../lib/useVolumeInfo";
 import { useDiskStore } from "../stores/diskStore";
@@ -195,7 +195,6 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
   const mem = memoryReadout(snapshot);
   const cpu = cpuReadout(snapshot?.cpu);
   const disk = diskReadout(volume, report?.totals.reclaimable ?? null, known);
-  const port = portReadout(ports);
   // 方向读数（M16 v6）：网络行拆成下载 / 上传两行，口径在 readout 层派生
   const netDown = netDirectionReadout(netSample, netHistory, "down");
   const netUp = netDirectionReadout(netSample, netHistory, "up");
@@ -293,19 +292,28 @@ function StatsSection({ refreshNonce }: { refreshNonce: number }) {
         </div>
       ) : null}
 
+      {/* 首屏读数区（menubar-panel-eul-mockup W2）：三环 Hero 取代原来
+          内存/存储/CPU 三行 40 px 文字行——三个都是百分比，套环合法且省 24 px；
+          环色吃 loadTone（同源，不另造配色） */}
+      <PanelRings
+        memory={mem}
+        disk={disk}
+        cpu={cpu}
+        onMemory={() => fireAndForget(openMain(undefined, "memory"), "open_main")}
+        onDisk={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
+      />
+
       <div className="divide-y divide-hairline-soft">
-        <StatsRow title={t("nav.memory")} readout={mem} onOpen={() => fireAndForget(openMain(undefined, "memory"), "open_main")} />
-        <StatsRow
-          icon={<span className="text-accent">⚡</span>}
-          title={t("nav.disk")}
-          readout={disk}
-          onOpen={() => fireAndForget(openMain(undefined, "disk"), "open_main")}
-        />
-        <StatsRow title="CPU" readout={cpu} />
         <NetDirectionRow readout={netDown} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
         <NetDirectionRow readout={netUp} onOpen={() => fireAndForget(openMain(undefined, "net"), "open_main")} />
-        <StatsRow title={t("nav.ports")} readout={port} onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")} />
       </div>
+
+      {/* 端口带：域色三段（监听/关注/暴露）。端口不是百分比所以不套环；
+          暴露 0 该段不渲染，未扫描整块退化成一行（不画 0 个芯片） */}
+      <PanelPortBand
+        ports={ports}
+        onOpen={() => fireAndForget(openMain(undefined, "ports"), "open_main")}
+      />
 
       {/* W2/D-07 本地服务段（§4.2 ②）：只在存在冲突或关注端口被占时出现——
           菜单栏是稀缺空间，常驻空栏会被读成噪音。读数与主窗口同一份快照派生 */}
@@ -369,9 +377,10 @@ function LocalServiceRows({ ports }: { ports: PortSnapshot | null }) {
                   :{e.port}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-[10px] text-ink-dim">
+                  {/* 端口号已在左侧 .pt 渲染，行文案只补 comm / 冲突倍数，不重复端口 */}
                   {isConflict
-                    ? t("panel.ports.conflict", { port: e.port, comm, n: owners })
-                    : t("panel.ports.row", { port: e.port, comm })}
+                    ? t("panel.ports.conflict", { comm, n: owners })
+                    : comm}
                 </span>
                 {e.listeners[0]?.projectLabel ? (
                   <span className="max-w-[110px] shrink-0 truncate text-[9.5px] text-ink-faint">
