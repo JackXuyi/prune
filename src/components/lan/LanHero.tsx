@@ -15,12 +15,16 @@ export function LanHero({
   snapshot,
   scanning,
   onScan,
+  tone = "net",
 }: {
   snapshot: LanSnapshot;
   scanning: boolean;
   onScan: () => void;
+  /** 域色：net = 端口页局域网子页（青）；device = 设备页（品红，页面主角） */
+  tone?: "net" | "device";
 }) {
   const { t, locale } = useI18n();
+  const domainColor = tone === "device" ? "var(--color-domain-device)" : "var(--color-domain-net)";
   const devices = snapshot.devices;
   const self = devices.filter((d) => d.isSelf).length;
   const router = devices.filter((d) => d.isGateway).length;
@@ -49,9 +53,8 @@ export function LanHero({
     <section
       className="relative flex h-[128px] shrink-0 items-center gap-4 overflow-hidden rounded-[16px] border px-[18px] py-3"
       style={{
-        borderColor: "color-mix(in srgb, var(--color-domain-net) 26%, transparent)",
-        backgroundImage:
-          "linear-gradient(120deg, color-mix(in srgb, var(--color-domain-net) 9%, transparent), color-mix(in srgb, var(--color-domain-net) 2%, transparent) 46%, transparent 76%)",
+        borderColor: `color-mix(in srgb, ${domainColor} 26%, transparent)`,
+        backgroundImage: `linear-gradient(120deg, color-mix(in srgb, ${domainColor} 9%, transparent), color-mix(in srgb, ${domainColor} 2%, transparent) 46%, transparent 76%)`,
         backgroundColor: "var(--color-surface-raised)",
       }}
       title={t("lan.hero.tip")}

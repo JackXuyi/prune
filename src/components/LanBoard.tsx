@@ -23,7 +23,17 @@ import { kindLabel, type LanDevice } from "../types/lan";
 
 type LanFilter = "all" | "online" | "inbound";
 
-export function LanBoard({ query = "" }: { query?: string }) {
+export function LanBoard({
+  query = "",
+  /** 头部（状态带 + 点阵 Hero）：设备页由页面级 Ribbon/Hero 承担同源读数，传 false 只留设备区 */
+  showHeader = true,
+  /** 拓扑视图切换：设备页暂隐藏（2026-11-20 产品决策），端口页保持原样 */
+  showTopoToggle = true,
+}: {
+  query?: string;
+  showHeader?: boolean;
+  showTopoToggle?: boolean;
+}) {
   const { t, locale } = useI18n();
   const snapshot = useLanStore((s) => s.snapshot);
   const scanning = useLanStore((s) => s.scanning);
@@ -137,9 +147,12 @@ export function LanBoard({ query = "" }: { query?: string }) {
       ) : (
         <>
           {/* ① 状态带 + ② 设备点阵 Hero：首屏读数区（扫描按钮在 Hero 的口径块里，
-              进入分段绝不自动扫描——权限弹窗纪律） */}
-          <LanRibbon snapshot={snapshot} />
-          <LanHero snapshot={snapshot} scanning={scanning} onScan={() => void scan()} />
+              进入分段绝不自动扫描——权限弹窗纪律）。
+              设备页（showHeader=false）由页面级 DeviceRibbon/LanHero 承担，这里不重复画 */}
+          {showHeader ? <LanRibbon snapshot={snapshot} /> : null}
+          {showHeader ? (
+            <LanHero snapshot={snapshot} scanning={scanning} onScan={() => void scan()} />
+          ) : null}
 
           {randomMacCount > 0 ? (
             <p className="rounded-[10px] bg-chip px-3 py-[7px] text-[10.5px] leading-relaxed text-ink-dim">
@@ -175,18 +188,20 @@ export function LanBoard({ query = "" }: { query?: string }) {
             ) : (
               <span />
             )}
-            <div className="flex shrink-0 items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
-              <ViewChip
-                active={view === "cards"}
-                onClick={() => setView("cards")}
-                label={t("lan.topo.cards")}
-              />
-              <ViewChip
-                active={view === "topo"}
-                onClick={() => setView("topo")}
-                label={t("lan.topo.view")}
-              />
-            </div>
+            {showTopoToggle ? (
+              <div className="flex shrink-0 items-center gap-1" role="tablist" aria-label={t("lan.topo.view")}>
+                <ViewChip
+                  active={view === "cards"}
+                  onClick={() => setView("cards")}
+                  label={t("lan.topo.cards")}
+                />
+                <ViewChip
+                  active={view === "topo"}
+                  onClick={() => setView("topo")}
+                  label={t("lan.topo.view")}
+                />
+              </div>
+            ) : null}
           </div>
 
           {view === "cards" && !hasMatch ? (
