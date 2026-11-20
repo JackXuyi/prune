@@ -20,12 +20,19 @@ const zh = {
   titleAvailable: "发现新版本",
   titleUpToDate: "已是最新版本",
   titleError: "检查更新失败",
-  versionLine: "v{v} · 当前 v{c}",
+  stateUpdatable: "可更新",
+  releasedOn: "发布于 {d}",
+  pkgSize: "安装包 {size}",
+  autoRestart: "完成后自动重启",
+  checkHint: "查询 GitHub Releases 上的最新版本",
+  noImpact: "不影响当前使用 · 可稍后重试",
+  downloadingBtn: "下载中…",
+  retry: "重试",
+  progressTip: "百分比为 downloaded÷total 的推导值；总大小未知时不显示百分比",
   releaseNotes: "更新说明",
   noNotes: "（本版本暂无更新说明）",
   later: "稍后",
   close: "好",
-  releasedOn: "发布于 {d}",
 } as const;
 
 const en: MessageTree<typeof zh> = {
@@ -45,12 +52,19 @@ const en: MessageTree<typeof zh> = {
   titleAvailable: "Update Available",
   titleUpToDate: "You're Up to Date",
   titleError: "Update Check Failed",
-  versionLine: "v{v} · current v{c}",
+  stateUpdatable: "Update ready",
+  releasedOn: "Released {d}",
+  pkgSize: "Package {size}",
+  autoRestart: "Restarts automatically when done",
+  checkHint: "Querying GitHub Releases for the latest version",
+  noImpact: "You can keep using the app and retry later",
+  downloadingBtn: "Downloading…",
+  retry: "Retry",
+  progressTip: "Percentage is derived from downloaded÷total; hidden when total size is unknown",
   releaseNotes: "Release Notes",
   noNotes: "(No release notes for this version)",
   later: "Later",
   close: "OK",
-  releasedOn: "Released {d}",
 };
 
 export const update = { zh, en } as const;
