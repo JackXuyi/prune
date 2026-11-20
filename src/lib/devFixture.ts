@@ -1030,3 +1030,38 @@ export const DEV_UPDATE_DIALOG = {
 
 /** 更新弹窗「检查中」态的浏览器预览假数据（?window=update&checking=1）。 */
 export const DEV_UPDATE_CHECKING = { status: "checking" as const };
+
+/**
+ * 更新弹窗其余态的浏览器预览假数据（?window=update&state=available|error|installing）。
+ * 仅 dev 预览用；Tauri 下走真实 IPC，这些 fixture 不会被引用。
+ * - available：版本跃迁 + 更新说明（字段与 UpdateDialogPayload.available 对齐）
+ * - error：检查失败文案
+ * - installing 本体是组件局部态（installing + progress），由 UpdateWindow dev 分支自行装配
+ */
+export const DEV_UPDATE_AVAILABLE = {
+  status: "available" as const,
+  data: {
+    version: "0.14.0",
+    currentVersion: "0.13.1",
+    date: "2026-11-18T20:30:00Z",
+    notesMd: [
+      "### 端口域",
+      "",
+      "- 新增 **`port_baseline`** 端口基线：对比上轮扫描，新监听 / 消失端口在列表里标 `Δ`。",
+      "- 端口行 `why` 列支持悬停展开推断依据（协议握手 + 命令行特征）。",
+      "",
+      "### 内存域",
+      "",
+      "- Swap 速率纳入 Ribbon 第三段，thrash 阈值告警改为 **12 页/s**（原 20）。",
+      "- 修复增量扫描在休眠唤醒后首帧 `—` 误报为 `0` 的问题。",
+    ].join("\n"),
+  },
+};
+
+export const DEV_UPDATE_ERROR = {
+  status: "error" as const,
+  data: {
+    message:
+      "Request failed: GET https://github.com/JackXuyi/prune/releases/latest/download/latest.json — 502 Bad Gateway (proxy: 127.0.0.1:7890)",
+  },
+};
