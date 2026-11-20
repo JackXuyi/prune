@@ -43,10 +43,18 @@ const zh = {
   /** W2/D-07：本地服务段——只在有冲突或关注端口被占时出现，菜单栏空间稀缺 */
   ports: {
     title: "本地服务",
-    conflict: ":{port} {comm} ×{n}",
-    row: ":{port} {comm}",
+    /** 端口号由行首 .pt 渲染，这里只补冲突倍数，不重复端口 */
+    conflict: "{comm} ×{n}",
     conflictBadge: "冲突",
     more: "其余 {n} 个",
+  },
+  /** 端口三段芯片带（域色 domain-port）：暴露 0 该段不渲染，未扫描整块退化成一行 */
+  portsBand: {
+    listening: "监听",
+    watched: "关注",
+    exposed: "暴露",
+    scanHint: "去端口页扫描",
+    title: "监听 {listening} 个 · 关注 {watched} · 对外暴露 {exposed} · 活跃连接 {conns} · 冲突 {conflicts}",
   },
   skeleton: {
     sampling: "正在采样…",
@@ -87,10 +95,18 @@ const en: MessageTree<typeof zh> = {
   /** W2/D-07: local services section — only when a conflict exists or watched ports are occupied */
   ports: {
     title: "Local services",
-    conflict: ":{port} {comm} ×{n}",
-    row: ":{port} {comm}",
+    /** Port number is rendered by the row-leading badge; only the conflict multiplier lives here */
+    conflict: "{comm} ×{n}",
     conflictBadge: "conflict",
     more: "{n} more",
+  },
+  /** Port three-segment band: exposed segment is hidden at 0; unscanned collapses to one line */
+  portsBand: {
+    listening: "listening",
+    watched: "watched",
+    exposed: "exposed",
+    scanHint: "scan in Ports",
+    title: "{listening} listening · {watched} watched · {exposed} exposed · {conns} active · {conflicts} conflicts",
   },
   skeleton: {
     sampling: "Sampling…",
