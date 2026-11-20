@@ -70,6 +70,10 @@ const zh = {
     title: "端口服务自动探测",
     rowLabel: "服务自动探测",
     tag: "关注层 TCP 端口 · 本机握手",
+    /** 独立分区头右注：它是端口页功能，不随灵动岛主开关变灰（settings-sidebar-eul-mockup） */
+    standalone: "端口页功能 · 不随灵动岛开关变灰",
+    /** 卡内口径行（一行口径层）：为什么默认关、握手范围、缓存语义 */
+    rule: "它发包，所以默认关——只对本机 127.0.0.1 握手，不碰局域网；结果按进程缓存，对 MCP server 不会重复建会话。",
     desc: "开启后端口页每轮扫描会对关注层端口发一次本机握手（Web / MCP / 数据库协议），把「推断」升级为「确认」。只连 127.0.0.1，结果按进程缓存——对 MCP server 不会重复建会话。",
     enable: "启用自动探测",
   },
@@ -127,8 +131,14 @@ const zh = {
   loading: "读取设置…",
   about: {
     title: "关于",
+    /** 分区头右注（settings-sidebar-eul-mockup） */
+    note: "版本与自身开销 · 沉底惯例",
     checkUpdate: "检查更新",
     checking: "检查中…",
+  },
+  /** 左菜单分区名（settings-sidebar-eul-mockup）：菜单用短名，分区标题用 portsProbe.title 全名 */
+  nav: {
+    probe: "端口探测",
   },
   selfFootprint: {
     title: "自身开销",
@@ -248,6 +258,8 @@ const en: MessageTree<typeof zh> = {
     title: "Auto-probe port services",
     rowLabel: "Service auto-probe",
     tag: "Focus-layer TCP ports · local handshake",
+    standalone: "Ports-page feature · unaffected by the Dynamic Island switch",
+    rule: "It sends packets, so it's off by default — handshakes only with 127.0.0.1, never the LAN; results are cached per process, so MCP servers never get duplicate sessions.",
     desc: "When on, each port scan handshakes once with focus-layer ports (Web / MCP / database protocols), upgrading \"inferred\" to \"confirmed\". Only 127.0.0.1 is contacted, and results are cached per process — MCP servers never get duplicate sessions.",
     enable: "Enable auto-probe",
   },
@@ -308,8 +320,12 @@ const en: MessageTree<typeof zh> = {
   loading: "Loading settings…",
   about: {
     title: "About",
+    note: "version & its own footprint · sinks to the bottom",
     checkUpdate: "Check for updates",
     checking: "Checking…",
+  },
+  nav: {
+    probe: "Port probe",
   },
   selfFootprint: {
     title: "Its own footprint",
