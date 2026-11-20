@@ -8,6 +8,16 @@ import type { MessageTree } from "../../types";
 
 const zh = {
   title: "设置",
+  /** 双栏分组组头（settings-eul-mockup）：组名 + 一行右注口径 */
+  group: {
+    appearance: "外观与语言",
+    appearanceNote: "主题立即生效 · 语言点选即切",
+    system: "系统",
+    systemNote: "自启动状态直接问系统",
+    thresholds: "提报阈值",
+    thresholdsNote: "滑杆范围 = 后端钳制范围",
+    mainRow: "主开关",
+  },
   language: {
     title: "语言",
     auto: "跟随系统",
@@ -35,6 +45,7 @@ const zh = {
     desc: "CPU 持续偏高、内存紧张或端口被占用时从刘海里长出一条提报，6 秒后自行收回。悬停展开看是谁在烧。",
     notchSize: "刘海 {w} × {h} pt",
     notchHint: "接上带刘海的屏幕后会自动启用；外接屏不会造假刘海",
+    note: "刘海区提报 · 不占 Dock",
     enable: "启用灵动岛",
   },
   portGuard: {
@@ -57,6 +68,7 @@ const zh = {
   },
   portsProbe: {
     title: "端口服务自动探测",
+    rowLabel: "服务自动探测",
     tag: "关注层 TCP 端口 · 本机握手",
     desc: "开启后端口页每轮扫描会对关注层端口发一次本机握手（Web / MCP / 数据库协议），把「推断」升级为「确认」。只连 127.0.0.1，结果按进程缓存——对 MCP server 不会重复建会话。",
     enable: "启用自动探测",
@@ -92,8 +104,6 @@ const zh = {
     },
   },
   cpu: {
-    title: "CPU 暴走",
-    tag: "判定逻辑在 prune-core，可单测",
     threshold: "阈值",
     thresholdHint: "采样值 ≥ 这个数才算「高」",
     window: "判定窗口",
@@ -105,8 +115,6 @@ const zh = {
     rule: "当前规则：最近 {window} 秒里 {tolerance}% 的采样 ≥ {threshold}% 才提报；触发后要掉到 {reset}% 以下才会再次触发。",
   },
   mem: {
-    title: "内存异常",
-    tag: "内核压力 + swap 占用，双通道",
     swapThreshold: "Swap 阈值",
     swapHint: "swap 占用 ≥ 此值且持续才算紧张；拉到 95% 视为关闭该通道",
     window: "持续窗口",
@@ -114,6 +122,7 @@ const zh = {
     rule: "当前规则：内核压力严重立即提报；警告或 swap ≥ {swap}% 持续 {window} 秒才提报；swap 掉到 {reset}% 以下才会再次触发。",
   },
   saved: "已保存",
+  savedAt: "已保存 {clock}",
   autoSave: "改动即时生效并保存",
   loading: "读取设置…",
   about: {
@@ -150,6 +159,7 @@ const zh = {
   },
   theme: {
     title: "外观",
+    row: "主题",
     desc: "主题立即生效；「跟随系统」会随系统深浅色自动切换。",
     system: "跟随系统",
     light: "浅色",
@@ -161,6 +171,7 @@ const zh = {
     title: "开机自启动",
     desc: "登录 macOS 后自动在菜单栏待命，不弹主窗口。也可在「系统设置 → 登录项」里管理。",
     enable: "登录时启动 Prune",
+    onState: "plist 已注册",
   },
 
   /** W2/D-09：prune.toml——只复制模板到剪贴板，Prune 永不写项目文件 */
@@ -177,6 +188,15 @@ const zh = {
 
 const en: MessageTree<typeof zh> = {
   title: "Settings",
+  group: {
+    appearance: "Appearance & language",
+    appearanceNote: "theme applies at once · language switches on click",
+    system: "System",
+    systemNote: "autostart state comes from the system",
+    thresholds: "Report thresholds",
+    thresholdsNote: "slider range = backend clamp",
+    mainRow: "Master switch",
+  },
   language: {
     title: "Language",
     auto: "Follow system",
@@ -203,6 +223,7 @@ const en: MessageTree<typeof zh> = {
     notchSize: "Notch {w} × {h} pt",
     notchHint:
       "Turns on automatically when a notched display is attached; external displays never get a fake notch",
+    note: "reports from the notch · no Dock icon",
     enable: "Enable Dynamic Island",
   },
   portGuard: {
@@ -225,6 +246,7 @@ const en: MessageTree<typeof zh> = {
   },
   portsProbe: {
     title: "Auto-probe port services",
+    rowLabel: "Service auto-probe",
     tag: "Focus-layer TCP ports · local handshake",
     desc: "When on, each port scan handshakes once with focus-layer ports (Web / MCP / database protocols), upgrading \"inferred\" to \"confirmed\". Only 127.0.0.1 is contacted, and results are cached per process — MCP servers never get duplicate sessions.",
     enable: "Enable auto-probe",
@@ -260,8 +282,6 @@ const en: MessageTree<typeof zh> = {
     },
   },
   cpu: {
-    title: "CPU runaway",
-    tag: "Logic lives in prune-core and is unit-tested",
     threshold: "Threshold",
     thresholdHint: "A sample counts as high at or above this",
     window: "Window",
@@ -275,8 +295,6 @@ const en: MessageTree<typeof zh> = {
     rule: "Current rule: {tolerance}% of samples in the last {window} s must be ≥ {threshold}% to report; it re-arms only after dropping below {reset}%.",
   },
   mem: {
-    title: "Memory anomaly",
-    tag: "Kernel pressure + swap usage, two channels",
     swapThreshold: "Swap threshold",
     swapHint:
       "Tight only when swap stays at or above this; 95% effectively disables the channel",
@@ -285,6 +303,7 @@ const en: MessageTree<typeof zh> = {
     rule: "Current rule: critical pressure reports immediately; warning or swap ≥ {swap}% must hold {window} s; re-arms below {reset}%.",
   },
   saved: "Saved",
+  savedAt: "Saved {clock}",
   autoSave: "Changes apply and save immediately",
   loading: "Loading settings…",
   about: {
@@ -322,6 +341,7 @@ const en: MessageTree<typeof zh> = {
   },
   theme: {
     title: "Appearance",
+    row: "Theme",
     desc: "Applies immediately. \"Follow system\" tracks the OS appearance.",
     system: "System",
     light: "Light",
@@ -333,6 +353,7 @@ const en: MessageTree<typeof zh> = {
     title: "Launch at login",
     desc: "Starts Prune in the menu bar when you log in — no main window pops up. Also manageable under System Settings → Login Items.",
     enable: "Launch Prune at login",
+    onState: "plist registered",
   },
 
   /** W2/D-09: prune.toml — copy the template to the clipboard only; Prune never writes project files */
