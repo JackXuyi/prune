@@ -1,4 +1,4 @@
-//! 硬件模块开关（f26 D7）：五个模块各一个 settings.json 布尔键，默认全开。
+//! 硬件模块开关（f26 D7 + m21 外设）：六个模块各一个 settings.json 布尔键，默认全开。
 //!
 //! 前端 SettingsBoard「硬件模块」分组读写这两个命令；采样侧在每轮采样前
 //! 自行查键（crate::settings::get_bool），关掉即停采。
@@ -14,6 +14,7 @@ pub const HW_KEYS: &[&str] = &[
     "hw.smart.enabled",
     "hw.power.enabled",
     "hw.cpuTemp.enabled",
+    "hw.periph.enabled",
     "net.publicIp.enabled",
 ];
 

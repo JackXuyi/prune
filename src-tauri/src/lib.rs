@@ -16,6 +16,7 @@ mod autostart;
 mod commands;
 mod disk_io_sampler;
 mod dock;
+mod ep_sampler;
 mod hw;
 mod i18n;
 mod lan;
@@ -166,6 +167,9 @@ pub fn run() {
             disk_io_sampler::disk_io_set_active,
             smc_sampler::cpu_temp_snapshot,
             smc_sampler::cpu_temp_set_active,
+            // m21 外设（docs/m21-peripherals-plan.md）：蓝牙 / USB / 音频
+            ep_sampler::ep_snapshot,
+            ep_sampler::ep_set_active,
             hw::hw_flags,
             hw::hw_flag_set
         ])
@@ -237,6 +241,8 @@ pub fn run() {
             app.manage(Arc::new(ps_sampler::PowerState::new()));
             app.manage(Arc::new(disk_io_sampler::DiskIoState::new()));
             app.manage(Arc::new(smc_sampler::CpuTempState::new()));
+            // m21 外设（docs/m21-peripherals-plan.md）：蓝牙 / USB / 音频采样
+            app.manage(Arc::new(ep_sampler::EpState::new()));
             app.manage(Arc::new(commands::DiskSmartState::new()));
             app.manage(Arc::new(pubip::PubIpState::new()));
             app.manage(Arc::new(updater::UpdateState::new()));
@@ -287,6 +293,12 @@ pub fn run() {
             let temp_handle = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 smc_sampler::run_cpu_temp(temp_handle).await;
+            });
+
+            // m21：外设采样（15 s 低频，外设 tab 可见时才跑）
+            let ep_handle = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                ep_sampler::run_ep(ep_handle).await;
             });
 
             // f26：磁盘 I/O（2 s，存储 tab 可见时才跑 iostat，切走即停）
