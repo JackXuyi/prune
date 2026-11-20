@@ -178,12 +178,37 @@ export function diskReadout(
 
 // ---------------------------------------------------------------- 端口
 
+/**
+ * 端口四个计数（面板端口带 / 端口行共用）：口径只在这里算一次。
+ * `null` = 还没扫过——调用方必须显示「未扫描」，不能把 null 画成 0。
+ */
+export function portCounts(ports: PortSnapshot | null): {
+  listening: number;
+  watched: number;
+  exposed: number;
+  conns: number;
+  closeWait: number;
+} | null {
+  if (!ports) return null;
+  const entries = ports.entries;
+  const conns = Object.values(ports.connsByPid).reduce((sum, c) => sum + c.established, 0);
+  const closeWait = Object.values(ports.connsByPid).reduce((sum, c) => sum + c.closeWait, 0);
+  return {
+    listening: entries.length,
+    watched: entries.filter((e) => e.watched).length,
+    exposed: entries.filter((e) => e.exposure === "any").length,
+    conns,
+    closeWait,
+  };
+}
+
 export function portReadout(
   ports: PortSnapshot | null,
   locale: Locale = currentLocale(),
 ): Readout {
   const { t } = i18nFor(locale);
-  if (!ports) {
+  const counts = portCounts(ports);
+  if (!ports || !counts) {
     return {
       ...pending(t("common.state.notScanned")),
       status: "unavailable",
@@ -191,23 +216,17 @@ export function portReadout(
     };
   }
 
-  const entries = ports.entries;
-  const watched = entries.filter((e) => e.watched).length;
-  const exposed = entries.filter((e) => e.exposure === "any").length;
-  const conns = Object.values(ports.connsByPid).reduce((sum, c) => sum + c.established, 0);
-  const closeWait = Object.values(ports.connsByPid).reduce((sum, c) => sum + c.closeWait, 0);
-
   return {
-    main: String(entries.length),
+    main: String(counts.listening),
     unit: t("stats.readout.portUnit"),
     ratio: null,
     tone: "neutral",
     sub: compact([
-      t("stats.readout.watched", { n: watched }),
+      t("stats.readout.watched", { n: counts.watched }),
       // 暴露面 > 0 才提；为 0 时不必占一行
-      exposed > 0 ? t("stats.readout.exposed", { n: exposed }) : null,
-      t("stats.readout.conns", { n: conns }),
-      closeWait > 0 ? `CLOSE_WAIT ${closeWait}` : null,
+      counts.exposed > 0 ? t("stats.readout.exposed", { n: counts.exposed }) : null,
+      t("stats.readout.conns", { n: counts.conns }),
+      counts.closeWait > 0 ? `CLOSE_WAIT ${counts.closeWait}` : null,
     ]),
     status: "ok",
   };
