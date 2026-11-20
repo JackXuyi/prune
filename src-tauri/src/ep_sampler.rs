@@ -38,6 +38,8 @@ pub struct BTDevice {
     pub connected: bool,
     /// vendorID == 0x004C（Apple）——前端据此选图标
     pub is_apple: bool,
+    /// vendorID 原文（"0x004C" / "0x004C (Apple)"）；详情弹窗厂商行用，读不到为 None
+    pub vendor_id: Option<String>,
     /// None = 该部件读不到电量（前端不画环/条）
     pub battery_main: Option<u8>,
     /// AirPods 独有
@@ -156,6 +158,7 @@ fn str_field(obj: &serde_json::Value, key: &str) -> Option<String> {
 
 fn parse_bt_device(name: &str, props: &serde_json::Value, connected: bool) -> BTDevice {
     let battery = |k: &str| props.get(k).and_then(parse_battery);
+    let vendor_id = str_field(props, "device_vendorID");
     BTDevice {
         name: name.to_string(),
         device_type: str_field(props, "device_minorType")
@@ -163,9 +166,8 @@ fn parse_bt_device(name: &str, props: &serde_json::Value, connected: bool) -> BT
             .unwrap_or_default(),
         connected,
         // "0x004C (Apple)" / "0x004C" 两种写法都盖住
-        is_apple: str_field(props, "device_vendorID")
-            .map(|v| v.starts_with("0x004C"))
-            .unwrap_or(false),
+        is_apple: vendor_id.as_deref().map(|v| v.starts_with("0x004C")).unwrap_or(false),
+        vendor_id,
         battery_main: battery("device_batteryLevelMain"),
         battery_left: battery("device_batteryLevelLeft"),
         battery_right: battery("device_batteryLevelRight"),
@@ -521,6 +523,7 @@ mod tests {
         assert_eq!(pods.name, "许一的AirPods");
         assert!(pods.connected);
         assert!(pods.is_apple);
+        assert_eq!(pods.vendor_id.as_deref(), Some("0x004C"));
         assert_eq!(pods.device_type, "Headphones");
         assert_eq!(pods.battery_left, Some(92));
         assert_eq!(pods.battery_right, Some(88));

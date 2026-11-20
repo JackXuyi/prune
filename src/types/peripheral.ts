@@ -13,6 +13,8 @@ export interface BTDevice {
   connected: boolean;
   /** vendorID == 0x004C（Apple）——据此选图标 */
   isApple: boolean;
+  /** vendorID 原文（"0x004C"…）；详情弹窗厂商行用，读不到为 null */
+  vendorId: string | null;
   /** 第三方设备的主电量；Apple 音频设备常无此字段 */
   batteryMain: number | null;
   /** AirPods 分件电量：只有左/右/盒，没有主电量 */
