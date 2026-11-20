@@ -136,8 +136,11 @@ impl Smc {
             let mut buf = [0i8; NAME_LEN];
             let mut next = true;
             if unsafe { IORegistryEntryGetName(entry, buf.as_mut_ptr()) } == 0 {
-                let bytes: Vec<u8> =
-                    buf.iter().take_while(|&&c| c != 0).map(|&c| c as u8).collect();
+                let bytes: Vec<u8> = buf
+                    .iter()
+                    .take_while(|&&c| c != 0)
+                    .map(|&c| c as u8)
+                    .collect();
                 let name = String::from_utf8_lossy(&bytes);
                 if name == "AppleSMCKeysEndpoint" {
                     // 选中句柄不在此处 release——IOServiceOpen 之后才释放
@@ -278,7 +281,11 @@ pub fn cpu_temp_median() -> Option<f64> {
     static PROBED: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     let probed = PROBED.get_or_init(cpu_temp_keys_probe);
     let keys: Vec<&str> = if probed.iter().any(|k| k.starts_with("Tp")) {
-        probed.iter().filter(|k| k.starts_with("Tp")).map(|s| s.as_str()).collect()
+        probed
+            .iter()
+            .filter(|k| k.starts_with("Tp"))
+            .map(|s| s.as_str())
+            .collect()
     } else if !probed.is_empty() {
         probed.iter().map(|s| s.as_str()).collect()
     } else {
@@ -348,12 +355,13 @@ mod tests {
     fn spike_reads_cpu_temp_on_real_hardware() {
         let keys = cpu_temp_keys_probe();
         eprintln!("probed temp keys = {keys:?}");
-        assert!(!keys.is_empty(), "no temperature keys found on this machine");
+        assert!(
+            !keys.is_empty(),
+            "no temperature keys found on this machine"
+        );
         let key_refs: Vec<&str> = keys.iter().map(|s| s.as_str()).collect();
         let t = cpu_temp_median_with_keys(&key_refs);
         eprintln!("cpu temp = {t:?}");
         assert!(t.is_some_and(|v| (20.0..110.0).contains(&v)));
     }
 }
-
-
