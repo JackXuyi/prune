@@ -475,3 +475,24 @@ export function DeviceKindIcon({
       );
   }
 }
+
+/** 耳机（外设页蓝牙音频设备行） */
+export function HeadphonesIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M3 14h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-7a9 9 0 0 1 18 0v7a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+    </Svg>
+  );
+}
+
+/** 插头（外设页 USB 区 / rail「外设」导航项） */
+export function UsbIcon(props: IconProps) {
+  return (
+    <Svg {...props}>
+      <path d="M12 22v-5" />
+      <path d="M9 8V2" />
+      <path d="M15 8V2" />
+      <path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z" />
+    </Svg>
+  );
+}

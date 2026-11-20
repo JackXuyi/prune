@@ -24,9 +24,10 @@ import {
   OverviewIcon,
   PortJackIcon,
   ScissorsIcon,
+  UsbIcon,
 } from "./icons";
 
-export type RailTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports" | "device";
+export type RailTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports" | "device" | "peripherals";
 
 interface RailItem {
   id: RailTab;
@@ -45,6 +46,8 @@ const ITEMS: RailItem[] = [
   { id: "net", labelKey: "nav.net", hintKey: "nav.netHint", icon: GlobeIcon, color: "var(--color-domain-net)" },
   { id: "ports", labelKey: "nav.ports", hintKey: "nav.portsHint", icon: PortJackIcon, color: "var(--color-domain-port)" },
   { id: "device", labelKey: "nav.device", hintKey: "nav.deviceHint", icon: DeviceIcon, color: "var(--color-domain-device)" },
+  // m21 外设页：与设备页同域色——都是「设备」语义域
+  { id: "peripherals", labelKey: "nav.peripherals", hintKey: "nav.peripheralsHint", icon: UsbIcon, color: "var(--color-domain-device)" },
 ];
 
 export function RailNav({

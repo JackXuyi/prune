@@ -6,6 +6,7 @@ import { AppResourceBoard } from "../components/AppResourceGrid";
 import { AppIcon } from "../components/AppIcon";
 import { AppDetail } from "../components/appdetail/AppDetail";
 import { DeviceBoard } from "../components/DeviceBoard";
+import { PeripheralsBoard } from "../components/peripherals/PeripheralsBoard";
 import { LeakEvidence } from "../components/LeakCard";
 import { LeakStrip } from "../components/memory/LeakStrip";
 import { FamilyInspector } from "../components/memory/FamilyInspector";
@@ -57,10 +58,10 @@ import { exposureMeta, portsOfPid } from "../types/net";
  * - 「内存·应用」+「内存·概况」合并为「内存」（列表 + 详情）
  * - 「设置」撤出一级导航，移到标题栏齿轮弹层
  */
-type MainTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports" | "device";
+type MainTab = "stats" | "resources" | "memory" | "disk" | "net" | "ports" | "device" | "peripherals";
 
-/** ⌘1–⌘7 的切换顺序（UX v3 §5.5；设备页后加入，排在端口之后） */
-const TAB_ORDER: MainTab[] = ["stats", "resources", "memory", "disk", "net", "ports", "device"];
+/** ⌘1–⌘8 的切换顺序（UX v3 §5.5；设备页后加入，外设页 m21 排在设备之后） */
+const TAB_ORDER: MainTab[] = ["stats", "resources", "memory", "disk", "net", "ports", "device", "peripherals"];
 /** tab 名与 rail 共用 nav.* —— 两处分开写迟早会有一处忘了改 */
 const TAB_LABEL: Record<MainTab, NoParamKey> = {
   stats: "nav.stats",
@@ -70,6 +71,7 @@ const TAB_LABEL: Record<MainTab, NoParamKey> = {
   net: "nav.net",
   ports: "nav.ports",
   device: "nav.device",
+  peripherals: "nav.peripherals",
 };
 
 /** 顶栏副标：与 RailNav 的 hover hint 同源，避免两处各写一份说明 */
@@ -81,6 +83,7 @@ const TAB_HINT: Record<MainTab, NoParamKey> = {
   net: "nav.netHint",
   ports: "nav.portsHint",
   device: "nav.deviceHint",
+  peripherals: "nav.peripheralsHint",
 };
 
 /**
@@ -378,7 +381,7 @@ export function MainWindow() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const meta = e.metaKey || e.ctrlKey;
-      if (meta && e.key >= "1" && e.key <= "7") {
+      if (meta && e.key >= "1" && e.key <= "8") {
         e.preventDefault();
         const next = TAB_ORDER[Number(e.key) - 1];
         if (next) {
@@ -450,8 +453,9 @@ export function MainWindow() {
               </span>
             </>
           ) : null}
-          {/* 设备页无全局刷新（DeviceBoard 注释）：按钮整颗隐藏，不放假动作 */}
-          {tab !== "device" ? (
+          {/* 设备页 / 外设页无全局刷新（DeviceBoard / PeripheralsBoard 注释）：
+              按钮整颗隐藏，不放假动作 */}
+          {tab !== "device" && tab !== "peripherals" ? (
             <button
               type="button"
               onClick={onRefresh}
@@ -544,6 +548,10 @@ export function MainWindow() {
           // 设备页（M-设备栏）：本机硬件 + 局域网设备。无全局刷新——
           // 硬件低频自轮询、局域网有显式扫描按钮，各段自己负责数据新鲜度
           <DeviceBoard />
+        ) : tab === "peripherals" ? (
+          // 外设页（m21，docs/m21-peripherals-plan.md）：蓝牙 / USB / 音频
+          // 外接设备。同样无全局刷新（15 s 门控自轮询）
+          <PeripheralsBoard />
         ) : (
           // 内存页（eul 重设计 · memory-eul-mockup.html）：左栏家族列表 + 右栏
           //（状态带 → 构成 Hero → 双磁贴 → 泄漏带 → 换出大户；选中进程后为详情）
