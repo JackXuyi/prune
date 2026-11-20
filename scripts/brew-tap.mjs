@@ -172,7 +172,7 @@ if (dryRun) {
   process.exit(0);
 }
 
-if (!token) throw new Error("缺少 HOMEBREW_TAP_TOKEN——到 Settings → Secrets and variables → Actions 添加（fine-grained PAT，仅 tap 仓库 contents:write）");
+if (!token) throw new Error("缺少 PRUNE_TAP_TOKEN——到 Settings → Secrets and variables → Actions 添加（fine-grained PAT，仅 tap 仓库 contents:write）");
 
 // ---------------------------------------------------------------- 推 tap
 
