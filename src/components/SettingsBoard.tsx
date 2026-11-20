@@ -211,8 +211,10 @@ export function SettingsBoard() {
 
   const disabled = !cfg.enabled;
 
+  // min-h-0：flex 子项默认 min-height:auto 会把根撑出弹层（被 overflow-hidden 裁掉、
+  // 内层滚动永不触发）；flex-1 + min-h-0 让根被压回弹层高度，滚动区才生效
   return (
-    <div className="flex flex-col">
+    <div className="flex min-h-0 flex-1 flex-col">
       {/* 弹层头：标题 + 唯一保存状态出口（自动保存 / 已保存 HH:MM / 失败红字） */}
       <div className="flex h-11 shrink-0 items-center gap-2.5 border-b border-hairline-soft bg-surface-raised px-4">
         <span className="text-[13px] font-semibold">{t("settings.title")}</span>
