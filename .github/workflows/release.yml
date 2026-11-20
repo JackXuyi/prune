@@ -547,7 +547,7 @@ jobs:
   # D-02：发版后自动更新 Homebrew tap（docs/d02-homebrew-plan.md §3.3）。
   # 渲染 cask + formula（sha256 从已发布的资产实算）并推送 JackXuyi/homebrew-prune。
   # 仅 tag 触发（workflow_dispatch 是对现有版本的幂等重跑，不该动 tap）；
-  # tap 仓库或 HOMEBREW_TAP_TOKEN 缺失时显式失败——静默跳过会让 tap 停在旧版。
+  # tap 仓库或 HOMEBREW_TAP_TOKEN secret 缺失时显式失败——静默跳过会让 tap 停在旧版。
   # 幂等：渲染内容与 tap 现状一致时不产生新 commit。
   # ---------------------------------------------------------------------------
   homebrew-tap:
