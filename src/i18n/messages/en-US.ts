@@ -17,6 +17,7 @@ import { memory } from "./namespaces/memory";
 import { nav } from "./namespaces/nav";
 import { net } from "./namespaces/net";
 import { panel } from "./namespaces/panel";
+import { peripherals } from "./namespaces/peripherals";
 import { ports } from "./namespaces/ports";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
@@ -35,6 +36,7 @@ export const en = {
   nav: nav.en,
   net: net.en,
   panel: panel.en,
+  peripherals: peripherals.en,
   ports: ports.en,
   resources: resources.en,
   settings: settings.en,

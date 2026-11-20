@@ -25,6 +25,7 @@ import type {
   PubIp,
 } from "../types/hardware";
 import type { AppDisk, BundleMap, BundleQuery } from "../types/appdisk";
+import type { EpSnapshot } from "../types/peripheral";
 import type { DailyBucket, HistoryBucket, IconMap, IconQuery } from "../types/appHistory";
 import type {
   LeakCase,
@@ -653,4 +654,18 @@ export function hwFlags(): Promise<HwFlag[]> {
 /** 硬件模块开关：写单个（白名单键，未知键后端报错） */
 export function hwFlagSet(key: string, enabled: boolean): Promise<void> {
   return invoke<void>("hw_flag_set", { key, enabled });
+}
+
+// ---------------------------------------------------------------- m21 外设
+// 契约见 docs/m21-peripherals-plan.md §三。读最新快照语义（同 f26）：
+// Rust 侧 15 s 门控轮询推进，前端只负责 set_active + 低频取快照。
+
+/** 外设快照（蓝牙 / USB / 音频）；未采集 = null */
+export function epSnapshot(): Promise<EpSnapshot | null> {
+  return invoke<EpSnapshot | null>("ep_snapshot");
+}
+
+/** 外设 tab 可见性门控：true 时 15 s 低频采样，false 时完全不采 */
+export function epSetActive(active: boolean): Promise<void> {
+  return invoke<void>("ep_set_active", { active });
 }

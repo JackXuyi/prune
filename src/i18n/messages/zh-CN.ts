@@ -14,6 +14,7 @@ import { memory } from "./namespaces/memory";
 import { nav } from "./namespaces/nav";
 import { net } from "./namespaces/net";
 import { panel } from "./namespaces/panel";
+import { peripherals } from "./namespaces/peripherals";
 import { ports } from "./namespaces/ports";
 import { resources } from "./namespaces/resources";
 import { settings } from "./namespaces/settings";
@@ -33,6 +34,7 @@ export const zh = {
   nav: nav.zh,
   net: net.zh,
   panel: panel.zh,
+  peripherals: peripherals.zh,
   ports: ports.zh,
   resources: resources.zh,
   settings: settings.zh,
