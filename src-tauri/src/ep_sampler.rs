@@ -166,7 +166,10 @@ fn parse_bt_device(name: &str, props: &serde_json::Value, connected: bool) -> BT
             .unwrap_or_default(),
         connected,
         // "0x004C (Apple)" / "0x004C" 两种写法都盖住
-        is_apple: vendor_id.as_deref().map(|v| v.starts_with("0x004C")).unwrap_or(false),
+        is_apple: vendor_id
+            .as_deref()
+            .map(|v| v.starts_with("0x004C"))
+            .unwrap_or(false),
         vendor_id,
         battery_main: battery("device_batteryLevelMain"),
         battery_left: battery("device_batteryLevelLeft"),
@@ -180,7 +183,10 @@ fn parse_bt_device(name: &str, props: &serde_json::Value, connected: bool) -> BT
 /// → 条目 `{ "<设备名>": { 属性 } }`。分组名即连接状态（字段漂移时也不产生假数据）。
 fn parse_bt(v: &serde_json::Value) -> Vec<BTDevice> {
     let mut out = Vec::new();
-    let Some(arr) = v.get("SPBluetoothDataType").and_then(serde_json::Value::as_array) else {
+    let Some(arr) = v
+        .get("SPBluetoothDataType")
+        .and_then(serde_json::Value::as_array)
+    else {
         return out;
     };
     for ctrl in arr {
@@ -189,7 +195,9 @@ fn parse_bt(v: &serde_json::Value) -> Vec<BTDevice> {
                 continue;
             };
             for item in list {
-                let Some(obj) = item.as_object() else { continue };
+                let Some(obj) = item.as_object() else {
+                    continue;
+                };
                 for (name, props) in obj {
                     if !name.is_empty() {
                         out.push(parse_bt_device(name, props, connected));
@@ -290,7 +298,8 @@ mod audio {
 
     #[link(name = "CoreFoundation", kind = "framework")]
     extern "C" {
-        fn CFStringGetCString(s: *const c_void, buf: *mut i8, buf_size: isize, encoding: u32) -> u8;
+        fn CFStringGetCString(s: *const c_void, buf: *mut i8, buf_size: isize, encoding: u32)
+            -> u8;
         fn CFRelease(cf: *const c_void);
     }
 
@@ -305,9 +314,7 @@ mod audio {
     /// 读取一个 AudioObjectID 属性（4 字节 ID / u32 数组通用）
     fn prop_ids(id: AudioObjectID, a: &PropAddr) -> Option<Vec<AudioObjectID>> {
         let mut size: u32 = 0;
-        let st = unsafe {
-            AudioObjectGetPropertyDataSize(id, a, 0, std::ptr::null(), &mut size)
-        };
+        let st = unsafe { AudioObjectGetPropertyDataSize(id, a, 0, std::ptr::null(), &mut size) };
         if st != 0 || size == 0 {
             return None;
         }
@@ -315,7 +322,14 @@ mod audio {
         let mut buf = vec![0u32; n];
         let mut io = size;
         let st = unsafe {
-            AudioObjectGetPropertyData(id, a, 0, std::ptr::null(), &mut io, buf.as_mut_ptr() as *mut c_void)
+            AudioObjectGetPropertyData(
+                id,
+                a,
+                0,
+                std::ptr::null(),
+                &mut io,
+                buf.as_mut_ptr() as *mut c_void,
+            )
         };
         if st != 0 {
             return None;
@@ -328,7 +342,14 @@ mod audio {
         let mut io: u32 = 8; // CFStringRef 指针宽度按 8 处理（64-bit）
         let mut cf: *const c_void = std::ptr::null();
         let st = unsafe {
-            AudioObjectGetPropertyData(id, &a, 0, std::ptr::null(), &mut io, &mut cf as *mut _ as *mut c_void)
+            AudioObjectGetPropertyData(
+                id,
+                &a,
+                0,
+                std::ptr::null(),
+                &mut io,
+                &mut cf as *mut _ as *mut c_void,
+            )
         };
         if st != 0 || cf.is_null() {
             return None;
@@ -351,9 +372,7 @@ mod audio {
     fn has_streams(id: AudioObjectID, scope: u32) -> bool {
         let a = addr(SEL_STREAMS, scope);
         let mut size: u32 = 0;
-        let st = unsafe {
-            AudioObjectGetPropertyDataSize(id, &a, 0, std::ptr::null(), &mut size)
-        };
+        let st = unsafe { AudioObjectGetPropertyDataSize(id, &a, 0, std::ptr::null(), &mut size) };
         st == 0 && size >= 4
     }
 
@@ -362,7 +381,14 @@ mod audio {
         let mut io: u32 = 4;
         let mut out: AudioObjectID = 0;
         let st = unsafe {
-            AudioObjectGetPropertyData(SYSTEM_OBJECT, &a, 0, std::ptr::null(), &mut io, &mut out as *mut _ as *mut c_void)
+            AudioObjectGetPropertyData(
+                SYSTEM_OBJECT,
+                &a,
+                0,
+                std::ptr::null(),
+                &mut io,
+                &mut out as *mut _ as *mut c_void,
+            )
         };
         if st != 0 {
             return None;
@@ -378,7 +404,9 @@ mod audio {
 
         let mut out = Vec::new();
         for id in ids {
-            let Some(name) = device_name(id) else { continue };
+            let Some(name) = device_name(id) else {
+                continue;
+            };
             // 有输出流 → 输出设备；有输入流 → 输入设备；双向各报一条
             if has_streams(id, SCOPE_OUTPUT) {
                 out.push(AudioDevice {
@@ -420,16 +448,16 @@ async fn round(handle: &tauri::AppHandle, state: &EpState) {
         return;
     }
 
-    let bt_task = tauri::async_runtime::spawn_blocking(|| run_profiler("SPBluetoothDataType").map(|v| parse_bt(&v)));
-    let usb_task = tauri::async_runtime::spawn_blocking(|| run_profiler("SPUSBDataType").map(|v| parse_usb(&v)));
+    let bt_task = tauri::async_runtime::spawn_blocking(|| {
+        run_profiler("SPBluetoothDataType").map(|v| parse_bt(&v))
+    });
+    let usb_task = tauri::async_runtime::spawn_blocking(|| {
+        run_profiler("SPUSBDataType").map(|v| parse_usb(&v))
+    });
     let audio_task = tauri::async_runtime::spawn_blocking(audio::read_audio);
 
     // 三个任务共用 6 s 超时兜底（system_profiler 冷启动慢 / CoreAudio 卡死都算本轮失败）
-    let (bt, usb, audio) = tokio::join!(
-        timed(bt_task),
-        timed(usb_task),
-        timed(audio_task),
-    );
+    let (bt, usb, audio) = tokio::join!(timed(bt_task), timed(usb_task), timed(audio_task),);
 
     let mut next = state.snapshot().unwrap_or_default();
     let ts = now_secs();
@@ -450,9 +478,7 @@ async fn round(handle: &tauri::AppHandle, state: &EpState) {
 
 /// 等单个后台任务并打平错误：超时 / JoinError / 源失败 → None（保持上轮）。
 /// spawn_blocking 闭包返回 Option<T>（None = 源失败），join 再包一层 tauri::Result。
-async fn timed<T: Send + 'static>(
-    h: tauri::async_runtime::JoinHandle<Option<T>>,
-) -> Option<T> {
+async fn timed<T: Send + 'static>(h: tauri::async_runtime::JoinHandle<Option<T>>) -> Option<T> {
     tokio::time::timeout(PROFILER_TIMEOUT, h).await.ok()?.ok()?
 }
 
