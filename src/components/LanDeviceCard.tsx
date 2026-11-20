@@ -57,15 +57,25 @@ export function LanDeviceCard({
   const hasInbound = d.inbound.length > 0;
   const hasTimeline = d.lastSeen > 0 && at > 0;
 
+  /**
+   * 卡片底色三态（背景 = 在线状态通道，描边 = 连了我通道，可叠加）：
+   * 新面孔 → accent 淡底（一眼定位「有 3 台新」到底是哪 3 台）；
+   * 离线 → 半透明弱底（退到页面底色，与在线拉开层次）；
+   * 在线 → 中性 chip 底（默认）。
+   */
+  const bgTone = d.isNew
+    ? "border-accent/[0.3] bg-accent/[0.06] hover:border-accent/[0.45] hover:bg-accent/[0.1]"
+    : !d.online
+      ? "border-hairline-soft bg-chip-soft/40 hover:border-hairline"
+      : hasInbound
+        ? "border-warn/[0.4] bg-chip-soft hover:bg-warn/[0.04]"
+        : "border-hairline-soft bg-chip-soft hover:border-hairline hover:bg-chip-hover";
+
   return (
     <div
       onClick={() => onSelect(d)}
       title={t("lan.card.openTitle")}
-      className={`cursor-pointer rounded-[10px] border bg-chip-soft px-3 py-2.5 transition-colors ${
-        hasInbound
-          ? "border-warn/[0.4] hover:bg-warn/[0.04]"
-          : "border-hairline-soft hover:border-hairline hover:bg-chip-hover"
-      } ${dimmed ? "opacity-55" : ""}`}
+      className={`cursor-pointer rounded-[10px] border px-3 py-2.5 transition-colors ${bgTone} ${dimmed ? "opacity-55" : ""}`}
     >
       <div className="flex items-center gap-2.5">
         <span
@@ -89,7 +99,15 @@ export function LanDeviceCard({
               </span>
             ) : null}
             {d.isNew ? (
-              <span className="shrink-0 rounded bg-accent/[0.12] px-1.5 py-px text-[9.5px] font-medium text-accent">
+              <span
+                title={t("lan.card.badgeNewTitle")}
+                className="flex shrink-0 items-center gap-1 rounded bg-accent/[0.16] px-1.5 py-px text-[9.5px] font-medium text-accent"
+              >
+                {/* 脉冲点：语义是「刚接入」，与 自己/上联 的静态身份徽章拉开权重 */}
+                <span className="relative flex size-1.5">
+                  <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-accent opacity-60" />
+                  <span className="relative inline-flex size-1.5 rounded-full bg-accent" />
+                </span>
                 {t("lan.card.badgeNew")}
               </span>
             ) : null}

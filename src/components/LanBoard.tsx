@@ -21,7 +21,7 @@ import { kindLabel, type LanDevice } from "../types/lan";
  * 触发，绝不在切 tab 时蹦出来。边界写进按钮下面的说明，不藏进设置。
  */
 
-type LanFilter = "all" | "online" | "inbound";
+type LanFilter = "all" | "new" | "online" | "inbound";
 
 export function LanBoard({
   query = "",
@@ -50,6 +50,13 @@ export function LanBoard({
   useEffect(() => {
     void init();
   }, [init]);
+
+  // 新面孔筛选自愈：新一轮扫描后 0 台新 → 自动回「全部」，避免留在空筛里
+  useEffect(() => {
+    if (filter === "new" && snapshot && !snapshot.devices.some((d) => d.isNew)) {
+      setFilter("all");
+    }
+  }, [filter, snapshot]);
 
   if (scanning) {
     const pct = progress && progress.total > 0 ? Math.round((progress.done / progress.total) * 100) : 0;
@@ -108,19 +115,24 @@ export function LanBoard({
   const onlineCount = devices.filter((d) => d.online).length;
   const inboundCount = devices.filter((d) => d.inbound.length > 0).length;
   const randomMacCount = devices.filter((d) => d.randomizedMac).length;
+  // 新面孔计数：与状态带同源同口径（isNew 由 Rust 历史层回填）
+  const newCount = devices.filter((d) => d.isNew).length;
 
-  // 分组：本机与网关置顶固定 → 在线设备网格 → 离线折叠（plan §3 信息架构）
+  // 分组：本机与网关置顶固定 → 在线设备网格（新面孔置顶）→ 离线折叠（plan §3 信息架构）
   const match = (d: LanDevice) =>
     matchQuery(d) &&
     (filter === "all"
       ? true
-      : filter === "online"
-        ? d.online
-        : d.inbound.length > 0);
+      : filter === "new"
+        ? d.isNew
+        : filter === "online"
+          ? d.online
+          : d.inbound.length > 0);
   const pinned = devices.filter((d) => (d.isSelf || d.isGateway) && match(d));
-  const onlineOthers = devices.filter(
-    (d) => d.online && !d.isSelf && !d.isGateway && match(d),
-  );
+  // 新面孔排前（稳定排序，组内保持 IP 序）——「有 3 台新」必须能一眼定位到哪 3 台
+  const onlineOthers = devices
+    .filter((d) => d.online && !d.isSelf && !d.isGateway && match(d))
+    .sort((a, b) => Number(b.isNew) - Number(a.isNew));
   const offline = devices.filter((d) => !d.online && match(d));
   const connectedMe = devices.filter((d) => match(d) && d.inbound.length > 0);
   const hasMatch = pinned.length + onlineOthers.length + offline.length > 0;
@@ -171,6 +183,15 @@ export function LanBoard({
                   label={t("lan.filter.all")}
                   count={devices.length}
                 />
+                {/* 新面孔 chip：0 台时隐藏（自愈 effect 已保证 filter 不会停在空筛上） */}
+                {newCount > 0 ? (
+                  <FilterChip
+                    active={filter === "new"}
+                    onClick={() => setFilter("new")}
+                    label={t("lan.filter.new")}
+                    count={newCount}
+                  />
+                ) : null}
                 <FilterChip
                   active={filter === "online"}
                   onClick={() => setFilter("online")}

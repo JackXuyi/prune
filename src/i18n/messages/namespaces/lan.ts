@@ -47,6 +47,7 @@ const zh = {
   filter: {
     aria: "设备筛选",
     all: "全部",
+    new: "新面孔",
     online: "在线",
     inbound: "连了我",
   },
@@ -138,6 +139,7 @@ const zh = {
     badgeSelf: "自己",
     badgeUplink: "上联",
     badgeNew: "新",
+    badgeNewTitle: "10 分钟内首次出现——按稳定 MAC 优先聚合，终身只报一次",
     lastActive: "活跃 {ago}",
     inbound: "连了我 {ports}",
     detailAria: "设备详情：{title}",
@@ -225,6 +227,7 @@ const en: MessageTree<typeof zh> = {
   filter: {
     aria: "Device filter",
     all: "All",
+    new: "New",
     online: "Online",
     inbound: "Connected to me",
   },
@@ -318,6 +321,8 @@ const en: MessageTree<typeof zh> = {
     badgeSelf: "this one",
     badgeUplink: "uplink",
     badgeNew: "new",
+    badgeNewTitle:
+      "First seen within 10 minutes — aggregated by stable MAC first, reported once per device lifetime",
     lastActive: "Active {ago}",
     inbound: "Connected to me {ports}",
     detailAria: "Device details: {title}",
