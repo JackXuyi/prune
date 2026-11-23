@@ -11,8 +11,6 @@ import type { MessageTree } from "../../types";
 
 const zh = {
   title: "端口",
-  subPorts: "按端口反查持有进程 · 关注层是开发服务与数据库端口 · 内部 IPC 默认折叠",
-  subLan: "同网段设备与暴露面 · 手动触发，进入分段不扫描（首次扫描 macOS 会请求本地网络授权）",
   searchPlaceholder: "端口 / 进程 / 项目",
 
   /** 非 root 的 lsof 会静默跳过别的用户的进程 —— 必须自己说出来 */
@@ -38,8 +36,6 @@ const zh = {
   /** W2/D-09：prune.toml 配置了关注但本轮空闲的端口——空闲是状态变化，不是没有 */
   configIdle: "项目配置的关注端口当前空闲：{ports}（prune.toml 还在，服务没起）",
   configIdleAria: "{n} 个配置关注端口空闲",
-
-  searchLanPlaceholder: "IP / 主机名 / 厂商",
 
   /** eul 状态带：5 段全是本页任务内读数；归属盲区走提醒带，不上带子 */
   ribbon: {
@@ -159,20 +155,10 @@ const zh = {
     newTitle: "基线里没有这个监听（24 小时后自动转为老住户）",
     widenedTitle: "暴露面比基线时刻变宽（如仅本机 → 全部网卡）；持续显示直到 CLI 重建基线",
   },
-
-  subpage: {
-    ports: "端口",
-    lan: "局域网",
-    aria: "端口子页",
-  },
 } as const;
 
 const en: MessageTree<typeof zh> = {
   title: "Ports",
-  subPorts:
-    "Look up the owning process by port · the focus layer is dev servers and database ports · internal IPC is folded by default",
-  subLan:
-    "Devices on your subnet and what you expose · manual only; switching subpages never scans (the first scan triggers macOS's local-network prompt)",
   searchPlaceholder: "port / process / project",
 
   invisibleLead:
@@ -197,8 +183,6 @@ const en: MessageTree<typeof zh> = {
   /** W2/D-09: ports declared in prune.toml but idle this round — idle is a state change, not an absence */
   configIdle: "Configured watch ports currently idle: {ports} (prune.toml present, server not running)",
   configIdleAria: "{n} configured watch ports idle",
-
-  searchLanPlaceholder: "IP / hostname / vendor",
 
   /** eul status ribbon: all five segments are readings this page actually acts on */
   ribbon: {
@@ -320,12 +304,6 @@ const en: MessageTree<typeof zh> = {
     widened: "Widened",
     newTitle: "Not in the baseline yet (auto-settles after 24 hours)",
     widenedTitle: "Exposure widened since baseline (e.g. loopback → all interfaces); persists until CLI rebase",
-  },
-
-  subpage: {
-    ports: "Ports",
-    lan: "LAN",
-    aria: "Port subpages",
   },
 };
 

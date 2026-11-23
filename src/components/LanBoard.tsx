@@ -12,9 +12,13 @@ import { phaseText, useLanStore } from "../stores/lanStore";
 import { kindLabel, type LanDevice } from "../types/lan";
 
 /**
- * 局域网设备分段（M18-C5，spec §11）：挂在「端口」tab 内。
- * eul 重设计：ports-eul-mockup.html 局域网子页 —— 状态带 4 段 → 设备点阵 Hero
- * → 条件带 → 设备网格（工具行 / 固定组 / 在线组 / 离线折叠）。
+ * 局域网设备分段（M18-C5 引入；M22 起唯一挂载点是设备页——端口页局域网子页
+ * 已下线，见 docs/m22-port-lan-dedup-plan.md）。eul 重设计：状态带 4 段 →
+ * 设备点阵 Hero → 条件带 → 设备网格（工具行 / 固定组 / 在线组 / 离线折叠）。
+ *
+ * 拓扑视图（M20/M20b）休眠保留：设备页传 showTopoToggle=false 隐藏入口，
+ * 代码与 lan.topo.* 文案在库不删（2026-11-23 M22 D1 产品决策）——后续恢复
+ * 只需一处挂载点传回默认值，勿当死代码清理。
  *
  * 两种状态 + 一条铁律：**进入分段不扫描**。macOS 15 起桌面 App 纳入本地网络
  * 授权，这是 Prune 第一次引入系统权限弹窗——只允许在用户点「扫描局域网」时
@@ -27,7 +31,7 @@ export function LanBoard({
   query = "",
   /** 头部（状态带 + 点阵 Hero）：设备页由页面级 Ribbon/Hero 承担同源读数，传 false 只留设备区 */
   showHeader = true,
-  /** 拓扑视图切换：设备页暂隐藏（2026-11-20 产品决策），端口页保持原样 */
+  /** 拓扑视图切换：设备页传 false 隐藏（2026-11-20 决策，M22 延续；拓扑代码休眠保留，见 docs/m22-port-lan-dedup-plan.md D1） */
   showTopoToggle = true,
 }: {
   query?: string;

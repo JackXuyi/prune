@@ -18,8 +18,9 @@ import { useLanStore } from "../stores/lanStore";
  *   LanBoard 内的空态插画 + 扫描按钮接管，绝不渲染成「0 台设备」；
  * - ③ DeviceTiles 磁贴 ×2（电源配件 / 磁盘 I/O·体检）；
  * - ④ LanBoard（showHeader=false：状态带与点阵由页面级承担，不重复画；
- *   showTopoToggle=false：拓扑入口暂隐藏——2026-11-20 产品决策，
- *   LanTopology 组件保留，端口页局域网子页不受影响）。
+ *   showTopoToggle=false：拓扑入口隐藏——2026-11-20 产品决策，2026-11-23 M22
+ *   确认延续：端口页局域网子页已下线，拓扑代码休眠保留、无 UI 入口，
+ *   详见 docs/m22-port-lan-dedup-plan.md D1）。
  *
  * 采样纪律不变：useHardwareReadouts / useDiskTelemetry 挂载时开、卸载时停；
  * 进入页面绝不自动扫描——权限弹窗只由用户点「扫描局域网」触发（诚实红线）。
