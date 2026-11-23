@@ -1,5 +1,10 @@
 # M20 局域网拓扑视图 · 方案
 
+> **状态注记（2026-11-23，M22）**：拓扑唯一 UI 入口（端口页局域网子页）已随
+> [m22-port-lan-dedup-plan.md](./m22-port-lan-dedup-plan.md) 下线；设备页维持入口隐藏
+> （2026-11-20 决策延续）。`LanTopology.tsx` 与相关逻辑**休眠保留、不删除**——
+> 后续恢复只需一处挂载点传 `showTopoToggle` 默认值，勿当死代码清理。
+>
 > 需求：把当前扫描到的设备列表做成一个好玩的交互页面，用**网络拓扑图**展示对应设备。
 > 状态：方案已确认 → 详细 spec 见 docs/m20-lan-topology-spec.md（实施依据）。对应代码：`src/components/LanBoard.tsx`（挂载点）、新增 `src/components/LanTopology.tsx`。
 > 前置：M18 设备卡 + M19 时间线已落地（`firstSeen` / `lastSeen` / `isNew` 三字段可用）。

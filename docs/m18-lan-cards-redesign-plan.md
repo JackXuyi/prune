@@ -1,5 +1,9 @@
 # M18-LAN 设备页卡片化重设计方案
 
+> **状态注记（2026-11-23，M22）**：本文所述挂载点「端口 tab → 局域网分段」已随
+> [m22-port-lan-dedup-plan.md](./m22-port-lan-dedup-plan.md) 下线，卡片化设计本身
+> 仍有效、现挂载于设备页。
+
 > 范围：`src/components/LanBoard.tsx`（端口 tab → 局域网分段）。只改前端展示层，不动 `lanStore` 数据结构与 Rust 侧。
 
 ## 1. 问题诊断（现状表格的问题）

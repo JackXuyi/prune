@@ -2,6 +2,14 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
+## Unreleased
+
+### 端口页「局域网」子页下线（M22，[方案](./docs/m22-port-lan-dedup-plan.md)）
+
+- 端口页收敛为单页（无分段胶囊），局域网唯一入口在设备页（一页两域：本机硬件 + 局域网）——此前端口页子页与设备页画同一份 lanStore 快照的重复入口移除
+- 拓扑视图（M20/M20b）代码休眠保留：设备页维持拓扑入口隐藏，`LanTopology.tsx` 与 `lan.topo.*` 文案在库不删，后续恢复只需一处挂载点
+- i18n 清理：`ports.subpage.*` / `ports.searchLanPlaceholder` 及零消费死键 `subPorts` / `subLan`（zh/en 配对删除）
+
 ## 0.17.0
 
 ### 外设页（M21，第 8 个一级导航）（[方案](./docs/m21-peripherals-plan.md)、[设计稿](./output/design/peripherals-eul-mockup.html)）
