@@ -2,7 +2,7 @@
 
 所有可见变更记录于此。版本号由 `scripts/bump-version.mjs` 统一维护（package.json / tauri.conf.json / Cargo.toml 四文件一致：根 workspace `version` + src-tauri `[package] version`）。
 
-## Unreleased
+## 0.18.0
 
 ### 端口页「局域网」子页下线（M22，[方案](./docs/m22-port-lan-dedup-plan.md)）
 
